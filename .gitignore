@@ -7,6 +7,7 @@ venv/
 
 # Bounty Runner runtime artifacts
 results/
+outputs/
 .bounty-run/
 *.log
 

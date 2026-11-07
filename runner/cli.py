@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Recon orchestrator for bug bounty — chains your arsenal into one sweep.",
     )
     p.add_argument("target", help="target domain (e.g. example.com)")
-    p.add_argument("-o", "--output-dir", help="output directory (default: ~/bounty-run/<target>/<ts>)")
+    p.add_argument("-o", "--output-dir", help="output directory (default: <repo>/outputs/<target>/<ts>)")
     p.add_argument("--amass", action="store_true", help="also run amass passive enum (needs API keys to be useful)")
     p.add_argument("--timeout", type=_positive_int, default=8, help="HTTP probe timeout in seconds (default 8)")
     p.add_argument("--threads", type=_positive_int, default=30, help="concurrent HTTP probe threads (default 30)")
@@ -114,7 +114,7 @@ def main(argv=None) -> int:
     if args.output_dir:
         outdir = Path(args.output_dir)
     else:
-        outdir = Path.home() / "bounty-run" / target / time.strftime("%Y%m%d-%H%M%S")
+        outdir = Path(__file__).resolve().parent.parent / "outputs" / target / time.strftime("%Y%m%d-%H%M%S")
     outdir.mkdir(parents=True, exist_ok=True)
 
     utils.log(f"Bounty Runner v{__version__} — target: {target}")
