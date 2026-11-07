@@ -3,7 +3,7 @@ import argparse
 import time
 from pathlib import Path
 
-from . import __version__, report, stages, utils
+from . import __version__, origin_deep, param_scan, report, stages, utils
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,7 +19,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-hosts", type=int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
-    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,vuln,content")
+    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param")
+    p.add_argument("--max-param-urls", type=int, default=50,
+                   help="cap on sqlmap param URLs (default 50)")
     p.add_argument("--nuclei-severity", default="high,critical",
                    help="nuclei severity filter (default: high,critical)")
     p.add_argument("--nuclei-c", type=int, default=50, help="nuclei concurrency (default 50)")
@@ -106,6 +108,8 @@ def main(argv=None) -> int:
     origins = []
     if cf["cloudflare"] and "origin" not in skip:
         origins = stages.origin_hunt(target, outdir, cf)
+        if "origin_deep" not in skip:
+            origins += origin_deep.origin_deep(target, outdir, cf)
 
     write_summary(outdir, target, subs, rows, cf, origins)
 
@@ -118,6 +122,9 @@ def main(argv=None) -> int:
     content = []
     if "content" not in skip:
         content = stages.content_discovery(target, outdir, args.wordlist)
+
+    if "param" not in skip:
+        findings += param_scan.param_scan(target, outdir, args.max_param_urls)
 
     n_findings = report.write_findings_report(outdir, target, findings, content)
 
