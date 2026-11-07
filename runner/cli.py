@@ -30,7 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="cap on sqlmap param URLs (default 50)")
     p.add_argument("--nuclei-severity", default="high,critical",
                    help="nuclei severity filter (default: high,critical)")
-    p.add_argument("--nuclei-c", type=_positive_int, default=50, help="nuclei concurrency (default 50)")
+    p.add_argument("--nuclei-c", type=_positive_int, default=25,
+                   help="nuclei concurrency (default 25; auto-clamped by available RAM)")
     p.add_argument("--nuclei-timeout", type=_positive_int, default=600,
                    help="nuclei timeout in seconds (default 600)")
     p.add_argument("--interactive", action="store_true",

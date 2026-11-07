@@ -256,13 +256,42 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
 # --- Stage 5 & 6: vulnerability scan + content discovery ---
 
 
+def _available_ram_mb() -> int:
+    """Available RAM in MiB from /proc/meminfo; 0 if unreadable (non-Linux)."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024  # kB -> MiB
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
+def _clamp_concurrency(concurrency: int) -> int:
+    """Cap nuclei -c by available RAM (~40 MiB/worker) to avoid the OOM-killer.
+
+    nuclei RSS scales with template concurrency; on a ~3.8 GB box, -c 50 reached
+    ~590 MB anon-rss and got OOM-killed. Floor of 10 so it still makes progress.
+    """
+    mem = _available_ram_mb()
+    if mem <= 0:
+        return concurrency  # unknown (non-Linux) — leave the caller's value alone
+    cap = max(10, mem // 40)
+    if concurrency > cap:
+        utils.warn(f"  clamping nuclei -c {concurrency} -> {cap} "
+                   f"({mem} MiB available, ~40 MiB/worker)")
+        return cap
+    return concurrency
+
+
 def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "high,critical",
-              concurrency: int = 50, timeout: int = 600) -> list[dict]:
+              concurrency: int = 25, timeout: int = 600) -> list[dict]:
     """Stage 5: run nuclei against live hosts, parse JSONL into findings."""
     utils.log("Stage 5 — vulnerability scan (nuclei)")
     if not utils.have("nuclei"):
         utils.warn("nuclei not found — skipping")
         return []
+    concurrency = _clamp_concurrency(concurrency)
     hosts = sorted({r["host"] for r in live_rows if r["status"]})
     # SSRF guard: drop hosts that resolve to non-public addresses.
     hosts = [h for h in hosts if _is_global(_resolve(h))]

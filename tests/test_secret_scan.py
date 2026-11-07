@@ -65,9 +65,10 @@ class TestPatterns(SecretScanBase):
         f, _ = self.run_scan({HOME: "<html>key=AKIAIOSFODNN7EXAMPLE</html>"})
         self.assert_single(f, "Exposed AWS access key", "high", "...MPLE")
 
-    def test_token_high(self):
-        f, _ = self.run_scan({HOME: "<p>token: abcdefghijklmnopqrstuvwx1234567890</p>"})
-        self.assert_single(f, "Exposed Token", "high", "...7890")
+    def test_github_token_high(self):
+        ghp = "ghp_0123456789abcdefghijklmnopqrstuvwxyz"
+        f, _ = self.run_scan({HOME: f"<p>GITHUB_TOKEN={ghp}</p>"})
+        self.assert_single(f, "Exposed GitHub token", "high", "...wxyz")
 
     def test_jwt_high(self):
         jwt = ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
@@ -79,17 +80,20 @@ class TestPatterns(SecretScanBase):
         f, _ = self.run_scan({HOME: "<pre>-----BEGIN RSA PRIVATE KEY-----\nMIIE...</pre>"})
         self.assert_single(f, "Exposed Private key", "high", "...----")
 
-    def test_generic_api_key_and_password_low(self):
-        body = 'var cfg = {api_key = "abcdefghijklmnopqrstuvwx"}; password = "Sup3rSecret!"'
+    def test_dropped_generic_keywords_produce_no_finding(self):
+        # Regression guard: the generic api_key / password / token patterns were
+        # removed because they fired on JS identifiers, minified literals and
+        # publishable client-side keys. These real-world fixtures (from the
+        # [REDACTED] post-mortem) must now yield ZERO findings.
+        body = (
+            "if (window.turnstile) capToken = turnstile.getResponse();\n"
+            "recaptchaToken: document.querySelector('[name=\"cf-turnstile-response\"]'),\n"
+            "password:!0,required:!0\n"
+            '<script src="https://cdn.weglot.com/weglot.min.js'
+            '?api_key=wg_00000000000000000000000000000000"></script>'
+        )
         f, _ = self.run_scan({HOME: body})
-        by_name = {x["name"]: x for x in f}
-        self.assertEqual(set(by_name), {"Exposed API key", "Exposed Password"})
-        for x in f:
-            self.assertEqual(x["severity"], "low")
-            self.assertEqual(x["url"], HOME)
-            self.assertEqual(x["host"], HOST)
-        self.assertEqual(by_name["Exposed API key"]["evidence"], "...uvwx")
-        self.assertEqual(by_name["Exposed Password"]["evidence"], "...ret!")
+        self.assertEqual(f, [])
 
     def test_no_secrets_returns_empty(self):
         f, fetch = self.run_scan({HOME: "<html><body><h1>Hello world</h1></body></html>"})
@@ -106,18 +110,19 @@ class TestJsExtraction(SecretScanBase):
     def test_same_origin_scripts_fetched_and_scanned(self):
         jwt = ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
                "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U")
+        ghp = "ghp_0123456789abcdefghijklmnopqrstuvwxyz"
         html = '<script src="app.js"></script><SCRIPT type="x" src=\'/lib/x.js\'></SCRIPT>'
         app_url, lib_url = f"{HOME}/app.js", f"{HOME}/lib/x.js"
         f, fetch = self.run_scan({
             HOME: html,
-            app_url: 'const token = "abcdefghijklmnopqrstuvwx1234567890";',
+            app_url: f'const gh = "{ghp}";',
             lib_url: f"let t='{jwt}';",
         })
         self.assertEqual([c.args[0] for c in fetch.call_args_list], [HOME, app_url, lib_url])
         by_name = {x["name"]: x for x in f}
-        self.assertEqual(set(by_name), {"Exposed Token", "Exposed JWT"})
-        self.assertEqual(by_name["Exposed Token"]["url"], app_url)
-        self.assertEqual(by_name["Exposed Token"]["evidence"], "...7890")
+        self.assertEqual(set(by_name), {"Exposed GitHub token", "Exposed JWT"})
+        self.assertEqual(by_name["Exposed GitHub token"]["url"], app_url)
+        self.assertEqual(by_name["Exposed GitHub token"]["evidence"], "...wxyz")
         self.assertEqual(by_name["Exposed JWT"]["url"], lib_url)
         self.assertEqual(by_name["Exposed JWT"]["evidence"], "..." + jwt[-4:])
 

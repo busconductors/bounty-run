@@ -27,13 +27,14 @@ try:
 except ImportError:
     HAVE_REQUESTS = False
 
-# Vendored secret patterns (stdlib re only).
+# Secret patterns (stdlib re only). Only high-precision, prefix-anchored provider
+# patterns are kept. The generic keyword patterns (api_key / password / token) were
+# removed: they matched JS identifiers (capToken, recaptchaToken), minified-code
+# literals (password:!0) and publishable client-side keys (Weglot wg_... in a CDN
+# URL), yielding a 100% false-positive rate with no real signal. See POSTMORTEM.
 PATTERNS = {
     'aws_access_key': r'AKIA[0-9A-Z]{16}',
     'aws_secret_key': r'aws_secret[_-]?access[_-]?key["\']?\s*[:=]\s*["\']?([a-zA-Z0-9/+=]{40})',
-    'api_key': r'api[_-]?key["\']?\s*[:=]\s*["\']?([a-zA-Z0-9_\-]{20,})',
-    'password': r'password["\']?\s*[:=]\s*["\']?([^\s"\']{8,})',
-    'token': r'token["\']?\s*[:=]\s*["\']?([a-zA-Z0-9_\-\.]{20,})',
     'jwt': r'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*',
     'private_key': r'-----BEGIN (RSA|DSA|EC|OPENSSH) PRIVATE KEY-----',
     'github_token': r'gh[pousr]_[a-zA-Z0-9]{36,}',
@@ -46,14 +47,12 @@ MAX_JS_FILES = 5
 FETCH_TIMEOUT = 3  # seconds
 
 # Generic, noisy classes — reported as low; everything else is high.
-_LOW_SEVERITY = {'api_key', 'password'}
+# (Empty now that the generic keyword patterns are gone; kept for the severity hook.)
+_LOW_SEVERITY: set[str] = set()
 
 _LABELS = {
     'aws_access_key': "AWS access key",
     'aws_secret_key': "AWS secret key",
-    'api_key': "API key",
-    'password': "Password",
-    'token': "Token",
     'jwt': "JWT",
     'private_key': "Private key",
     'github_token': "GitHub token",

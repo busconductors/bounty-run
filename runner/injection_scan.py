@@ -29,7 +29,7 @@ import requests
 import urllib3
 
 from runner import utils
-from runner.param_scan import discover_endpoints
+from runner.param_scan import _read_cached_endpoints, discover_endpoints
 from runner.vendor.advanced_scanners import CRLFScanner, NoSQLInjectionScanner, SSTIScanner
 
 urllib3.disable_warnings()
@@ -228,7 +228,14 @@ def injection_scan(target: str, outdir: Path, max_urls: int = 50, timeout: int =
     the ``param`` stage is skipped. Dedupe happens later at the cli.py layer.
     """
     findings: list[dict] = []
-    endpoints = discover_endpoints(target, outdir, max_urls)
+    # Prefer the endpoints param_scan already discovered this run (avoids a second
+    # CDX hit, which doubles the throttle risk). Only query CDX ourselves when the
+    # param stage was skipped and no param_urls.txt exists yet.
+    endpoints = _read_cached_endpoints(outdir, max_urls)
+    if endpoints:
+        utils.log(f"  reusing {len(endpoints)} endpoint(s) from param_urls.txt")
+    else:
+        endpoints = discover_endpoints(target, outdir, max_urls)
     if not endpoints:
         return []
 

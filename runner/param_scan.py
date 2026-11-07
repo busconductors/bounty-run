@@ -19,8 +19,13 @@ from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from runner import utils
 
+# A real UA + retries/backoff + --fail so throttled error bodies (429/503 HTML)
+# don't get fed to json.loads. --compressed keeps the 500-row payload small.
+_CDX_UA = "Mozilla/5.0 (compatible; bounty-run/1.0)"
 CDX_URL = (
-    'curl -sS "https://web.archive.org/cdx/search/cdx'
+    'curl -sS -A "' + _CDX_UA + '" --compressed --fail '
+    '--retry 3 --retry-delay 2 --retry-all-errors --max-time 45 '
+    '"https://web.archive.org/cdx/search/cdx'
     '?url=*.{target}/*&output=json&fl=original&collapse=urlkey&limit=500"'
 )
 
@@ -69,6 +74,12 @@ def _discover_urls(raw: str) -> list[str]:
     """Parse the CDX JSON body; drop the header row; keep only URLs with a query."""
     if not raw:
         return []
+    # A throttled/error response from web.archive.org is an HTML or XML page, not
+    # JSON. Detect that up front so we log *why* instead of a bare parse error.
+    if raw.lstrip()[:1] == "<":
+        snippet = " ".join(raw.split())[:120]
+        utils.warn(f"  wayback CDX returned an HTML/XML error body (throttled?): {snippet}")
+        return []
     try:
         rows = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
@@ -106,6 +117,15 @@ def _in_scope(url: str, target: str) -> bool:
     return host == target or host.endswith("." + target)
 
 
+def _read_cached_endpoints(outdir: Path, max_urls: int) -> list[str]:
+    """Return endpoints from a previously-written outdir/param_urls.txt, or []."""
+    cache = outdir / "param_urls.txt"
+    if not cache.exists():
+        return []
+    lines = [ln.strip() for ln in cache.read_text().splitlines() if ln.strip()]
+    return lines[:max_urls]
+
+
 def discover_endpoints(target: str, outdir: Path, max_urls: int = 50) -> list[str]:
     """Wayback CDX discovery -> _strip_param_values -> _VALID_PARAM filter -> dedupe -> cap.
 
@@ -132,6 +152,11 @@ def discover_endpoints(target: str, outdir: Path, max_urls: int = 50) -> list[st
     endpoints = endpoints[:max_urls]
 
     if not endpoints:
+        cached = _read_cached_endpoints(outdir, max_urls)
+        if cached:
+            utils.warn(f"  CDX discovery empty — reusing {len(cached)} endpoint(s) "
+                       f"from existing param_urls.txt")
+            return cached
         utils.warn(f"  no parameterized URLs discovered for {target}")
         return []
 
