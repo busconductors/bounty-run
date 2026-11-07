@@ -1,4 +1,4 @@
-"""Injection scanning stage (Phase 6, Feature 1): SSTI / NoSQLi / CRLF / XSS / redirect.
+"""Injection scanning stage (Phase 6, Feature 1): SSTI / NoSQLi / XSS / redirect.
 
 Reuses the endpoint discovery that param_scan already does (Wayback CDX ->
 strip param values -> sane-name filter -> dedupe -> cap), then feeds each
@@ -7,41 +7,37 @@ open-redirect checks.
 
 Scanner-API reality (see SPEC-PHASE6.md):
   * SSTIScanner.scan(url, param, timeout) and NoSQLInjectionScanner.scan(url,
-    param, timeout) require a ``param`` arg; CRLFScanner.scan(url, timeout)
-    does not (it iterates every query param itself).
+    param, timeout) require a ``param`` arg.
   * The vendored scanners parse the query with parse_qs, which drops blank
     values -- so we re-derive param NAMES via parse_qsl(keep_blank_values=True)
-    and seed a non-blank value (``1``) before calling them, otherwise CRLF
-    would see an empty dict and no-op.
+    and seed a non-blank value (``1``) before calling them.
 
     from runner.injection_scan import injection_scan
     findings = injection_scan("example.com", outdir)
 """
 import ipaddress
-import random
 import re
 import socket
-import string
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import requests
 import urllib3
 
 from runner import utils
 from runner.param_scan import _read_cached_endpoints, discover_endpoints
-from runner.vendor.advanced_scanners import CRLFScanner, NoSQLInjectionScanner, SSTIScanner
+from runner.vendor.advanced_scanners import NoSQLInjectionScanner, SSTIScanner
 
 urllib3.disable_warnings()
 
 # Template names emitted by this stage.
 T_SSTI = "spyhunt-ssti"
 T_NOSQLI = "spyhunt-nosqli"
-T_CRLF = "spyhunt-crlf"
 T_XSS = "spyhunt-xss"
 T_OPENREDIRECT = "spyhunt-openredirect"
 
-# 16 external hostnames used as protocol-relative (//host) open-redirect payloads.
+# 16 external hostnames used as absolute ``https://`` open-redirect payloads
+# (SPEC-PHASE6.1 item 7: only absolute http(s) redirect targets are accepted).
 OPEN_REDIRECT_HOSTS = [
     "evil.com", "evil.net", "attacker.com", "hacker.com",
     "google.com", "example.com", "bing.com", "yahoo.com",
@@ -49,7 +45,11 @@ OPEN_REDIRECT_HOSTS = [
     "twitter.com", "microsoft.com", "apple.com", "github.com",
 ]
 
-_SCRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+# Real reflected-XSS payloads (SPEC-PHASE6.1 item 5).
+_XSS_SCRIPT_PAYLOAD = "<script>alert(1)</script>"
+_XSS_EVENT_PAYLOAD = "<img src=x onerror=alert(1)>"
+_XSS_PAYLOADS = (_XSS_SCRIPT_PAYLOAD, _XSS_EVENT_PAYLOAD)
+
 _EVENT_ATTR_RE = re.compile(
     r'\son(?:load|error|click|mouseover|mouseout|focus|blur|submit|change|input|'
     r'keyup|keydown|dblclick|scroll|resize|select|unload)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]*)',
@@ -91,8 +91,9 @@ def _to_schema(kind: str, hit: dict, target: str) -> dict:
     """Map a scanner hit dict to the shared finding schema.
 
     Field shapes (SPEC-PHASE6 C1): SSTI hits carry ``template_engine`` +
-    ``test_type``; NoSQLi + CRLF hits carry ``payload_type``. Severity passes
-    through from the scanner dict (M4), lowercased; ``evidence`` is optional (M3).
+    ``test_type``; NoSQLi hits carry ``payload_type``. Severity passes through
+    from the scanner dict (M4), lowercased -- except NoSQLi, which is pinned to
+    ``medium`` (SPEC-PHASE6.1 item 4). ``evidence`` is optional (M3).
     """
     severity = str(hit.get("severity") or "unknown").lower()
     url = hit.get("url", "") or ""
@@ -110,18 +111,9 @@ def _to_schema(kind: str, hit: dict, target: str) -> dict:
     elif kind == "nosqli":
         db = hit.get("db_type") or hit.get("payload_type") or "unknown"
         finding = {
-            "severity": severity,
+            "severity": "medium",
             "template": T_NOSQLI,
             "name": f"NoSQL injection ({db})",
-            "url": url,
-            "host": target,
-        }
-    elif kind == "crlf":
-        ptype = hit.get("payload_type", "unknown")
-        finding = {
-            "severity": severity,
-            "template": T_CRLF,
-            "name": f"CRLF injection ({ptype})",
             "url": url,
             "host": target,
         }
@@ -140,62 +132,75 @@ def _to_schema(kind: str, hit: dict, target: str) -> dict:
     return finding
 
 
-def _reflected_in_script_context(token: str, body: str) -> bool:
-    """Pure: True if ``token`` appears inside a <script> block or an event/JS attr."""
-    if token not in body:
+def _xss_payload_reflected(payload: str, body: str) -> bool:
+    """Pure: True if ``payload`` is reflected unmodified in an executable context.
+
+    ``payload`` is one of the real XSS payloads (a ``<script>`` element or an
+    element carrying an ``on*`` handler). A literal match is the execution
+    signal: HTML-escaping (``&lt;script&gt;``) changes the bytes, so an escaped
+    reflection never contains the raw payload. Requiring the payload itself to
+    be a script tag or event-attribute element guarantees the match lands in an
+    executable context rather than plain text.
+    """
+    if payload not in body:
         return False
-    for m in _SCRIPT_RE.finditer(body):
-        if token in m.group(1):
-            return True
-    for m in _EVENT_ATTR_RE.finditer(body):
-        if token in m.group(1):
-            return True
-    return False
+    stripped = payload.lstrip().lower()
+    if stripped.startswith("<script"):
+        return True
+    return _EVENT_ATTR_RE.search(payload) is not None
 
 
 def _redirect_target_differs(target_netloc: str, location: str) -> bool:
-    """Pure: True if an absolute redirect Location points at a different host."""
+    """Pure: True if ``location`` is an absolute http(s) URL to a different host.
+
+    Rejects relative / path-only redirects and protocol-relative ``//host``
+    forms (neither carries an ``http``/``https`` scheme), per SPEC-PHASE6.1
+    item 7.
+    """
     if not location:
         return False
-    netloc = urlparse(location).netloc
-    if not netloc:
+    parsed = urlparse(location)
+    if parsed.scheme not in ("http", "https"):
         return False
-    return netloc != target_netloc
+    if not parsed.netloc:
+        return False
+    return parsed.netloc != target_netloc
 
 
 def _xss_reflected(url: str, target: str, timeout: int = 8) -> dict | None:
-    """Reflect a random token into each param; flag only script/event-context hits."""
-    token = "zz" + "".join(random.choices(string.ascii_lowercase, k=8))
+    """Inject real XSS payloads into each param; flag only unmodified, executable reflection."""
     parts = urlsplit(url)
     names = _param_names(url)
     for name in names:
-        query = urlencode([(k, token if k == name else "1") for k in names])
-        test_url = urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
-        try:
-            r = requests.get(test_url, timeout=timeout, verify=False, allow_redirects=False)
-        except requests.RequestException:
-            continue
-        if not _reflected_in_script_context(token, r.text):
-            continue
-        return {
-            "severity": "high",
-            "template": T_XSS,
-            "name": "Reflected XSS",
-            "url": test_url,
-            "host": target,
-            "evidence": f"token {token} reflected in script/event context",
-        }
+        for payload in _XSS_PAYLOADS:
+            query = urlencode([(k, payload if k == name else "1") for k in names])
+            test_url = urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
+            try:
+                r = requests.get(test_url, timeout=timeout, verify=False, allow_redirects=False)
+            except requests.RequestException:
+                continue
+            if not _xss_payload_reflected(payload, r.text):
+                continue
+            return {
+                "severity": "medium",
+                "template": T_XSS,
+                "name": "Reflected XSS",
+                "url": test_url,
+                "host": target,
+                "evidence": f"{payload} reflected unmodified in executable context (manual verification required)",
+            }
     return None
 
 
 def _open_redirect(url: str, target: str, timeout: int = 8) -> dict | None:
-    """Inject 16 ``//host`` payloads; flag if Location netloc differs from target's."""
+    """Inject 16 absolute ``https://host`` payloads; flag only when the redirect
+    Location is an absolute http(s) URL to a different host."""
     parts = urlsplit(url)
     original_netloc = parts.netloc
     names = _param_names(url)
     for name in names:
         for host in OPEN_REDIRECT_HOSTS:
-            payload = f"//{host}"
+            payload = f"https://{host}"
             query = urlencode([(k, payload if k == name else "1") for k in names])
             test_url = urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
             try:
@@ -207,8 +212,6 @@ def _open_redirect(url: str, target: str, timeout: int = 8) -> dict | None:
             location = r.headers.get("Location", "")
             if not location:
                 continue
-            if not urlparse(location).netloc:
-                location = urljoin(test_url, location)
             if _redirect_target_differs(original_netloc, location):
                 return {
                     "severity": "medium",
@@ -222,7 +225,7 @@ def _open_redirect(url: str, target: str, timeout: int = 8) -> dict | None:
 
 
 def injection_scan(target: str, outdir: Path, max_urls: int = 50, timeout: int = 10) -> list[dict]:
-    """Stage: SSTI / NoSQLi / CRLF / reflected XSS / open redirect over discovered endpoints.
+    """Stage: SSTI / NoSQLi / reflected XSS / open redirect over discovered endpoints.
 
     Re-discovers its own endpoints (shared with param_scan), so it also works when
     the ``param`` stage is skipped. Dedupe happens later at the cli.py layer.
@@ -241,7 +244,6 @@ def injection_scan(target: str, outdir: Path, max_urls: int = 50, timeout: int =
 
     ssti = SSTIScanner()
     nosqli = NoSQLInjectionScanner()
-    crlf = CRLFScanner()
 
     for url in endpoints:
         host = urlsplit(url).hostname or ""
@@ -255,8 +257,6 @@ def injection_scan(target: str, outdir: Path, max_urls: int = 50, timeout: int =
                 findings.append(_to_schema("ssti", hit, target))
             for hit in nosqli.scan(seeded, param, timeout):
                 findings.append(_to_schema("nosqli", hit, target))
-        for hit in crlf.scan(seeded, timeout):
-            findings.append(_to_schema("crlf", hit, target))
 
         x = _xss_reflected(url, target, timeout)
         if x:

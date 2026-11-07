@@ -26,6 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
     p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,injection,secret,metis")
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
+    p.add_argument("--injection", action="store_true",
+                   help="also run the injection sweep (SSTI/NoSQL/XSS/open-redirect) (off by default)")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
     p.add_argument("--nuclei-severity", default="high,critical",
@@ -246,7 +248,7 @@ def main(argv=None) -> int:
     if "param" not in skip:
         findings += param_scan.param_scan(target, outdir, args.max_param_urls)
 
-    if "injection" not in skip:
+    if "injection" not in skip and args.injection:
         findings += injection_scan.injection_scan(target, outdir, args.max_param_urls)
 
     if "secret" not in skip:

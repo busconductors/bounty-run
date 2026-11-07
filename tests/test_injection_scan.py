@@ -1,6 +1,6 @@
 """Unit tests for runner.injection_scan (Phase 6, Feature 1).
 
-No network, no external tools — utils.run and the vendored scanners are
+No network, no external tools -- utils.run and the vendored scanners are
 monkeypatched. Run with stdlib unittest:
 
     cd ~/tools/bounty-run && python3 -m unittest discover -s tests -v
@@ -21,13 +21,12 @@ from runner import injection_scan, utils  # noqa: E402
 from runner.injection_scan import (  # noqa: E402
     _param_names,
     _redirect_target_differs,
-    _reflected_in_script_context,
     _seed_params,
     _to_schema,
+    _xss_payload_reflected,
     injection_scan as run_injection_scan,
 )
 from runner.vendor.advanced_scanners import (  # noqa: E402
-    CRLFScanner,
     NoSQLInjectionScanner,
     SSTIScanner,
 )
@@ -43,7 +42,7 @@ class VendorImportTest(unittest.TestCase):
         import runner.vendor.advanced_scanners as adv
         self.assertTrue(hasattr(adv, "SSTIScanner"))
         self.assertTrue(hasattr(adv, "NoSQLInjectionScanner"))
-        self.assertTrue(hasattr(adv, "CRLFScanner"))
+        self.assertFalse(hasattr(adv, "CRLFScanner"))
         src = Path(adv.__file__).read_text()
         self.assertNotIn("import colorama", src)
         self.assertNotIn("from colorama", src)
@@ -60,9 +59,9 @@ class VendorImportTest(unittest.TestCase):
                 self.assertNotIn("{{config}}", payload)
                 self.assertNotIn("config", test_type)
                 self.assertNotIn("rce", test_type)
-        # arithmetic echo probe still present
+        # arithmetic echo probe now uses the unique canary
         jinja = {payload: expected for _, payload, expected in SSTIScanner().payloads["jinja2"]}
-        self.assertEqual(jinja["{{7*7}}"], "49")
+        self.assertEqual(jinja["{{7777777*7777777}}"], "60493827160493827")
         # non-executing fingerprint probe still present
         twig_types = {t for t, _, _ in SSTIScanner().payloads["twig"]}
         self.assertIn("env", twig_types)
@@ -79,16 +78,48 @@ class VendorImportTest(unittest.TestCase):
             self.assertNotIn("sleep(5000)", payload)
 
 
+class SstiUniqueCanaryTest(unittest.TestCase):
+    """SPEC-PHASE6.1 item 3: unique canary, no 49-substring false positives."""
+
+    def test_math_payloads_use_unique_canary(self):
+        for engine, payloads in SSTIScanner().payloads.items():
+            for test_type, payload, expected in payloads:
+                if test_type != "math":
+                    continue
+                self.assertIn("7777777*7777777", payload)
+                self.assertNotIn("{{7*7}}", payload)
+                self.assertNotIn("${7*7}", payload)
+                self.assertEqual(expected, "60493827160493827")
+
+    def test_no_false_positive_on_number_49(self):
+        scanner = SSTIScanner()
+        fake_resp = mock.Mock()
+        fake_resp.text = "search returned 49 results on page 49 of 49"
+        with mock.patch("requests.get", return_value=fake_resp):
+            findings = scanner.scan("http://example.com/search?a=1", "a")
+        self.assertEqual(findings, [])
+
+    def test_flags_on_unique_canary(self):
+        scanner = SSTIScanner()
+        fake_resp = mock.Mock()
+        fake_resp.text = "computed: 60493827160493827"
+        with mock.patch("requests.get", return_value=fake_resp):
+            findings = scanner.scan("http://example.com/search?a=1", "a")
+        self.assertTrue(findings)
+        self.assertEqual(findings[0]["severity"], "critical")
+        self.assertIn("60493827160493827", findings[0]["evidence"])
+
+
 class ToSchemaTest(unittest.TestCase):
     def test_ssti_confirmed_critical_passthrough(self):
         hit = {"severity": "critical", "template_engine": "jinja2", "test_type": "math",
-               "url": "http://x/y?a={{7*7}}", "evidence": "expected 49 found"}
+               "url": "http://x/y?a={{7777777*7777777}}", "evidence": "expected 60493827160493827 found"}
         f = _to_schema("ssti", hit, "example.com")
         self.assertEqual(f["severity"], "critical")
         self.assertEqual(f["template"], "spyhunt-ssti")
         self.assertEqual(f["host"], "example.com")
-        self.assertEqual(f["url"], "http://x/y?a={{7*7}}")
-        self.assertEqual(f["evidence"], "expected 49 found")
+        self.assertEqual(f["url"], "http://x/y?a={{7777777*7777777}}")
+        self.assertEqual(f["evidence"], "expected 60493827160493827 found")
 
     def test_ssti_template_error_high(self):
         hit = {"severity": "high", "template_engine": "twig", "test_type": "env",
@@ -97,22 +128,16 @@ class ToSchemaTest(unittest.TestCase):
         self.assertEqual(f["severity"], "high")
         self.assertEqual(f["template"], "spyhunt-ssti")
 
-    def test_nosqli_uses_payload_type_field(self):
+    def test_nosqli_mapped_to_medium(self):
         hit = {"severity": "high", "db_type": "mongodb", "payload_type": "ne_bypass",
                "url": "http://x/y?a=1"}
         f = _to_schema("nosqli", hit, "example.com")
         self.assertEqual(f["template"], "spyhunt-nosqli")
-        self.assertEqual(f["severity"], "high")
-
-    def test_crlf_uses_payload_type_field(self):
-        hit = {"severity": "high", "payload_type": "url_encoded_rn", "url": "http://x/y"}
-        f = _to_schema("crlf", hit, "example.com")
-        self.assertEqual(f["template"], "spyhunt-crlf")
-        self.assertEqual(f["severity"], "high")
+        self.assertEqual(f["severity"], "medium")
 
     def test_evidence_omitted_when_absent(self):
-        hit = {"severity": "high", "payload_type": "x", "url": "u"}
-        f = _to_schema("crlf", hit, "example.com")
+        hit = {"severity": "high", "db_type": "mongodb", "payload_type": "x", "url": "u"}
+        f = _to_schema("nosqli", hit, "example.com")
         self.assertNotIn("evidence", f)
 
     def test_severity_normalized_to_lowercase(self):
@@ -122,30 +147,43 @@ class ToSchemaTest(unittest.TestCase):
 
 
 class PureFunctionTest(unittest.TestCase):
-    def test_reflected_inside_script_tag_flagged(self):
-        self.assertTrue(_reflected_in_script_context(
-            "ZZTOK", '<html><script>var x = "ZZTOK";</script></html>'))
+    def test_script_payload_reflected_unescaped_flagged(self):
+        self.assertTrue(_xss_payload_reflected(
+            "<script>alert(1)</script>", "<html><script>alert(1)</script></html>"))
 
-    def test_reflected_plain_text_not_flagged(self):
-        self.assertFalse(_reflected_in_script_context(
-            "ZZTOK", '<html><div>ZZTOK</div></html>'))
+    def test_script_payload_html_escaped_not_flagged(self):
+        self.assertFalse(_xss_payload_reflected(
+            "<script>alert(1)</script>", "<html>&lt;script&gt;alert(1)&lt;/script&gt;</html>"))
 
-    def test_reflected_event_handler_flagged(self):
-        self.assertTrue(_reflected_in_script_context(
-            "ZZTOK", '<img src=x onerror="alert(\'ZZTOK\')">'))
+    def test_event_payload_reflected_flagged(self):
+        self.assertTrue(_xss_payload_reflected(
+            "<img src=x onerror=alert(1)>", "<html><img src=x onerror=alert(1)></html>"))
 
-    def test_token_absent_not_flagged(self):
-        self.assertFalse(_reflected_in_script_context(
-            "ZZTOK", '<script>var x = 1;</script>'))
+    def test_payload_absent_not_flagged(self):
+        self.assertFalse(_xss_payload_reflected(
+            "<script>alert(1)</script>", "<html><div>safe</div></html>"))
 
-    def test_redirect_netloc_differs_flagged(self):
-        self.assertTrue(_redirect_target_differs("example.com", "//evil.com"))
+    def test_plain_text_token_not_flagged(self):
+        self.assertFalse(_xss_payload_reflected(
+            "zzzrandom", "<html>zzzrandom</html>"))
+
+    def test_redirect_absolute_external_flagged(self):
+        self.assertTrue(_redirect_target_differs("example.com", "https://evil.com"))
+
+    def test_redirect_absolute_http_external_flagged(self):
+        self.assertTrue(_redirect_target_differs("example.com", "http://evil.com"))
+
+    def test_redirect_protocol_relative_not_flagged(self):
+        self.assertFalse(_redirect_target_differs("example.com", "//evil.com"))
 
     def test_redirect_same_netloc_not_flagged(self):
-        self.assertFalse(_redirect_target_differs("example.com", "//example.com/login"))
+        self.assertFalse(_redirect_target_differs("example.com", "https://example.com/login"))
 
     def test_redirect_relative_not_flagged(self):
         self.assertFalse(_redirect_target_differs("example.com", "/login"))
+
+    def test_redirect_non_http_scheme_not_flagged(self):
+        self.assertFalse(_redirect_target_differs("example.com", "ftp://evil.com"))
 
     def test_redirect_empty_not_flagged(self):
         self.assertFalse(_redirect_target_differs("example.com", ""))
@@ -166,12 +204,10 @@ class InjectionScanTest(unittest.TestCase):
     def test_end_to_end_schema_mapping(self):
         cdx = make_cdx(["http://example.com/search?a=1"])
         ssti_hit = {"severity": "critical", "template_engine": "jinja2",
-                    "test_type": "math", "url": "http://example.com/search?a={{7*7}}",
-                    "evidence": "49 found"}
+                    "test_type": "math", "url": "http://example.com/search?a={{7777777*7777777}}",
+                    "evidence": "60493827160493827 found"}
         nosqli_hit = {"severity": "high", "db_type": "mongodb",
                       "payload_type": "ne_bypass", "url": "http://example.com/search?a=1"}
-        crlf_hit = {"severity": "high", "payload_type": "url_encoded_rn",
-                    "url": "http://example.com/search?a=1", "param": "a"}
 
         def fake_run(cmd, outfile=None, timeout=180):
             return cdx
@@ -180,23 +216,21 @@ class InjectionScanTest(unittest.TestCase):
              mock.patch.object(injection_scan, "_is_global_host", return_value=True), \
              mock.patch.object(SSTIScanner, "scan", return_value=[ssti_hit]), \
              mock.patch.object(NoSQLInjectionScanner, "scan", return_value=[nosqli_hit]), \
-             mock.patch.object(CRLFScanner, "scan", return_value=[crlf_hit]), \
              mock.patch.object(injection_scan, "_xss_reflected", return_value=None), \
              mock.patch.object(injection_scan, "_open_redirect", return_value=None):
             findings = run_injection_scan("example.com", self.outdir)
 
         by_t = {f["template"]: f for f in findings}
-        self.assertEqual(set(by_t), {"spyhunt-ssti", "spyhunt-nosqli", "spyhunt-crlf"})
+        self.assertEqual(set(by_t), {"spyhunt-ssti", "spyhunt-nosqli"})
         self.assertEqual(by_t["spyhunt-ssti"]["severity"], "critical")
-        self.assertEqual(by_t["spyhunt-ssti"]["evidence"], "49 found")
-        self.assertEqual(by_t["spyhunt-nosqli"]["severity"], "high")
-        self.assertEqual(by_t["spyhunt-crlf"]["severity"], "high")
+        self.assertEqual(by_t["spyhunt-ssti"]["evidence"], "60493827160493827 found")
+        self.assertEqual(by_t["spyhunt-nosqli"]["severity"], "medium")
         for f in findings:
             self.assertEqual(f["host"], "example.com")
 
     def test_scanner_args_seeded_url_and_param(self):
         cdx = make_cdx(["http://example.com/search?a=1&b=2"])
-        calls = {"ssti": [], "nosqli": [], "crlf": []}
+        calls = {"ssti": [], "nosqli": []}
 
         def ssti_scan(self, url, param, timeout=10):
             calls["ssti"].append((url, param))
@@ -206,10 +240,6 @@ class InjectionScanTest(unittest.TestCase):
             calls["nosqli"].append((url, param))
             return []
 
-        def crlf_scan(self, url, timeout=10):
-            calls["crlf"].append(url)
-            return []
-
         def fake_run(cmd, outfile=None, timeout=180):
             return cdx
 
@@ -217,13 +247,10 @@ class InjectionScanTest(unittest.TestCase):
              mock.patch.object(injection_scan, "_is_global_host", return_value=True), \
              mock.patch.object(SSTIScanner, "scan", ssti_scan), \
              mock.patch.object(NoSQLInjectionScanner, "scan", nosqli_scan), \
-             mock.patch.object(CRLFScanner, "scan", crlf_scan), \
              mock.patch.object(injection_scan, "_xss_reflected", return_value=None), \
              mock.patch.object(injection_scan, "_open_redirect", return_value=None):
             run_injection_scan("example.com", self.outdir)
 
-        # CRLF gets the seeded URL (both params non-blank), no param arg
-        self.assertEqual(calls["crlf"], ["http://example.com/search?a=1&b=1"])
         # SSTI + NoSQLi get (seeded_url, param) for each of a and b
         self.assertEqual([p for _, p in calls["ssti"]], ["a", "b"])
         self.assertEqual([p for _, p in calls["nosqli"]], ["a", "b"])
