@@ -284,7 +284,7 @@ def _clamp_concurrency(concurrency: int) -> int:
     return concurrency
 
 
-def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "high,critical",
+def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "low,medium,high,critical",
               concurrency: int = 25, timeout: int = 600) -> list[dict]:
     """Stage 5: run nuclei against live hosts, parse JSONL into findings."""
     utils.log("Stage 5 — vulnerability scan (nuclei)")

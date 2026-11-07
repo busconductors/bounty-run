@@ -28,8 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
-    p.add_argument("--nuclei-severity", default="high,critical",
-                   help="nuclei severity filter (default: high,critical)")
+    p.add_argument("--nuclei-severity", default="low,medium,high,critical",
+                   help="nuclei severity filter (default: low,medium,high,critical)")
     p.add_argument("--nuclei-c", type=_positive_int, default=25,
                    help="nuclei concurrency (default 25; auto-clamped by available RAM)")
     p.add_argument("--nuclei-timeout", type=_positive_int, default=600,
