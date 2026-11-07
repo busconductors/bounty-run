@@ -12,6 +12,7 @@ Flow:
     findings = param_scan("example.com", outdir)
 """
 import json
+import re
 import shlex
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -34,11 +35,18 @@ VULN_MARKERS = (
     "identified the following injection point",
 )
 
+# A sane query-parameter name: letters, digits, underscore, hyphen, and PHP-style
+# array brackets (idcat[], filter[cat]). Wayback frequently mis-parses minified
+# JS/JSON fragments into fake params like "0:this.cssPosition" or "obj.src:oldList";
+# those contain ":", ".", "/", "," or "!" and are rejected here.
+_VALID_PARAM = re.compile(r"^[A-Za-z0-9_\-]+(?:\[[A-Za-z0-9_\-]*\])?$")
+
 
 def _strip_param_values(url: str) -> str:
-    """Blank query-string values while keeping (unique, ordered) param names.
+    """Blank query-string values while keeping (unique, ordered, sane) param names.
 
     ``http://x/y?a=1&a=2&b=z`` -> ``http://x/y?a=&b=``
+    Returns ``""`` when no parameter name survives the sanity filter.
     """
     parts = urlsplit(url)
     if not parts.query:
@@ -46,9 +54,13 @@ def _strip_param_values(url: str) -> str:
     seen = set()
     names = []
     for key, _value in parse_qsl(parts.query, keep_blank_values=True):
+        if not _VALID_PARAM.match(key):
+            continue
         if key not in seen:
             seen.add(key)
             names.append(key)
+    if not names:
+        return ""
     query = "&".join(f"{key}=" for key in names)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
@@ -109,6 +121,8 @@ def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
         if not _in_scope(url, target):
             continue
         norm = _strip_param_values(url)
+        if not norm:  # no sane parameter names survived the filter
+            continue
         if norm not in seen:
             seen.add(norm)
             endpoints.append(norm)

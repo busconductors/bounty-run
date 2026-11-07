@@ -193,7 +193,7 @@ class TestWriteFindingsReport(unittest.TestCase):
         self.assertEqual(n, 0)
         md = (self.outdir / "FINDINGS.md").read_text()
         self.assertIn("# Findings — example.com", md)
-        self.assertIn("_No vulnerabilities found by nuclei._", md)
+        self.assertIn("_No vulnerabilities found._", md)
         self.assertNotIn("## Severity", md)
         data = json.loads((self.outdir / "findings.json").read_text())
         self.assertEqual(data, [])
@@ -212,6 +212,22 @@ class TestWriteFindingsReport(unittest.TestCase):
         report.write_findings_report(self.outdir, "example.com", [], [])
         md = (self.outdir / "FINDINGS.md").read_text()
         self.assertNotIn("## Discovered content", md)
+
+    def test_origins_section_appears_when_origins_passed(self):
+        origins = [
+            {"ip": "203.0.113.10", "status": "200", "sources": ["apply.example.com", "library.example.com"]},
+            {"ip": "203.0.113.11", "status": "404", "sources": ["payments.example.com"]},
+        ]
+        report.write_findings_report(self.outdir, "example.com", [], [], origins=origins)
+        md = (self.outdir / "FINDINGS.md").read_text()
+        self.assertIn("## Origin candidates (behind Cloudflare)", md)
+        self.assertIn("- `203.0.113.10` — HTTP 200 — via apply.example.com, library.example.com", md)
+        self.assertIn("- `203.0.113.11` — HTTP 404 — via payments.example.com", md)
+
+    def test_no_origins_section_when_origins_empty(self):
+        report.write_findings_report(self.outdir, "example.com", [], [], origins=[])
+        md = (self.outdir / "FINDINGS.md").read_text()
+        self.assertNotIn("## Origin candidates", md)
 
     def test_writes_into_preexisting_nested_outdir(self):
         # write_findings_report assumes outdir already exists (the CLI's main()

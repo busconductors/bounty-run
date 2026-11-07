@@ -234,7 +234,7 @@ def main(argv=None) -> int:
     if "vuln" not in skip:
         findings = stages.vuln_scan(target, outdir, rows, severity=args.nuclei_severity,
                                     concurrency=args.nuclei_c, timeout=args.nuclei_timeout)
-        report.write_findings_report(outdir, target, findings, [])
+        report.write_findings_report(outdir, target, findings, [], origins=origins)
 
     content = []
     if "content" not in skip:
@@ -243,7 +243,7 @@ def main(argv=None) -> int:
     if "param" not in skip:
         findings += param_scan.param_scan(target, outdir, args.max_param_urls)
 
-    n_findings = report.write_findings_report(outdir, target, findings, content)
+    n_findings = report.write_findings_report(outdir, target, findings, content, origins=origins)
 
     print_findings_table(findings)
 

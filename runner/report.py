@@ -17,7 +17,8 @@ def dedupe(findings: list[dict]) -> list[dict]:
     return unique
 
 
-def write_findings_report(outdir: Path, target: str, findings: list[dict], content: list[str]) -> int:
+def write_findings_report(outdir: Path, target: str, findings: list[dict], content: list[str],
+                          origins: list[dict] | None = None) -> int:
     """Write deduped findings to findings.json + FINDINGS.md; return count."""
     findings = dedupe(findings)
     findings.sort(key=lambda f: SEVERITY_ORDER.get(f.get("severity", "unknown"), 9))
@@ -26,7 +27,7 @@ def write_findings_report(outdir: Path, target: str, findings: list[dict], conte
     sev = Counter(f.get("severity", "unknown") for f in findings)
     lines = [f"# Findings — {target}", ""]
     if not findings:
-        lines.append("_No vulnerabilities found by nuclei._")
+        lines.append("_No vulnerabilities found._")
     else:
         lines += ["## Severity", ""]
         for s in ("critical", "high", "medium", "low", "info", "unknown"):
@@ -38,6 +39,13 @@ def write_findings_report(outdir: Path, target: str, findings: list[dict], conte
             lines.append(f"- URL: {f.get('url')}")
             lines.append(f"- Template: `{f.get('template')}`")
             lines.append("")
+    if origins:
+        lines += ["", "## Origin candidates (behind Cloudflare)", ""]
+        lines += [
+            f"- `{o.get('ip', '')}` — HTTP {o.get('status', '')} — via {', '.join(o.get('sources', []))}"
+            for o in origins
+        ]
+        lines.append("")
     if content:
         lines += ["## Discovered content", ""]
         lines += [f"- `{p}`" for p in sorted(content)]

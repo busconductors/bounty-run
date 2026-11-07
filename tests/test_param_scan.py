@@ -147,6 +147,23 @@ class ParamScanTest(unittest.TestCase):
         self.assertIn("is vulnerable", report)
         self.assertIn("http://example.com/x?a=", report)
 
+    def test_junk_js_fragment_params_are_filtered(self):
+        self._patch(cdx_urls=[
+            "http://example.com/?0:this.cssPosition=",
+            "http://example.com/?a.offsetWidth:a.offsetHeight,e=",
+            "http://example.com/?obj.src:oldList=",
+            "http://example.com/?d!=",
+            "http://example.com/?idcat=",              # sane -> kept
+            "http://example.com/?client=&lang=",        # sane -> kept
+        ])
+        param_scan("example.com", self.outdir)
+        urls = (self.outdir / "param_urls.txt").read_text().splitlines()
+        self.assertEqual(urls, [
+            "http://example.com/?idcat=",
+            "http://example.com/?client=&lang=",
+        ])
+        self.assertEqual(len(self.sqlmap_calls), 2)
+
     def test_empty_cdx_returns_empty_without_writing(self):
         self._patch(cdx_urls=[], sqlmap_out="is vulnerable")
         findings = param_scan("example.com", self.outdir)
