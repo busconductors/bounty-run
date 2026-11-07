@@ -59,11 +59,25 @@ def write_summary(outdir: Path, target: str, subs: list[str], rows: list[dict], 
     utils.log(f"summary -> {outdir / 'SUMMARY.md'}")
 
 
+def _normalize_target(raw: str) -> str:
+    """Coerce user input to a bare hostname; return '' if invalid."""
+    t = raw.strip().lower()
+    if "://" in t:
+        t = t.split("://", 1)[1]
+    t = t.split("/", 1)[0].split(":", 1)[0].rstrip(".")
+    if not t or any(c in t for c in " \\;&|`$<>*?[]{}()'\"!\t\n"):
+        return ""
+    if ".." in t or t.startswith("-") or t.endswith("-"):
+        return ""
+    return t
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    target = args.target.strip().rstrip("/").lower()
+    target = _normalize_target(args.target)
     if not target:
-        print("error: empty target", file=__import__("sys").stderr)
+        print("error: invalid target — use a bare domain (e.g. example.com)",
+              file=__import__("sys").stderr)
         return 2
 
     if args.output_dir:

@@ -1,6 +1,7 @@
 """Recon stages. Each stage reads prior output and writes its own artifacts."""
 import ipaddress
 import json
+import shlex
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -26,7 +27,7 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True) -> list[s
                         outfile=str(outdir / "subfinder.txt"), timeout=300)
         for line in txt.splitlines():
             line = line.strip().lower()
-            if line and not line.startswith(("#", "[", "-", "*")) and target in line:
+            if line and not line.startswith(("#", "[", "-", "*")) and (line == target or line.endswith("." + target)):
                 subs.add(line)
     else:
         utils.warn("subfinder not found — skipping")
@@ -36,7 +37,7 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True) -> list[s
                         outfile=str(outdir / "amass.txt"), timeout=300)
         for line in txt.splitlines():
             line = line.strip().lower()
-            if line and target in line and not line.startswith(("#", "[", "-", "*")):
+            if line and not line.startswith(("#", "[", "-", "*")) and (line == target or line.endswith("." + target)):
                 subs.add(line)
 
     outfile = outdir / "subdomains.txt"
@@ -198,6 +199,9 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
 
     cf_ranges = _cloudflare_ranges()
     utils.log(f"  loaded {len(cf_ranges)} Cloudflare ranges (AS13335)")
+    if not cf_ranges:
+        utils.warn("  could not load Cloudflare ranges — aborting origin hunt (would false-positive)")
+        return []
 
     candidates = {}  # ip -> list of sources
 
@@ -248,7 +252,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     hosts_file.write_text("\n".join(hosts) + "\n")
     utils.log(f"  scanning {len(hosts)} host(s) [{severity}] — this can take a few minutes")
     utils.run(
-        f"nuclei -l {hosts_file} -severity {severity} -c {concurrency} "
+        f"nuclei -l {hosts_file} -severity {shlex.quote(severity)} -c {concurrency} "
         f"-jsonl -silent -o {outdir / 'nuclei.jsonl'}",
         timeout=timeout,
     )
@@ -262,6 +266,8 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
             try:
                 j = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(j, dict):
                 continue
             findings.append({
                 "severity": (j.get("info") or {}).get("severity", "unknown"),
@@ -284,7 +290,7 @@ def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 4
         utils.warn(f"wordlist not found: {wordlist} — skipping ffuf")
         return []
     out = utils.run(
-        f"ffuf -u https://{target}/FUZZ -w {wordlist} "
+        f"ffuf -u https://{target}/FUZZ -w {shlex.quote(wordlist)} "
         f"-mc 200,204,301,302,307,401,403 -ac -t {threads} -s",
         timeout=600,
     )

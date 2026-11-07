@@ -19,14 +19,18 @@ from runner import report  # noqa: E402
 
 
 def finding(template="tmpl", host="example.com", severity="info",
-            name=None, url="https://example.com/x"):
-    return {
+            name: str | None = "__default__", url="https://example.com/x"):
+    d = {
         "severity": severity,
         "template": template,
-        "name": name or f"Name for {template}",
         "url": url,
         "host": host,
     }
+    if name == "__default__":
+        d["name"] = f"Name for {template}"
+    elif name is not None:
+        d["name"] = name
+    return d
 
 
 class TestDedupe(unittest.TestCase):
@@ -203,8 +207,11 @@ class TestWriteFindingsReport(unittest.TestCase):
         md = (self.outdir / "FINDINGS.md").read_text()
         self.assertNotIn("## Discovered content", md)
 
-    def test_creates_outdir_if_missing(self):
+    def test_writes_into_preexisting_nested_outdir(self):
+        # write_findings_report assumes outdir already exists (the CLI's main()
+        # creates it via outdir.mkdir). It does NOT auto-create directories.
         nested = self.outdir / "a" / "b"
+        nested.mkdir(parents=True)
         report.write_findings_report(nested, "example.com", [], [])
         self.assertTrue((nested / "findings.json").exists())
 

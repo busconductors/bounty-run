@@ -22,7 +22,7 @@ def have(tool: str) -> bool:
 
 
 def run(cmd: str, outfile: str = None, timeout: int = 180) -> str:
-    """Run a shell command, capture output, optionally persist to `outfile`."""
+    """Run a shell command, return stdout only; surface stderr on failure."""
     log(f"  $ {cmd}")
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -32,7 +32,9 @@ def run(cmd: str, outfile: str = None, timeout: int = 180) -> str:
     except Exception as e:  # noqa: BLE001
         warn(f"  failed: {e}")
         return ""
-    text = (r.stdout or "") + "\n" + (r.stderr or "")
+    if r.returncode != 0 and r.stderr:
+        warn(f"  exit {r.returncode}: {r.stderr.strip()[:200]}")
+    text = r.stdout or ""
     if outfile:
         p = Path(outfile)
         p.parent.mkdir(parents=True, exist_ok=True)
