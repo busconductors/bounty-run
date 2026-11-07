@@ -234,7 +234,8 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
 # --- Stage 5 & 6: vulnerability scan + content discovery ---
 
 
-def vuln_scan(target: str, outdir: Path, live_rows: list[dict]) -> list[dict]:
+def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "high,critical",
+              concurrency: int = 50, timeout: int = 600) -> list[dict]:
     """Stage 5: run nuclei against live hosts, parse JSONL into findings."""
     utils.log("Stage 5 — vulnerability scan (nuclei)")
     if not utils.have("nuclei"):
@@ -245,11 +246,11 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict]) -> list[dict]:
         hosts = [target]
     hosts_file = outdir / "nuclei_targets.txt"
     hosts_file.write_text("\n".join(hosts) + "\n")
-    utils.log(f"  scanning {len(hosts)} host(s) — this can take a few minutes")
+    utils.log(f"  scanning {len(hosts)} host(s) [{severity}] — this can take a few minutes")
     utils.run(
-        f"nuclei -l {hosts_file} -severity low,medium,high,critical "
+        f"nuclei -l {hosts_file} -severity {severity} -c {concurrency} "
         f"-jsonl -silent -o {outdir / 'nuclei.jsonl'}",
-        timeout=900,
+        timeout=timeout,
     )
     findings = []
     jl = outdir / "nuclei.jsonl"
@@ -284,7 +285,7 @@ def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 4
         return []
     out = utils.run(
         f"ffuf -u https://{target}/FUZZ -w {wordlist} "
-        f"-mc 200,204,301,302,307,401,403 -t {threads} -s",
+        f"-mc 200,204,301,302,307,401,403 -ac -t {threads} -s",
         timeout=600,
     )
     paths = sorted({line.strip() for line in out.splitlines() if line.strip()})

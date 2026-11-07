@@ -9,7 +9,7 @@ origin IP, scans for vulns, and produces a deduped report.
 ## Usage
 
 ```
-bounty-run example.com                 # full sweep, output to ~/.bounty-run/
+bounty-run example.com                 # full sweep, output to ~/bounty-run/
 bounty-run example.com -o results/     # custom output dir
 bounty-run example.com --amass         # also run amass passive enum
 bounty-run example.com --timeout 5     # faster HTTP probe
@@ -19,7 +19,7 @@ bounty-run example.com --skip amass    # skip a stage (subs,live,cf)
 ## Output (per run)
 
 ```
-~/.bounty-run/<target>/<timestamp>/
+~/bounty-run/<target>/<timestamp>/
 ├── subfinder.txt           # raw subfinder output
 ├── subdomains.txt          # deduped subdomain list
 ├── live_hosts.txt          # host → status → server → CF flag
