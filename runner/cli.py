@@ -5,8 +5,8 @@ import re
 import time
 from pathlib import Path
 
-from . import (__version__, banner, dashboard, metis_check, origin_deep, param_scan,
-               report, secret_scan, stages, tracker, utils)
+from . import (__version__, banner, dashboard, headi_scan, http_headers, metis_check,
+               origin_deep, param_scan, report, secret_scan, stages, tracker, utils)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -24,8 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
-    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,secret,metis")
+    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,secret,headers,cors,metis,headi")
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
+    p.add_argument("--headi", action="store_true", help="also run the headi header-injection scan (off by default; intrusive)")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
     p.add_argument("--nuclei-severity", default="low,medium,high,critical",
@@ -250,9 +251,16 @@ def main(argv=None) -> int:
     if "secret" not in skip:
         findings += secret_scan.secret_scan(target, outdir)
 
+    live = [r["host"] for r in rows if r["status"]] or [target]
     if "metis" not in skip and args.metis:
-        live = [r["host"] for r in rows if r["status"]]
         findings += metis_check.metis_check(target, outdir, live)
+
+    if "headers" not in skip:
+        findings += http_headers.security_headers_scan(target, outdir, live)
+    if "cors" not in skip:
+        findings += http_headers.cors_scan(target, outdir, live)
+    if "headi" not in skip and args.headi:
+        findings += headi_scan.headi_scan(target, outdir, rows)
 
     duration_s = time.monotonic() - start
     m = report.build_metrics(target, subs, rows, cf, origins, findings, content, duration_s, skip)

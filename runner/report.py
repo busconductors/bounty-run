@@ -66,7 +66,7 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
     live = [r for r in rows if r.get("status")]
     cf_hosts = [r for r in live if r.get("cloudflare")]
 
-    secret = sqli = metis = 0
+    secret = sqli = metis = headers_missing = headers_insecure = cors = headi = 0
     sev: Counter = Counter()
     for f in findings:
         template = f.get("template") or ""
@@ -78,6 +78,14 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
             secret += 1
         elif template == "sqlmap-sqli":
             sqli += 1
+        elif template.startswith("missing-security-header:"):
+            headers_missing += 1
+        elif template.startswith("insecure-security-header:"):
+            headers_insecure += 1
+        elif template.startswith("cors-misconfiguration:"):
+            cors += 1
+        elif template.startswith("headi:"):
+            headi += 1
         else:
             sev[(f.get("severity") or "unknown").lower()] += 1
 
@@ -94,6 +102,10 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
         if sev.get(severity):
             metrics.append((f"Nuclei findings — {severity}", str(sev[severity])))
     metrics += [
+        ("Missing security headers", str(headers_missing)),
+        ("Insecure security headers", str(headers_insecure)),
+        ("CORS misconfigurations", str(cors)),
+        ("Header injection (headi)", str(headi)),
         ("Secret-exposure", str(secret)),
         ("sqlmap-sqli", str(sqli)),
         ("Metis", str(metis)),
