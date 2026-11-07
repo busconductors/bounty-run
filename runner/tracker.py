@@ -4,7 +4,7 @@ Standalone module with its own CLI (``tracker.main(argv)``).  The operator wires
 this into ``bounty_run.py`` as the ``track`` subcommand; this module is self-
 contained and imports nothing but the stdlib.
 
-DB location: ``~/bounty-run/tracker.db`` (override with ``get_db(path=...)`` or by
+DB location: ``~/tools/bounty-run/outputs/tracker.db`` (override with ``get_db(path=...)`` or by
 repointing ``tracker.DEFAULT_DB`` — used by the unit tests so they never touch the
 real database).
 """
@@ -27,7 +27,7 @@ CANONICAL_STATUSES = (
 )
 
 #: Default on-disk location.  Reassign for testability.
-DEFAULT_DB = Path.home() / "bounty-run" / "tracker.db"
+DEFAULT_DB = Path(__file__).resolve().parent.parent / "outputs" / "tracker.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS targets (
