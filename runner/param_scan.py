@@ -106,13 +106,14 @@ def _in_scope(url: str, target: str) -> bool:
     return host == target or host.endswith("." + target)
 
 
-def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
-    """Discover parameterized URLs via Wayback CDX and test them with sqlmap.
+def discover_endpoints(target: str, outdir: Path, max_urls: int = 50) -> list[str]:
+    """Wayback CDX discovery -> _strip_param_values -> _VALID_PARAM filter -> dedupe -> cap.
 
-    Returns a list of findings; dedupe happens later at the cli.py layer.
+    Shared by ``param_scan`` (sqlmap) and ``injection_scan`` (SSTI/NoSQLi/CRLF/XSS/
+    open-redirect). Writes ``outdir/param_urls.txt`` idempotently; returns the
+    normalized endpoint list (empty when nothing discovered, in which case the file
+    is not written).
     """
-    findings: list[dict] = []
-
     raw = utils.run(CDX_URL.format(target=target), timeout=60)
 
     endpoints = []
@@ -136,6 +137,19 @@ def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
 
     (outdir / "param_urls.txt").write_text("\n".join(endpoints) + "\n")
     utils.log(f"  discovered {len(endpoints)} parameterized endpoint(s) for {target}")
+    return endpoints
+
+
+def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
+    """Discover parameterized URLs via Wayback CDX and test them with sqlmap.
+
+    Returns a list of findings; dedupe happens later at the cli.py layer.
+    """
+    findings: list[dict] = []
+
+    endpoints = discover_endpoints(target, outdir, max_urls)
+    if not endpoints:
+        return []
 
     if not utils.have("sqlmap"):
         utils.warn("  sqlmap not found on PATH; skipping injection testing")

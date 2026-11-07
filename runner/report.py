@@ -3,6 +3,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from .metis_check import AUX_EXPLOIT_MAP
+
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
 
 
@@ -15,6 +17,39 @@ def dedupe(findings: list[dict]) -> list[dict]:
             seen.add(key)
             unique.append(f)
     return unique
+
+
+def _metis_module_path(finding: dict) -> str | None:
+    """Return the Metis module path for a `metis:<path>` finding, else None."""
+    template = finding.get("template") or ""
+    if not isinstance(template, str) or not template.startswith("metis:"):
+        return None
+    return template[len("metis:"):]
+
+
+def _render_finding_lines(f: dict) -> list[str]:
+    """Render one finding's FINDINGS.md block (header + body + blank line)."""
+    severity = (f.get("severity") or "unknown").upper()
+    lines = [
+        f"### [{severity}] {f.get('name') or f.get('template')}",
+        f"- URL: {f.get('url')}",
+        f"- Template: `{f.get('template')}`",
+    ]
+    if f.get("evidence"):
+        lines.append(f"- Evidence: {f.get('evidence')}")
+
+    module_path = _metis_module_path(f)
+    if module_path:
+        host = f.get("host") or ""
+        lines.append("- Confirm (manual, authorized scope only):")
+        lines.append(f"    metis> use {module_path}")
+        lines.append(f"    metis> set RHOSTS {host}")
+        lines.append("    metis> check")
+        exploit = AUX_EXPLOIT_MAP.get(module_path)
+        if exploit:
+            lines.append(f"    # exploit: {exploit}")
+    lines.append("")
+    return lines
 
 
 def write_findings_report(outdir: Path, target: str, findings: list[dict], content: list[str],
@@ -35,10 +70,7 @@ def write_findings_report(outdir: Path, target: str, findings: list[dict], conte
                 lines.append(f"- **{s}**: {sev[s]}")
         lines += ["", "## Vulnerabilities", ""]
         for f in findings:
-            lines.append(f"### [{f['severity'].upper()}] {f.get('name') or f.get('template')}")
-            lines.append(f"- URL: {f.get('url')}")
-            lines.append(f"- Template: `{f.get('template')}`")
-            lines.append("")
+            lines += _render_finding_lines(f)
     if origins:
         lines += ["", "## Origin candidates (behind Cloudflare)", ""]
         lines += [
