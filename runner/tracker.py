@@ -152,17 +152,22 @@ def list_findings(target=None, status=None) -> list[dict]:
 _UPDATEABLE = {"title", "severity", "url", "template", "status", "bounty", "notes"}
 
 
-def update_finding(fid, **fields) -> None:
-    """Update a finding by id with the given column -> value fields."""
+def update_finding(fid, **fields) -> bool:
+    """Update a finding by id with the given column -> value fields.
+
+    Returns True when a row was updated, False otherwise (no such id, or no
+    updateable fields supplied).
+    """
     updates = {k: v for k, v in fields.items() if k in _UPDATEABLE and v is not None}
     if not updates:
-        return
+        return False
     conn = get_db()
     try:
         cols = ", ".join(f"{k} = ?" for k in updates)
         vals = list(updates.values()) + [fid]
-        conn.execute(f"UPDATE findings SET {cols} WHERE id = ?", vals)
+        cur = conn.execute(f"UPDATE findings SET {cols} WHERE id = ?", vals)
         conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
@@ -257,8 +262,11 @@ def main(argv=None) -> int:
             fields["bounty"] = args.bounty
         if args.notes is not None:
             fields["notes"] = args.notes
-        update_finding(args.id, **fields)
-        print(f"updated #{args.id}")
+        if update_finding(args.id, **fields):
+            print(f"updated #{args.id}")
+        else:
+            print(f"error: no finding with id #{args.id}", file=sys.stderr)
+            return 1
     elif cmd == "stats":
         s = stats()
         print(f"findings: {s['total_findings']} | bounty: ${s['total_bounty']:g}")

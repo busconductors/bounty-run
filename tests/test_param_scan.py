@@ -113,6 +113,30 @@ class ParamScanTest(unittest.TestCase):
         findings = param_scan("example.com", self.outdir)
         self.assertEqual(findings, [])
 
+    def test_negative_injectable_message_produces_no_finding(self):
+        # "injectable" also appears in sqlmap's NEGATIVE messages, which must
+        # NOT be treated as a finding (regression guard for the false-positive bug).
+        self._patch(cdx_urls=["http://example.com/x?a=1"],
+                    sqlmap_out="Parameter 'a' does not seem to be injectable")
+        findings = param_scan("example.com", self.outdir)
+        self.assertEqual(findings, [])
+
+    def test_out_of_scope_urls_are_filtered(self):
+        self._patch(cdx_urls=[
+            "http://example.com/x?a=1",        # in scope (apex)
+            "http://sub.example.com/x?a=1",    # in scope (subdomain)
+            "http://evil.com/x?a=1",           # out of scope
+            "https://not-example.com/x?a=1",   # out of scope (suffix lookalike)
+            "ftp://example.com/x?a=1",         # out of scope (non-http scheme)
+        ])
+        param_scan("example.com", self.outdir)
+        urls = (self.outdir / "param_urls.txt").read_text().splitlines()
+        self.assertEqual(urls, [
+            "http://example.com/x?a=",
+            "http://sub.example.com/x?a=",
+        ])
+        self.assertEqual(len(self.sqlmap_calls), 2)
+
     def test_writes_both_report_files(self):
         self._patch(cdx_urls=["http://example.com/x?a=1"],
                     sqlmap_out="is vulnerable")

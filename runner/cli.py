@@ -1,5 +1,6 @@
 """Bounty Runner CLI — orchestrate the recon pipeline."""
 import argparse
+import re
 import time
 from pathlib import Path
 
@@ -14,20 +15,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("target", help="target domain (e.g. example.com)")
     p.add_argument("-o", "--output-dir", help="output directory (default: ~/bounty-run/<target>/<ts>)")
     p.add_argument("--amass", action="store_true", help="also run amass passive enum (needs API keys to be useful)")
-    p.add_argument("--timeout", type=int, default=8, help="HTTP probe timeout in seconds (default 8)")
-    p.add_argument("--threads", type=int, default=30, help="concurrent HTTP probe threads (default 30)")
-    p.add_argument("--max-hosts", type=int, default=1000, help="cap on hosts to probe (default 1000)")
+    p.add_argument("--timeout", type=_positive_int, default=8, help="HTTP probe timeout in seconds (default 8)")
+    p.add_argument("--threads", type=_positive_int, default=30, help="concurrent HTTP probe threads (default 30)")
+    p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
     p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param")
-    p.add_argument("--max-param-urls", type=int, default=50,
+    p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
     p.add_argument("--nuclei-severity", default="high,critical",
                    help="nuclei severity filter (default: high,critical)")
-    p.add_argument("--nuclei-c", type=int, default=50, help="nuclei concurrency (default 50)")
-    p.add_argument("--nuclei-timeout", type=int, default=600,
+    p.add_argument("--nuclei-c", type=_positive_int, default=50, help="nuclei concurrency (default 50)")
+    p.add_argument("--nuclei-timeout", type=_positive_int, default=600,
                    help="nuclei timeout in seconds (default 600)")
     return p
+
+
+def _positive_int(value: str) -> int:
+    """argparse type: integer that must be >= 1."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be >= 1")
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return n
 
 
 def write_summary(outdir: Path, target: str, subs: list[str], rows: list[dict], cf: dict, origins: list[dict]) -> None:
@@ -67,11 +79,28 @@ def _normalize_target(raw: str) -> str:
     if "://" in t:
         t = t.split("://", 1)[1]
     t = t.split("/", 1)[0].split(":", 1)[0].rstrip(".")
-    if not t or any(c in t for c in " \\;&|`$<>*?[]{}()'\"!\t\n"):
-        return ""
-    if ".." in t or t.startswith("-") or t.endswith("-"):
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+", t):
         return ""
     return t
+
+
+def _merge_origins_by_ip(origins: list[dict]) -> list[dict]:
+    """Merge origin entries sharing the same ip, concatenating their sources."""
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for o in origins:
+        ip = o.get("ip")
+        if ip is None:
+            continue
+        if ip in merged:
+            for src in o.get("sources", []):
+                if src not in merged[ip]["sources"]:
+                    merged[ip]["sources"].append(src)
+        else:
+            merged[ip] = dict(o)
+            merged[ip]["sources"] = list(o.get("sources", []))
+            order.append(ip)
+    return [merged[ip] for ip in order]
 
 
 def main(argv=None) -> int:
@@ -110,6 +139,7 @@ def main(argv=None) -> int:
         origins = stages.origin_hunt(target, outdir, cf)
         if "origin_deep" not in skip:
             origins += origin_deep.origin_deep(target, outdir, cf)
+    origins = _merge_origins_by_ip(origins)
 
     write_summary(outdir, target, subs, rows, cf, origins)
 
@@ -132,7 +162,7 @@ def main(argv=None) -> int:
         utils.log(f"{n_findings} unique finding(s) -> {outdir / 'FINDINGS.md'}")
     if cf["cloudflare"]:
         if origins:
-            utils.log(f"origin candidates found — check {outdir / 'origin_candidates.txt'}")
+            utils.log(f"origin candidates found — check {outdir / 'origin_candidates.txt'} and {outdir / 'origin_deep.txt'}")
         else:
             utils.warn("no origin candidates surfaced — try crt.sh history + Shodan next")
 

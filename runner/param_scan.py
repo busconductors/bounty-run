@@ -26,10 +26,12 @@ CDX_URL = (
 SQLMAP_FLAGS = "--batch --level 1 --risk 1 --smart --flush-session"
 
 # Case-insensitive markers that indicate sqlmap found something injectable.
+# NOTE: "injectable" is deliberately excluded — it also matches sqlmap's
+# NEGATIVE messages ("does not seem to be injectable"), which caused
+# false positives on nearly every endpoint.
 VULN_MARKERS = (
     "is vulnerable",
     "identified the following injection point",
-    "injectable",
 )
 
 
@@ -79,6 +81,19 @@ def _is_injectable(stdout: str) -> bool:
     return any(marker in low for marker in VULN_MARKERS)
 
 
+def _in_scope(url: str, target: str) -> bool:
+    """Return True if ``url`` is an http(s) URL on ``target`` or a subdomain.
+
+    ``http://sub.example.com/x`` -> True; ``http://evil.com/x`` -> False.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return False
+    host = (parts.hostname or "").lower()
+    target = target.lower()
+    return host == target or host.endswith("." + target)
+
+
 def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
     """Discover parameterized URLs via Wayback CDX and test them with sqlmap.
 
@@ -91,6 +106,8 @@ def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
     endpoints = []
     seen = set()
     for url in _discover_urls(raw):
+        if not _in_scope(url, target):
+            continue
         norm = _strip_param_values(url)
         if norm not in seen:
             seen.add(norm)

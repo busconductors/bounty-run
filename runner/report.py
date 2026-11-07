@@ -7,10 +7,10 @@ SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "u
 
 
 def dedupe(findings: list[dict]) -> list[dict]:
-    """Drop duplicate findings (same template on the same host)."""
+    """Drop duplicate findings (same template on the same host for the same URL)."""
     seen, unique = set(), []
     for f in findings:
-        key = (f.get("template"), f.get("host"))
+        key = (f.get("template"), f.get("host"), f.get("url"))
         if key not in seen:
             seen.add(key)
             unique.append(f)

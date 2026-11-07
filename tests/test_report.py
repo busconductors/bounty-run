@@ -37,22 +37,28 @@ class TestDedupe(unittest.TestCase):
     def test_empty_input_returns_empty_list(self):
         self.assertEqual(report.dedupe([]), [])
 
-    def test_collapses_duplicate_template_host_pairs(self):
+    def test_collapses_duplicate_template_host_url_triples(self):
         findings = [
-            finding(template="t1", host="a.com", severity="high"),
-            finding(template="t1", host="a.com", severity="low"),   # dup
-            finding(template="t2", host="a.com", severity="medium"),
-            finding(template="t1", host="b.com", severity="critical"),  # same template, diff host
+            finding(template="t1", host="a.com", severity="high", url="https://a.com/one"),
+            finding(template="t1", host="a.com", severity="low", url="https://a.com/two"),   # same template+host, diff url -> kept
+            finding(template="t1", host="a.com", severity="medium", url="https://a.com/one"),  # identical triple -> dropped
+            finding(template="t2", host="a.com", severity="medium", url="https://a.com/one"),
+            finding(template="t1", host="b.com", severity="critical", url="https://a.com/one"),  # same template, diff host
         ]
         out = report.dedupe(findings)
-        self.assertEqual(len(out), 3)
-        keys = [(f["template"], f["host"]) for f in out]
-        self.assertEqual(keys, [("t1", "a.com"), ("t2", "a.com"), ("t1", "b.com")])
+        self.assertEqual(len(out), 4)
+        keys = [(f["template"], f["host"], f["url"]) for f in out]
+        self.assertEqual(keys, [
+            ("t1", "a.com", "https://a.com/one"),
+            ("t1", "a.com", "https://a.com/two"),
+            ("t2", "a.com", "https://a.com/one"),
+            ("t1", "b.com", "https://a.com/one"),
+        ])
 
     def test_keeps_first_occurrence_of_duplicate(self):
         findings = [
             finding(template="t1", host="a.com", severity="critical", url="https://a.com/first"),
-            finding(template="t1", host="a.com", severity="info", url="https://a.com/second"),
+            finding(template="t1", host="a.com", severity="info", url="https://a.com/first"),  # identical triple -> dup
         ]
         out = report.dedupe(findings)
         self.assertEqual(len(out), 1)

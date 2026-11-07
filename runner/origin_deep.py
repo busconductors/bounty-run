@@ -13,10 +13,19 @@ Manual (NOT automated — needs API keys) fingerprints that also work here:
 
 Run these by hand when crt.sh alone does not surface the origin.
 """
+import ipaddress
 import json
 from pathlib import Path
 
 from . import stages, utils
+
+
+def _is_global(ip: str) -> bool:
+    """True if ``ip`` is a global (non-private, non-loopback, etc.) address."""
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
 
 
 def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
@@ -77,14 +86,14 @@ def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     candidates = {}  # ip -> list of subdomains that resolved to it
     for sub in sorted(subs):
         ip = stages._resolve(sub)
-        if ip and not stages._is_cloudflare(ip, ranges):
+        if ip and _is_global(ip) and not stages._is_cloudflare(ip, ranges):
             candidates.setdefault(ip, []).append(sub)
 
     # 6. Verify each candidate by force-connecting to the origin IP.
     rows = []
     for ip, sources in sorted(candidates.items()):
         out = utils.run(
-            f"curl -sS -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
+            f"curl -sS -k -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
             f"--resolve {target}:443:{ip} --max-time 12 https://{target}",
             timeout=20,
         )

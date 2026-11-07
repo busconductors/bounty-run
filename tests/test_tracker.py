@@ -119,6 +119,9 @@ class TestUpdateFinding(TrackerTestCase):
         self.assertEqual(rows[0]["status"], "triaged")
         self.assertEqual(rows[0]["title"], "XSS")
 
+    def test_update_nonexistent_id_returns_false(self):
+        self.assertFalse(tracker.update_finding(999999, status="paid"))
+
 
 class TestStats(TrackerTestCase):
     def test_stats_counts_statuses_and_totals_bounty(self):
@@ -166,6 +169,9 @@ class TestCli(TrackerTestCase):
         self.assertEqual(tracker.main(["update", str(fid), "--status", "paid",
                                        "--bounty", "99"]), 0)
         self.assertEqual(tracker.list_findings()[0]["status"], "paid")
+
+    def test_cli_update_nonexistent_id_returns_1(self):
+        self.assertEqual(tracker.main(["update", "999999", "--status", "paid"]), 1)
 
 
 if __name__ == "__main__":

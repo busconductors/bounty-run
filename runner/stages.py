@@ -48,12 +48,22 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True) -> list[s
 
 def _probe_host(sub: str, timeout: int) -> dict:
     """Probe one host over HTTPS then HTTP; return its status row."""
+    # SSRF guard: only probe publicly-routable addresses.
+    try:
+        resolved = socket.gethostbyname(sub)
+        if not ipaddress.ip_address(resolved).is_global:
+            return {"host": sub, "url": "", "status": 0, "server": "", "cloudflare": False}
+    except Exception:  # noqa: BLE001
+        return {"host": sub, "url": "", "status": 0, "server": "", "cloudflare": False}
+
     for scheme in ("https", "http"):
         url = f"{scheme}://{sub}"
         try:
-            r = requests.get(url, timeout=timeout, verify=False, allow_redirects=True)
+            r = requests.get(url, timeout=timeout, verify=False,
+                             allow_redirects=False, stream=True)
             server = r.headers.get("Server", "")
             is_cf = "cf-ray" in r.headers or "cloudflare" in server.lower()
+            r.close()
             return {"host": sub, "url": r.url, "status": r.status_code,
                     "server": server, "cloudflare": is_cf}
         except Exception:  # noqa: BLE001
@@ -99,7 +109,7 @@ def cloudflare_detect(target: str, outdir: Path) -> dict:
 
     if HAVE_REQUESTS:
         try:
-            r = requests.get(f"https://{target}", timeout=10, verify=False, allow_redirects=True)
+            r = requests.get(f"https://{target}", timeout=10, verify=False, allow_redirects=False)
             h = r.headers
             if "cf-ray" in h:
                 result["cloudflare"] = True
@@ -180,10 +190,18 @@ def _is_cloudflare(ip: str, ranges) -> bool:
         return False
 
 
+def _is_global(ip: str) -> bool:
+    """True if `ip` is a publicly-routable address; False on parse failure."""
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
+
+
 def _verify_origin(target: str, ip: str) -> dict:
     """Force-connect to `ip` for `target` and check if it serves the site."""
     out = utils.run(
-        f"curl -sS -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
+        f"curl -sS -k -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
         f"--resolve {target}:443:{ip} --max-time 12 https://{target}",
         timeout=20,
     )
@@ -206,7 +224,7 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     candidates = {}  # ip -> list of sources
 
     def add(ip: str, source: str) -> None:
-        if ip and not _is_cloudflare(ip, cf_ranges):
+        if ip and _is_global(ip) and not _is_cloudflare(ip, cf_ranges):
             candidates.setdefault(ip, []).append(source)
 
     for name in LEAK_SUBDOMAINS:
@@ -246,14 +264,16 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
         utils.warn("nuclei not found — skipping")
         return []
     hosts = sorted({r["host"] for r in live_rows if r["status"]})
+    # SSRF guard: drop hosts that resolve to non-public addresses.
+    hosts = [h for h in hosts if _is_global(_resolve(h))]
     if not hosts:
         hosts = [target]
     hosts_file = outdir / "nuclei_targets.txt"
     hosts_file.write_text("\n".join(hosts) + "\n")
     utils.log(f"  scanning {len(hosts)} host(s) [{severity}] — this can take a few minutes")
     utils.run(
-        f"nuclei -l {hosts_file} -severity {shlex.quote(severity)} -c {concurrency} "
-        f"-jsonl -silent -o {outdir / 'nuclei.jsonl'}",
+        f"nuclei -l {shlex.quote(str(hosts_file))} -severity {shlex.quote(severity)} "
+        f"-c {concurrency} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
         timeout=timeout,
     )
     findings = []
@@ -269,10 +289,14 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
                 continue
             if not isinstance(j, dict):
                 continue
+            info = j.get("info")
+            if not isinstance(info, dict):
+                info = {}
+            severity = str(info.get("severity") or "unknown").lower()
             findings.append({
-                "severity": (j.get("info") or {}).get("severity", "unknown"),
+                "severity": severity,
                 "template": j.get("template-id", ""),
-                "name": (j.get("info") or {}).get("name", ""),
+                "name": info.get("name", ""),
                 "url": j.get("matched-at", ""),
                 "host": j.get("host", ""),
             })

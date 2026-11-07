@@ -105,6 +105,30 @@ class OriginDeepTests(unittest.TestCase):
         self.assertNotIn("1.2.3.4", ips)
         self.assertNotIn("1.2.3.5", ips)
 
+    def test_private_and_loopback_ips_are_filtered_out(self):
+        resolve_map = {
+            "example.com": "10.0.0.1",       # private
+            "www.example.com": "127.0.0.1",  # loopback
+            "mail.example.com": "192.168.1.1",  # private
+            "dev.example.com": "8.8.8.8",    # global (kept)
+        }
+        with mock.patch.object(utils, "run", side_effect=fake_run), \
+             mock.patch.object(stages, "_resolve", side_effect=lambda h: resolve_map.get(h, "")), \
+             mock.patch.object(stages, "_cloudflare_ranges", return_value=list(CF_RANGES)):
+            rows = origin_deep.origin_deep(self.target, self.outdir, {})
+
+        ips = {r["ip"] for r in rows}
+        self.assertEqual(ips, {"8.8.8.8"})
+
+    def test_is_global_helper(self):
+        from runner import origin_deep as od
+        self.assertTrue(od._is_global("8.8.8.8"))
+        self.assertFalse(od._is_global("10.0.0.1"))
+        self.assertFalse(od._is_global("127.0.0.1"))
+        self.assertFalse(od._is_global("192.168.1.1"))
+        self.assertFalse(od._is_global("169.254.169.254"))  # link-local
+        self.assertFalse(od._is_global("not-an-ip"))
+
     def test_duplicate_sans_collapse_into_one_ip_with_multiple_sources(self):
         with mock.patch.object(utils, "run", side_effect=fake_run), \
              mock.patch.object(stages, "_resolve", side_effect=lambda h: RESOLVE_MAP.get(h, "")), \
