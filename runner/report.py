@@ -52,8 +52,68 @@ def _render_finding_lines(f: dict) -> list[str]:
     return lines
 
 
+def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
+                  origins: list[dict] | None, findings: list[dict], content: list[str],
+                  duration_s: float | None, skip: set[str] | None = None) -> list[tuple[str, str]]:
+    """Build the ordered ``(label, value)`` pairs for the executive overview.
+
+    Tallies run over ``report.dedupe(findings)`` so they match the report exactly.
+    Nuclei findings are everything that is not ``secret-exposure``, ``sqlmap-sqli``
+    or a ``metis:<path>`` template; their severity tally is lowercased and emitted
+    in ``SEVERITY_ORDER``.
+    """
+    findings = dedupe(findings)
+    live = [r for r in rows if r.get("status")]
+    cf_hosts = [r for r in live if r.get("cloudflare")]
+
+    secret = sqli = metis = 0
+    sev: Counter = Counter()
+    for f in findings:
+        template = f.get("template") or ""
+        if not isinstance(template, str):
+            template = ""
+        if template.startswith("metis:"):
+            metis += 1
+        elif template == "secret-exposure":
+            secret += 1
+        elif template == "sqlmap-sqli":
+            sqli += 1
+        else:
+            sev[(f.get("severity") or "unknown").lower()] += 1
+
+    metrics: list[tuple[str, str]] = [
+        ("Target", target),
+        ("Scan duration", f"{duration_s:.1f}s" if duration_s is not None else "n/a"),
+        ("Subdomains", str(len(subs or []))),
+        ("Live hosts", str(len(live))),
+        ("Cloudflare on target", "yes" if (cf or {}).get("cloudflare") else "no"),
+        ("Cloudflare-fronted hosts", str(len(cf_hosts))),
+        ("Origin candidates", str(len(origins or []))),
+    ]
+    for severity in SEVERITY_ORDER:
+        if sev.get(severity):
+            metrics.append((f"Nuclei findings — {severity}", str(sev[severity])))
+    metrics += [
+        ("Secret-exposure", str(secret)),
+        ("sqlmap-sqli", str(sqli)),
+        ("Metis", str(metis)),
+        ("Content discovered", str(len(content or []))),
+        ("Total unique findings", str(len(findings))),
+        ("Skipped stages", ", ".join(sorted(skip)) if skip else "none"),
+    ]
+    return metrics
+
+
+def render_overview(metrics: list[tuple[str, str]]) -> list[str]:
+    """Render the ``## Executive Overview`` two-column table from metric pairs."""
+    lines = ["## Executive Overview", "", "| Metric | Result |", "| --- | --- |"]
+    lines += [f"| {label} | {value} |" for label, value in metrics]
+    return lines
+
+
 def write_findings_report(outdir: Path, target: str, findings: list[dict], content: list[str],
-                          origins: list[dict] | None = None) -> int:
+                          origins: list[dict] | None = None, *,
+                          metrics: list[tuple[str, str]] | None = None) -> int:
     """Write deduped findings to findings.json + FINDINGS.md; return count."""
     findings = dedupe(findings)
     findings.sort(key=lambda f: SEVERITY_ORDER.get(f.get("severity", "unknown"), 9))
@@ -61,6 +121,9 @@ def write_findings_report(outdir: Path, target: str, findings: list[dict], conte
 
     sev = Counter(f.get("severity", "unknown") for f in findings)
     lines = [f"# Findings — {target}", ""]
+    if metrics is not None:
+        lines += render_overview(metrics)
+        lines.append("")
     if not findings:
         lines.append("_No vulnerabilities found._")
     else:

@@ -13,7 +13,7 @@ import html
 from collections import Counter
 from pathlib import Path
 
-from . import tracker
+from . import report, tracker
 
 # Canonical severity ordering for display / filter dropdowns.
 _SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
@@ -22,6 +22,9 @@ _SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
 def _esc(value) -> str:
     """HTML-escape any value (None/numbers coerced to str), quote-aware."""
     return html.escape("" if value is None else str(value), quote=True)
+
+# Public alias so callers don't reach for the private helper.
+esc = _esc
 
 
 def _latest_summary(outputs_root: Path) -> str:
@@ -200,6 +203,7 @@ def _build_html(outputs_root, findings, stats, targets, summary_text):
     )
 
     return _TEMPLATE.format(
+        stylesheet=STYLESHEET,
         empty_note=empty_note,
         metrics=metrics_html,
         status_badges=status_badges,
@@ -209,90 +213,93 @@ def _build_html(outputs_root, findings, stats, targets, summary_text):
     )
 
 
-_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BuntyRun — Dashboard</title>
-<style>
-:root {{
+STYLESHEET = """<style>
+:root {
   --bg: #0d1117;
   --panel: #161b22;
   --border: #30363d;
   --text: #e6edf3;
   --muted: #8b949e;
   --accent: #22d3ee;
-}}
-* {{ box-sizing: border-box; }}
-body {{
+}
+* { box-sizing: border-box; }
+body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-}}
-header {{
+}
+header {
   padding: 24px 32px; border-bottom: 1px solid var(--border);
   background: var(--panel);
-}}
-header h1 {{ margin: 0; font-size: 22px; }}
-header h1 span {{ color: var(--accent); }}
-main {{ max-width: 1080px; margin: 0 auto; padding: 24px 32px 64px; }}
-section {{ margin-bottom: 32px; }}
-h2 {{ font-size: 16px; text-transform: uppercase; letter-spacing: .06em;
+}
+header h1 { margin: 0; font-size: 22px; }
+header h1 span { color: var(--accent); }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 32px 64px; }
+section { margin-bottom: 32px; }
+h2 { font-size: 16px; text-transform: uppercase; letter-spacing: .06em;
      color: var(--muted); border-bottom: 1px solid var(--border);
-     padding-bottom: 8px; }}
-.metrics {{ display: flex; flex-wrap: wrap; gap: 12px; }}
-.card {{
+     padding-bottom: 8px; }
+.metrics { display: flex; flex-wrap: wrap; gap: 12px; }
+.card {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; padding: 14px 18px; min-width: 120px;
-}}
-.card-label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
-.card-value {{ font-size: 26px; font-weight: 600; margin-top: 2px; }}
-.card.sev-critical .card-value {{ color: #ff7b72; }}
-.card.sev-high .card-value {{ color: #ffa657; }}
-.card.sev-medium .card-value {{ color: #e3b341; }}
-.card.sev-low .card-value {{ color: #8b949e; }}
-.card.sev-info .card-value {{ color: #58a6ff; }}
-.badges {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }}
-.pill {{
+}
+.card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+.card-value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+.card.sev-critical .card-value { color: #ff7b72; }
+.card.sev-high .card-value { color: #ffa657; }
+.card.sev-medium .card-value { color: #e3b341; }
+.card.sev-low .card-value { color: #8b949e; }
+.card.sev-info .card-value { color: #58a6ff; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.pill {
   display: inline-block; padding: 2px 10px; border-radius: 999px;
   border: 1px solid var(--border); font-size: 12px; color: var(--muted);
-}}
-.filters {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }}
-select, input {{
+}
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+select, input {
   background: var(--panel); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
   font-size: 13px;
-}}
-input {{ flex: 1; min-width: 200px; }}
-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
-  vertical-align: top; }}
-th {{ color: var(--muted); text-transform: uppercase; font-size: 11px;
-  letter-spacing: .04em; }}
-tr.row {{ cursor: pointer; }}
-tr.row:hover {{ background: #161b22; }}
-tr.detail {{ display: none; background: #10151c; }}
-tr.detail td {{ padding: 4px 16px 14px; }}
-dl {{ display: grid; grid-template-columns: 90px 1fr; gap: 2px 12px; margin: 0; }}
-dt {{ color: var(--muted); }}
-dd {{ margin: 0; word-break: break-all; }}
-.sev {{ font-weight: 600; text-transform: uppercase; font-size: 11px; }}
-.sev-critical {{ color: #ff7b72; }}
-.sev-high {{ color: #ffa657; }}
-.sev-medium {{ color: #e3b341; }}
-.sev-low {{ color: #8b949e; }}
-.sev-info {{ color: #58a6ff; }}
-.sev-unknown {{ color: #8b949e; }}
-.num {{ text-align: right; white-space: nowrap; }}
-.url {{ color: var(--muted); word-break: break-all; max-width: 320px; }}
-pre {{
+}
+input { flex: 1; min-width: 200px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+  vertical-align: top; }
+th { color: var(--muted); text-transform: uppercase; font-size: 11px;
+  letter-spacing: .04em; }
+tr.row { cursor: pointer; }
+tr.row:hover { background: #161b22; }
+tr.detail { display: none; background: #10151c; }
+tr.detail td { padding: 4px 16px 14px; }
+dl { display: grid; grid-template-columns: 90px 1fr; gap: 2px 12px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; word-break: break-all; }
+.sev { font-weight: 600; text-transform: uppercase; font-size: 11px; }
+.sev-critical { color: #ff7b72; }
+.sev-high { color: #ffa657; }
+.sev-medium { color: #e3b341; }
+.sev-low { color: #8b949e; }
+.sev-info { color: #58a6ff; }
+.sev-unknown { color: #8b949e; }
+.num { text-align: right; white-space: nowrap; }
+.url { color: var(--muted); word-break: break-all; max-width: 320px; }
+pre {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; padding: 16px; overflow-x: auto;
   font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; word-break: break-word;
-}}
-.empty {{ color: var(--muted); font-style: italic; }}
-</style>
+}
+.empty { color: var(--muted); font-style: italic; }
+</style>"""
+
+
+_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BuntyRun — Dashboard</title>
+{stylesheet}
 </head>
 <body>
 <header><h1>BuntyRun <span>— Dashboard</span></h1></header>
@@ -381,4 +388,173 @@ def generate(outputs_root: Path) -> Path:
     outputs_root.mkdir(parents=True, exist_ok=True)
     out_path = outputs_root / "dashboard.html"
     out_path.write_text(html_doc)
+    return out_path
+
+
+def _sev_class(sev) -> str:
+    """Map a severity string to a known CSS class (unknown-safe)."""
+    sev = (sev or "unknown").lower()
+    if sev in ("critical", "high", "medium", "low", "info", "unknown"):
+        return "sev-" + sev
+    return "sev-unknown"
+
+
+def _summary_metric_cards(subdomains, live_hosts, cloudflare, total) -> str:
+    cards = [
+        ("subdomains", subdomains),
+        ("live hosts", live_hosts),
+        ("cloudflare", "yes" if cloudflare else "no"),
+        ("total findings", total),
+    ]
+    return "".join(
+        '<div class="card"><div class="card-label">{}</div>'
+        '<div class="card-value">{}</div></div>'.format(esc(label), esc(value))
+        for label, value in cards
+    )
+
+
+def _summary_severity_pills(sev_counts) -> str:
+    pills = []
+    for s in ("critical", "high", "medium", "low", "info", "unknown"):
+        n = sev_counts.get(s, 0)
+        if n:
+            pills.append(
+                '<span class="pill sev-{}">{}: {}</span>'.format(s, s, n)
+            )
+    return "".join(pills)
+
+
+def _summary_finding(f) -> str:
+    sev = (f.get("severity") or "unknown").lower()
+    title = f.get("name") or f.get("template") or ""
+    url = f.get("url") or ""
+    template = f.get("template") or ""
+    host = f.get("host") or ""
+    evidence = f.get("evidence") or ""
+
+    parts = [
+        '<article class="finding">',
+        '<div class="finding-title sev-{}">{}</div>'.format(
+            _sev_class(sev), esc(title)
+        ),
+    ]
+    meta = []
+    if url:
+        meta.append('<dt>url</dt><dd class="url">{}</dd>'.format(esc(url)))
+    if template:
+        meta.append('<dt>template</dt><dd>{}</dd>'.format(esc(template)))
+    if host:
+        meta.append('<dt>host</dt><dd>{}</dd>'.format(esc(host)))
+    if meta:
+        parts.append('<dl class="finding-meta">{}</dl>'.format("".join(meta)))
+    if evidence:
+        parts.append('<pre>{}</pre>'.format(esc(evidence)))
+    parts.append('</article>')
+    return "".join(parts)
+
+
+def _summary_findings_html(findings) -> str:
+    if not findings:
+        return '<p class="empty">No vulnerabilities found.</p>'
+    groups = {}
+    for f in findings:
+        sev = (f.get("severity") or "unknown").lower()
+        groups.setdefault(sev, []).append(f)
+    ordered = sorted(groups, key=lambda s: report.SEVERITY_ORDER.get(s, 9))
+    parts = []
+    for sev in ordered:
+        parts.append(
+            '<h3 class="sev sev-{}">{}</h3>'.format(_sev_class(sev), esc(sev))
+        )
+        parts.append("".join(_summary_finding(f) for f in groups[sev]))
+    return "".join(parts)
+
+
+def _summary_origins_html(origins) -> str:
+    if not origins:
+        return ""
+    cards = []
+    for o in origins:
+        ip = o.get("ip") or ""
+        status = o.get("status") or ""
+        sources = ", ".join(o.get("sources") or [])
+        cards.append(
+            '<div class="card"><dl>'
+            '<dt>ip</dt><dd>{}</dd>'
+            '<dt>status</dt><dd>{}</dd>'
+            '<dt>sources</dt><dd>{}</dd>'
+            '</dl></div>'.format(esc(ip), esc(status), esc(sources))
+        )
+    return '<section><h2>Origin candidates</h2>{}</section>'.format("".join(cards))
+
+
+def _summary_content_html(content) -> str:
+    if not content:
+        return ""
+    return '<section><h2>Discovered content</h2><pre>{}</pre></section>'.format(
+        esc("\n".join(sorted(content)))
+    )
+
+
+_SUMMARY_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BuntyRun — Executive Summary</title>
+{stylesheet}
+</head>
+<body>
+<header>
+  <h1>BuntyRun <span>— Executive Summary</span></h1>
+  <p class="summary-meta">{target} · {run_time}</p>
+</header>
+<main>
+  <section>
+    <h2>Overview</h2>
+    <div class="metrics">{metrics}</div>
+    <div class="badges">{pills}</div>
+  </section>
+  <section>
+    <h2>Findings</h2>
+    {findings}
+  </section>
+  {origins}
+  {content}
+</main>
+</body>
+</html>
+"""
+
+
+def write_run_summary(outdir, target, findings, content, origins, *,
+                      run_time, subdomains, live_hosts, cloudflare) -> Path:
+    """Write a self-contained per-run executive summary to ``outdir/summary.html``.
+
+    Dedupes ``findings`` with ``report.dedupe`` so the HTML total matches
+    ``write_findings_report``'s return value.  Returns the written Path.
+    """
+    unique = report.dedupe(findings)
+    unique.sort(
+        key=lambda f: report.SEVERITY_ORDER.get(
+            (f.get("severity") or "unknown").lower(), 9
+        )
+    )
+    sev_counts = Counter((f.get("severity") or "unknown").lower() for f in unique)
+
+    doc = _SUMMARY_TEMPLATE.format(
+        stylesheet=STYLESHEET,
+        target=esc(target),
+        run_time=esc(run_time),
+        metrics=_summary_metric_cards(subdomains, live_hosts, cloudflare, len(unique)),
+        pills=_summary_severity_pills(sev_counts),
+        findings=_summary_findings_html(unique),
+        origins=_summary_origins_html(origins),
+        content=_summary_content_html(content),
+    )
+
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_path = outdir / "summary.html"
+    out_path.write_text(doc)
     return out_path

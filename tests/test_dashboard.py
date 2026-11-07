@@ -16,8 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from runner import tracker  # noqa: E402
-from runner.dashboard import generate  # noqa: E402
+from runner import report, tracker  # noqa: E402
+from runner import dashboard as dashboard_mod  # noqa: E402
+from runner.dashboard import generate, write_run_summary  # noqa: E402
 
 
 class DashboardTestCase(unittest.TestCase):
@@ -68,6 +69,111 @@ class TestNoExternalReferences(DashboardTestCase):
         html_doc = self._html()
         self.assertNotIn("src=", html_doc)
         self.assertNotIn("href=", html_doc)
+
+
+class TestRefactorSurface(DashboardTestCase):
+    def test_esc_is_public_alias(self):
+        self.assertIs(dashboard_mod.esc, dashboard_mod._esc)
+        self.assertEqual(dashboard_mod.esc("<x>"), "&lt;x&gt;")
+
+    def test_stylesheet_is_module_constant(self):
+        self.assertIsInstance(dashboard_mod.STYLESHEET, str)
+        self.assertIn("--bg: #0d1117", dashboard_mod.STYLESHEET)
+        self.assertIn("</style>", dashboard_mod.STYLESHEET)
+
+
+class TestWriteRunSummary(DashboardTestCase):
+    """Tests for runner.dashboard.write_run_summary (self-contained summary.html)."""
+
+    def _summary(self, target="example.com", findings=None, content=None,
+                 origins=None, run_time="2026-11-07 10:00:00", subdomains=3,
+                 live_hosts=2, cloudflare=False):
+        out = Path(self._tmp.name) / "summary_out"
+        return write_run_summary(
+            out, target, findings or [], content or [], origins or [],
+            run_time=run_time, subdomains=subdomains, live_hosts=live_hosts,
+            cloudflare=cloudflare,
+        )
+
+    def test_writes_summary_with_seeded_finding(self):
+        finding = {
+            "severity": "high", "template": "sqli", "name": "SQLi in search",
+            "url": "https://example.com/search?q=x", "host": "example.com",
+            "evidence": "payload",
+        }
+        path = self._summary(findings=[finding])
+        self.assertTrue(path.exists())
+        doc = path.read_text()
+        self.assertIn("<html", doc)
+        self.assertIn("SQLi in search", doc)
+        self.assertIn("https://example.com/search?q=x", doc)
+        self.assertIn("example.com", doc)
+        self.assertIn("payload", doc)
+
+    def test_script_alert_title_is_escaped(self):
+        payload = "<script>alert(1)</script>"
+        finding = {
+            "severity": "high", "template": payload, "name": payload,
+            "url": "", "host": "evil.com", "evidence": "",
+        }
+        path = self._summary(findings=[finding])
+        doc = path.read_text()
+        self.assertNotIn("<script>alert(1)", doc)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", doc)
+
+    def test_no_src_or_href_attributes(self):
+        finding = {
+            "severity": "medium", "template": "xss", "name": "XSS",
+            "url": "https://example.com/a", "host": "example.com", "evidence": "",
+        }
+        path = self._summary(findings=[finding])
+        doc = path.read_text()
+        self.assertNotIn("src=", doc)
+        self.assertNotIn("href=", doc)
+        self.assertNotIn("<script", doc)
+
+    def test_empty_findings_state(self):
+        path = self._summary(findings=[], subdomains=0, live_hosts=0,
+                             cloudflare=False)
+        doc = path.read_text()
+        self.assertIn("No vulnerabilities found.", doc)
+        self.assertIn("total findings", doc)
+        self.assertNotIn('<article class="finding">', doc)
+
+    def test_origins_and_content_sections(self):
+        origins = [{"ip": "1.2.3.4", "status": 200,
+                    "sources": ["www.example.com"]}]
+        content = ["/admin", "/login"]
+        path = self._summary(origins=origins, content=content)
+        doc = path.read_text()
+        self.assertIn("Origin candidates", doc)
+        self.assertIn("1.2.3.4", doc)
+        self.assertIn("Discovered content", doc)
+        self.assertIn("/admin", doc)
+        self.assertIn("/login", doc)
+
+        # Sections omitted when empty.
+        path2 = self._summary(origins=[], content=[])
+        doc2 = path2.read_text()
+        self.assertNotIn("Origin candidates", doc2)
+        self.assertNotIn("Discovered content", doc2)
+
+    def test_finding_count_equals_dedupe(self):
+        findings = [
+            {"severity": "high", "template": "sqli", "name": "A",
+             "url": "https://example.com/x", "host": "example.com",
+             "evidence": ""},
+            {"severity": "high", "template": "sqli", "name": "A dup",
+             "url": "https://example.com/x", "host": "example.com",
+             "evidence": ""},
+            {"severity": "low", "template": "xss", "name": "B",
+             "url": "https://example.com/y", "host": "example.com",
+             "evidence": ""},
+        ]
+        path = self._summary(findings=findings)
+        doc = path.read_text()
+        html_count = doc.count('<article class="finding">')
+        self.assertEqual(html_count, len(report.dedupe(findings)))
 
 
 if __name__ == "__main__":

@@ -238,5 +238,173 @@ class TestWriteFindingsReport(unittest.TestCase):
         self.assertTrue((nested / "findings.json").exists())
 
 
+class TestBuildMetrics(unittest.TestCase):
+    def _rows(self):
+        return [
+            {"host": "example.com", "status": 200, "cloudflare": True},
+            {"host": "a.example.com", "status": 200, "cloudflare": False},
+            {"host": "b.example.com", "status": 0, "cloudflare": False},
+            {"host": "c.example.com", "status": 200, "cloudflare": True},
+        ]
+
+    def _cf(self):
+        return {"target": "example.com", "cloudflare": True, "evidence": []}
+
+    def _findings(self):
+        return [
+            finding("tmpl-crit", "h", "critical"),
+            finding("tmpl-high", "h", "high"),
+            finding("secret-exposure", "h", "high"),
+            finding("sqlmap-sqli", "h", "high"),
+            finding("metis:foo/bar", "h", "medium"),
+            finding("tmpl-crit", "h", "critical"),  # dup of first (same template+host+url)
+        ]
+
+    def test_tallies_match_dedupe_and_split_scanners(self):
+        m = dict(report.build_metrics(
+            "example.com", ["example.com", "a.example.com", "b.example.com"],
+            self._rows(), self._cf(),
+            [{"ip": "1.2.3.4", "status": "200", "sources": ["a.example.com"]}],
+            self._findings(), ["/a", "/b", "/c", "/d", "/e"], 10.0,
+        ))
+        self.assertEqual(m["Target"], "example.com")
+        self.assertEqual(m["Scan duration"], "10.0s")
+        self.assertEqual(m["Subdomains"], "3")
+        self.assertEqual(m["Live hosts"], "3")
+        self.assertEqual(m["Cloudflare on target"], "yes")
+        self.assertEqual(m["Cloudflare-fronted hosts"], "2")
+        self.assertEqual(m["Origin candidates"], "1")
+        self.assertEqual(m["Secret-exposure"], "1")
+        self.assertEqual(m["sqlmap-sqli"], "1")
+        self.assertEqual(m["Metis"], "1")
+        self.assertEqual(m["Content discovered"], "5")
+        self.assertEqual(m["Total unique findings"], "5")
+        self.assertEqual(m["Skipped stages"], "none")
+
+    def test_nuclei_severity_counts_ordered_by_severity_order(self):
+        findings = [
+            finding("t-unknown", "a.com", "unknown"),
+            finding("t-low", "a.com", "low"),
+            finding("t-high", "a.com", "high"),
+            finding("t-critical", "a.com", "critical"),
+            finding("t-medium", "a.com", "medium"),
+            finding("t-info", "a.com", "info"),
+        ]
+        metrics = report.build_metrics(
+            "example.com", [], [], {"cloudflare": False}, [], findings, [], 1.0,
+        )
+        labels = [label for label, _ in metrics if label.startswith("Nuclei findings — ")]
+        self.assertEqual(labels, [
+            "Nuclei findings — critical",
+            "Nuclei findings — high",
+            "Nuclei findings — medium",
+            "Nuclei findings — low",
+            "Nuclei findings — info",
+            "Nuclei findings — unknown",
+        ])
+
+    def test_severity_counts_use_deduped_findings(self):
+        # 3 identical triples collapse to 1; the nuclei tally must count once.
+        findings = [
+            finding("t1", "a.com", "high"),
+            finding("t1", "a.com", "high"),
+            finding("t1", "a.com", "high"),
+        ]
+        m = dict(report.build_metrics(
+            "example.com", [], [], {"cloudflare": False}, [], findings, [], 1.0,
+        ))
+        self.assertEqual(m["Nuclei findings — high"], "1")
+        self.assertEqual(m["Total unique findings"], "1")
+
+    def test_cloudflare_off_and_empty_inputs(self):
+        m = dict(report.build_metrics(
+            "example.com", [], [], {"cloudflare": False}, [], [], [], None,
+        ))
+        self.assertEqual(m["Cloudflare on target"], "no")
+        self.assertEqual(m["Cloudflare-fronted hosts"], "0")
+        self.assertEqual(m["Subdomains"], "0")
+        self.assertEqual(m["Live hosts"], "0")
+        self.assertEqual(m["Total unique findings"], "0")
+        self.assertEqual(m["Scan duration"], "n/a")
+
+    def test_skipped_stages_sorted(self):
+        m = dict(report.build_metrics(
+            "example.com", [], [], {"cloudflare": False}, [], [], [], 1.0,
+            skip={"content", "secret", "metis"},
+        ))
+        self.assertEqual(m["Skipped stages"], "content, metis, secret")
+
+
+class TestRenderOverview(unittest.TestCase):
+    def test_renders_heading_and_table(self):
+        metrics = [("Target", "example.com"), ("Live hosts", "3")]
+        lines = report.render_overview(metrics)
+        self.assertEqual(lines[0], "## Executive Overview")
+        self.assertIn("| Metric | Result |", lines)
+        self.assertIn("| --- | --- |", lines)
+        self.assertIn("| Target | example.com |", lines)
+        self.assertIn("| Live hosts | 3 |", lines)
+
+    def test_empty_metrics_still_render_heading(self):
+        lines = report.render_overview([])
+        self.assertEqual(lines[0], "## Executive Overview")
+        self.assertIn("| Metric | Result |", lines)
+        self.assertIn("| --- | --- |", lines)
+
+
+class TestWriteFindingsReportWithMetrics(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.outdir = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _metrics(self):
+        return report.build_metrics(
+            "example.com", ["example.com"], [{"host": "example.com", "status": 200, "cloudflare": True}],
+            {"cloudflare": True}, [], [finding("t1", "a.com", "high")], ["/a"], 1.0,
+        )
+
+    def test_metrics_render_overview_at_top(self):
+        md = self._write_with_metrics()
+        self.assertIn("## Executive Overview", md)
+        self.assertIn("| Metric | Result |", md)
+        # overview comes after the H1 header and before the Severity section
+        self.assertLess(md.index("# Findings — example.com"), md.index("## Executive Overview"))
+        self.assertLess(md.index("## Executive Overview"), md.index("## Severity"))
+
+    def test_no_overview_when_metrics_none(self):
+        report.write_findings_report(
+            self.outdir, "example.com", [finding("t1", "a.com", "high")], [], origins=[],
+        )
+        md = (self.outdir / "FINDINGS.md").read_text()
+        self.assertNotIn("## Executive Overview", md)
+        self.assertIn("## Severity", md)
+
+    def test_overview_renders_even_when_no_findings(self):
+        report.write_findings_report(
+            self.outdir, "example.com", [], [], origins=[], metrics=self._metrics(),
+        )
+        md = (self.outdir / "FINDINGS.md").read_text()
+        self.assertIn("## Executive Overview", md)
+        self.assertIn("_No vulnerabilities found._", md)
+
+    def test_findings_json_unaffected_by_metrics(self):
+        findings = [finding("t1", "a.com", "high")]
+        n = report.write_findings_report(
+            self.outdir, "example.com", findings, [], origins=[], metrics=self._metrics(),
+        )
+        self.assertEqual(n, 1)
+        data = json.loads((self.outdir / "findings.json").read_text())
+        self.assertEqual(len(data), 1)
+        self.assertNotIn("metrics", data[0])
+
+    def _write_with_metrics(self):
+        report.write_findings_report(
+            self.outdir, "example.com", [finding("t1", "a.com", "high")], [],
+            origins=[], metrics=self._metrics(),
+        )
+        return (self.outdir / "FINDINGS.md").read_text()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -5,7 +5,7 @@ import re
 import time
 from pathlib import Path
 
-from . import (__version__, banner, metis_check, origin_deep, param_scan,
+from . import (__version__, banner, dashboard, metis_check, origin_deep, param_scan,
                report, secret_scan, stages, tracker, utils)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
@@ -211,6 +211,7 @@ def main(argv=None) -> int:
     utils.log(f"output dir: {outdir}")
 
     skip = set(x.strip() for x in (args.skip or "").split(",") if x.strip())
+    start = time.monotonic()
 
     subs = [target]
     rows = []
@@ -253,7 +254,14 @@ def main(argv=None) -> int:
         live = [r["host"] for r in rows if r["status"]]
         findings += metis_check.metis_check(target, outdir, live)
 
-    n_findings = report.write_findings_report(outdir, target, findings, content, origins=origins)
+    duration_s = time.monotonic() - start
+    m = report.build_metrics(target, subs, rows, cf, origins, findings, content, duration_s, skip)
+    n_findings = report.write_findings_report(outdir, target, findings, content, origins=origins, metrics=m)
+    dashboard.write_run_summary(outdir, target, findings, content, origins,
+                                run_time=time.strftime('%Y-%m-%d %H:%M:%S'),
+                                subdomains=len(subs),
+                                live_hosts=len([r for r in rows if r['status']]),
+                                cloudflare=cf['cloudflare'])
 
     print_findings_table(findings)
 
