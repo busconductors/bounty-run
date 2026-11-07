@@ -1,0 +1,2 @@
+# Bounty Runner — third-party Python deps (everything else is stdlib)
+requests>=2.28
