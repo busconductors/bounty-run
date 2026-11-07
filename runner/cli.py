@@ -3,7 +3,7 @@ import argparse
 import time
 from pathlib import Path
 
-from . import __version__, stages, utils
+from . import __version__, report, stages, utils
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,7 +17,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=8, help="HTTP probe timeout in seconds (default 8)")
     p.add_argument("--threads", type=int, default=30, help="concurrent HTTP probe threads (default 30)")
     p.add_argument("--max-hosts", type=int, default=1000, help="cap on hosts to probe (default 1000)")
-    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin")
+    p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
+                   help="ffuf content-discovery wordlist (default: dirb/common.txt)")
+    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,vuln,content")
     return p
 
 
@@ -86,12 +88,23 @@ def main(argv=None) -> int:
     if cf["cloudflare"] and "origin" not in skip:
         origins = stages.origin_hunt(target, outdir, cf)
 
-    write_summary(outdir, target, subs, rows, cf, origins)
+    findings = []
+    if "vuln" not in skip:
+        findings = stages.vuln_scan(target, outdir, rows)
 
+    content = []
+    if "content" not in skip:
+        content = stages.content_discovery(target, outdir, args.wordlist)
+
+    write_summary(outdir, target, subs, rows, cf, origins)
+    n_findings = report.write_findings_report(outdir, target, findings, content)
+
+    if n_findings:
+        utils.log(f"{n_findings} unique finding(s) -> {outdir / 'FINDINGS.md'}")
     if cf["cloudflare"]:
         if origins:
             utils.log(f"origin candidates found — check {outdir / 'origin_candidates.txt'}")
         else:
-            utils.warn("no origin candidates surfaced — try crt.sh history + Shodan next (Phase 3)")
+            utils.warn("no origin candidates surfaced — try crt.sh history + Shodan next")
     utils.log("done.")
     return 0

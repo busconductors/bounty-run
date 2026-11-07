@@ -229,3 +229,66 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     for r in rows:
         utils.log(f"    {r['ip']}  [{r['status']}]  via {', '.join(r['sources'])}")
     return rows
+
+
+# --- Stage 5 & 6: vulnerability scan + content discovery ---
+
+
+def vuln_scan(target: str, outdir: Path, live_rows: list[dict]) -> list[dict]:
+    """Stage 5: run nuclei against live hosts, parse JSONL into findings."""
+    utils.log("Stage 5 — vulnerability scan (nuclei)")
+    if not utils.have("nuclei"):
+        utils.warn("nuclei not found — skipping")
+        return []
+    hosts = sorted({r["host"] for r in live_rows if r["status"]})
+    if not hosts:
+        hosts = [target]
+    hosts_file = outdir / "nuclei_targets.txt"
+    hosts_file.write_text("\n".join(hosts) + "\n")
+    utils.log(f"  scanning {len(hosts)} host(s) — this can take a few minutes")
+    utils.run(
+        f"nuclei -l {hosts_file} -severity low,medium,high,critical "
+        f"-jsonl -silent -o {outdir / 'nuclei.jsonl'}",
+        timeout=900,
+    )
+    findings = []
+    jl = outdir / "nuclei.jsonl"
+    if jl.exists():
+        for line in jl.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                j = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            findings.append({
+                "severity": (j.get("info") or {}).get("severity", "unknown"),
+                "template": j.get("template-id", ""),
+                "name": (j.get("info") or {}).get("name", ""),
+                "url": j.get("matched-at", ""),
+                "host": j.get("host", ""),
+            })
+    utils.log(f"  {len(findings)} finding(s)")
+    return findings
+
+
+def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 40) -> list[str]:
+    """Stage 6: ffuf content discovery against the main target."""
+    utils.log("Stage 6 — content discovery (ffuf)")
+    if not utils.have("ffuf"):
+        utils.warn("ffuf not found — skipping")
+        return []
+    if not Path(wordlist).exists():
+        utils.warn(f"wordlist not found: {wordlist} — skipping ffuf")
+        return []
+    out = utils.run(
+        f"ffuf -u https://{target}/FUZZ -w {wordlist} "
+        f"-mc 200,204,301,302,307,401,403 -t {threads} -s",
+        timeout=600,
+    )
+    paths = sorted({line.strip() for line in out.splitlines() if line.strip()})
+    outfile = outdir / "content_discovery.txt"
+    outfile.write_text("\n".join(paths) + "\n")
+    utils.log(f"  {len(paths)} path(s) -> {outfile.name}")
+    return paths
