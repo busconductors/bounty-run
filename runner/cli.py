@@ -17,11 +17,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=8, help="HTTP probe timeout in seconds (default 8)")
     p.add_argument("--threads", type=int, default=30, help="concurrent HTTP probe threads (default 30)")
     p.add_argument("--max-hosts", type=int, default=1000, help="cap on hosts to probe (default 1000)")
-    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf")
+    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin")
     return p
 
 
-def write_summary(outdir: Path, target: str, subs: list[str], rows: list[dict], cf: dict) -> None:
+def write_summary(outdir: Path, target: str, subs: list[str], rows: list[dict], cf: dict, origins: list[dict]) -> None:
     live = [r for r in rows if r["status"]]
     cf_hosts = [r["host"] for r in live if r["cloudflare"]]
     lines = [
@@ -40,6 +40,13 @@ def write_summary(outdir: Path, target: str, subs: list[str], rows: list[dict], 
         "",
     ]
     lines += [f"- `{r['host']}` — {r['status']} — {r['server']}" for r in live]
+    if origins:
+        lines += [
+            "",
+            "## Origin candidates (behind Cloudflare)",
+            "",
+        ]
+        lines += [f"- `{r['ip']}` — HTTP {r['status']} — via {', '.join(r['sources'])}" for r in origins]
     lines.append("")
     (outdir / "SUMMARY.md").write_text("\n".join(lines))
     utils.log(f"summary -> {outdir / 'SUMMARY.md'}")
@@ -75,9 +82,16 @@ def main(argv=None) -> int:
     if "cf" not in skip:
         cf = stages.cloudflare_detect(target, outdir)
 
-    write_summary(outdir, target, subs, rows, cf)
+    origins = []
+    if cf["cloudflare"] and "origin" not in skip:
+        origins = stages.origin_hunt(target, outdir, cf)
+
+    write_summary(outdir, target, subs, rows, cf, origins)
 
     if cf["cloudflare"]:
-        utils.warn("target is Cloudflare-fronted — origin hunting is Phase 2 (coming next).")
+        if origins:
+            utils.log(f"origin candidates found — check {outdir / 'origin_candidates.txt'}")
+        else:
+            utils.warn("no origin candidates surfaced — try crt.sh history + Shodan next (Phase 3)")
     utils.log("done.")
     return 0

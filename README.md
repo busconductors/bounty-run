@@ -4,7 +4,7 @@ A recon orchestrator that chains your arsenal into one sweep. Runs subdomain
 enum, live-host probing, and Cloudflare detection — then (Phase 2+) hunts the
 origin IP, scans for vulns, and produces a deduped report.
 
-**Status:** Phase 1 — subdomain enum, live-host probe, Cloudflare detection.
+**Status:** Phase 2 — subdomain enum, live-host probe, Cloudflare detection, origin-IP hunting.
 
 ## Usage
 
@@ -32,9 +32,11 @@ bounty-run example.com --skip amass    # skip a stage (subs,live,cf)
 1. Subdomain enum — `subfinder` (+ `amass` with `--amass`)
 2. Live hosts — HTTP/HTTPS probe (status, server, Cloudflare flag)
 3. Cloudflare detect — `cf-ray`/`server`/`cf-cache-status` headers + resolved IP
+4. Origin hunt (when CF detected) — leak-subdomain sweep + MX records, filtered
+   against Cloudflare's published AS13335 ranges, verified with `curl --resolve`
 
-Phase 2 (next): origin-IP hunting for Cloudflare-fronted targets.
-Phase 3: nuclei + SpyHunt + sqlmap + dedupe + report.
+Phase 3 (next): crt.sh history + Shodan origin discovery, nuclei + SpyHunt + sqlmap,
+and a deduped findings report.
 
 ## Notes
 

@@ -1,4 +1,5 @@
 """Recon stages. Each stage reads prior output and writes its own artifacts."""
+import ipaddress
 import json
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -119,3 +120,112 @@ def cloudflare_detect(target: str, outdir: Path) -> dict:
     else:
         utils.log("  no Cloudflare signatures found")
     return result
+
+
+# --- Stage 4: origin hunting (Cloudflare-fronted targets) ---
+
+# Classic subdomains that are commonly left unproxied and leak the origin IP.
+LEAK_SUBDOMAINS = [
+    "www", "mail", "webmail", "cpanel", "ftp", "direct", "smtp", "pop", "imap",
+    "pop3", "cpcalendars", "cpcontacts", "webdisk", "mx", "mx1", "mx2",
+    "autodiscover", "remote", "vpn", "portal", "owa", "web", "api",
+]
+
+
+def _resolve(host: str) -> str:
+    """Resolve a hostname to an IPv4; empty string on failure."""
+    try:
+        return socket.gethostbyname(host)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _mx_hosts(domain: str) -> list[str]:
+    """Return MX hostnames via dig."""
+    if not utils.have("dig"):
+        return []
+    out = utils.run(f"dig +short MX {domain}", timeout=20)
+    hosts = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            host = parts[1].rstrip(".")
+            if host and host != ".":  # skip null MX ("0 .")
+                hosts.append(host)
+    return hosts
+
+
+def _cloudflare_ranges() -> list:
+    """Fetch Cloudflare's published IP ranges (AS13335)."""
+    ranges = []
+    for url in ("https://www.cloudflare.com/ips-v4", "https://www.cloudflare.com/ips-v6"):
+        out = utils.run(f"curl -sS {url}", timeout=15)
+        for line in out.splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    ranges.append(ipaddress.ip_network(line))
+                except ValueError:
+                    pass
+    return ranges
+
+
+def _is_cloudflare(ip: str, ranges) -> bool:
+    """True if `ip` falls inside any Cloudflare range."""
+    try:
+        a = ipaddress.ip_address(ip)
+        return any(a in r for r in ranges)
+    except ValueError:
+        return False
+
+
+def _verify_origin(target: str, ip: str) -> dict:
+    """Force-connect to `ip` for `target` and check if it serves the site."""
+    out = utils.run(
+        f"curl -sS -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
+        f"--resolve {target}:443:{ip} --max-time 12 https://{target}",
+        timeout=20,
+    )
+    parts = out.strip().split("|")
+    return {"status": parts[0] if parts else "", "remote_ip": parts[1] if len(parts) > 1 else ""}
+
+
+def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
+    """Stage 4: find the origin IP behind Cloudflare via leak subdomains + MX."""
+    utils.log(f"Stage 4 — origin hunting ({target})")
+    edge_ip = cf_result.get("ip") or _resolve(target)
+    utils.log(f"  edge IP (Cloudflare): {edge_ip or 'unknown'}")
+
+    cf_ranges = _cloudflare_ranges()
+    utils.log(f"  loaded {len(cf_ranges)} Cloudflare ranges (AS13335)")
+
+    candidates = {}  # ip -> list of sources
+
+    def add(ip: str, source: str) -> None:
+        if ip and not _is_cloudflare(ip, cf_ranges):
+            candidates.setdefault(ip, []).append(source)
+
+    for name in LEAK_SUBDOMAINS:
+        host = f"{name}.{target}"
+        ip = _resolve(host)
+        if ip:
+            add(ip, host)
+
+    for mx in _mx_hosts(target):
+        ip = _resolve(mx)
+        if ip:
+            add(ip, f"MX:{mx}")
+
+    rows = []
+    for ip, sources in sorted(candidates.items()):
+        v = _verify_origin(target, ip)
+        rows.append({"ip": ip, "sources": sources, "status": v["status"],
+                     "remote_ip": v["remote_ip"]})
+
+    outfile = outdir / "origin_candidates.txt"
+    lines = [f"{r['ip']}\t{r['status']}\t{','.join(r['sources'])}" for r in rows]
+    outfile.write_text("\n".join(lines) + "\n")
+    utils.log(f"  {len(rows)} origin candidate(s) -> {outfile.name}")
+    for r in rows:
+        utils.log(f"    {r['ip']}  [{r['status']}]  via {', '.join(r['sources'])}")
+    return rows
