@@ -1,10 +1,13 @@
 """Bounty Runner CLI — orchestrate the recon pipeline."""
 import argparse
+import os
 import re
 import time
 from pathlib import Path
 
-from . import __version__, origin_deep, param_scan, report, stages, utils
+from . import __version__, banner, origin_deep, param_scan, report, stages, tracker, utils
+
+REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nuclei-c", type=_positive_int, default=50, help="nuclei concurrency (default 50)")
     p.add_argument("--nuclei-timeout", type=_positive_int, default=600,
                    help="nuclei timeout in seconds (default 600)")
+    p.add_argument("--interactive", action="store_true",
+                   help="prompt for output directory + engagement name (-o skips the prompts)")
+    p.add_argument("--no-banner", action="store_true", help="suppress the startup banner")
+    p.add_argument("--no-track", action="store_true", help="do not ingest findings into the tracker DB")
     return p
 
 
@@ -103,6 +110,86 @@ def _merge_origins_by_ip(origins: list[dict]) -> list[dict]:
     return [merged[ip] for ip in order]
 
 
+def _sanitize_name(name: str, target: str) -> str:
+    """Make an engagement name safe as a single folder name; fall back to target."""
+    clean = re.sub(r"[^A-Za-z0-9._-]", "-", name or "").strip(".-")
+    return clean or target
+
+
+def _resolve_dir(raw: str) -> Path:
+    """Empty => <repo>/outputs; otherwise expanduser, relative paths against CWD."""
+    raw = (raw or "").strip()
+    if not raw:
+        return REPO_OUTPUTS
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+def _resolve_outdir(target: str, output_dir=None, interactive: bool = False,
+                    input_fn=input, ts=None) -> Path:
+    """Compute the run output directory.
+
+    -o wins outright (exact path, no prompts, nothing appended).  With
+    --interactive, prompt for directory + engagement name; EOFError => defaults.
+    """
+    if output_dir:
+        return Path(os.path.expanduser(output_dir))
+    ts = ts or time.strftime("%Y%m%d-%H%M%S")
+    if not interactive:
+        return REPO_OUTPUTS / target / ts
+    raw_dir, raw_name = "", ""
+    try:
+        raw_dir = input_fn("Output directory [outputs]: ")
+        raw_name = input_fn(f"Engagement name [{target}]: ")
+    except EOFError:
+        pass
+    return _resolve_dir(raw_dir) / _sanitize_name(raw_name, target) / ts
+
+
+def _finding_title(f: dict) -> str:
+    return f.get("name") or f.get("template") or ""
+
+
+def _severity_cell(sev: str) -> str:
+    return utils.colorize(sev, utils.SEVERITY_COLOR.get(sev, "90"))
+
+
+def print_findings_table(findings: list[dict]) -> None:
+    """Print a `severity | title | url` table of deduped findings."""
+    unique = report.dedupe(findings)
+    if not unique:
+        print("no findings")
+        return
+    rows = [(f.get("severity", "unknown") or "unknown", _finding_title(f), f.get("url", "") or "")
+            for f in unique]
+    w_sev = max(len("severity"), *(len(r[0]) for r in rows))
+    w_title = max(len("title"), *(len(r[1]) for r in rows))
+    print(f"{'severity'.ljust(w_sev)} | {'title'.ljust(w_title)} | url")
+    print(f"{'-' * w_sev}-+-{'-' * w_title}-+-{'-' * 3}")
+    for sev, title, url in rows:
+        # pad before colorizing so ANSI escapes don't break alignment
+        print(f"{_severity_cell(sev) + ' ' * (w_sev - len(sev))} | {title.ljust(w_title)} | {url}")
+
+
+def ingest_findings(target: str, findings: list[dict]) -> int:
+    """Add deduped findings to the tracker, skipping ones already recorded.
+
+    Returns the number added.  Never raises — DB failures are warned and swallowed.
+    """
+    added = 0
+    try:
+        for f in report.dedupe(findings):
+            template = f.get("template", "") or ""
+            url = f.get("url", "") or ""
+            if tracker.has_finding(target, template, url):
+                continue
+            tracker.add_finding(target, f.get("name") or template,
+                                f.get("severity", "unknown"), url, template=template)
+            added += 1
+    except Exception as e:  # never crash a completed scan
+        utils.warn(f"tracker ingest failed: {e}")
+    return added
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     target = _normalize_target(args.target)
@@ -111,10 +198,10 @@ def main(argv=None) -> int:
               file=__import__("sys").stderr)
         return 2
 
-    if args.output_dir:
-        outdir = Path(args.output_dir)
-    else:
-        outdir = Path(__file__).resolve().parent.parent / "outputs" / target / time.strftime("%Y%m%d-%H%M%S")
+    if not args.no_banner:
+        banner.print_banner()
+
+    outdir = _resolve_outdir(target, args.output_dir, args.interactive)
     outdir.mkdir(parents=True, exist_ok=True)
 
     utils.log(f"Bounty Runner v{__version__} — target: {target}")
@@ -157,6 +244,13 @@ def main(argv=None) -> int:
         findings += param_scan.param_scan(target, outdir, args.max_param_urls)
 
     n_findings = report.write_findings_report(outdir, target, findings, content)
+
+    print_findings_table(findings)
+
+    if not args.no_track:
+        added = ingest_findings(target, findings)
+        if added:
+            utils.log(f"tracker: {added} new finding(s) recorded")
 
     if n_findings:
         utils.log(f"{n_findings} unique finding(s) -> {outdir / 'FINDINGS.md'}")

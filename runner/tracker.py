@@ -194,6 +194,33 @@ def stats() -> dict:
         conn.close()
 
 
+def has_finding(target, template, url) -> bool:
+    """True if a findings row (joined to targets) exists with this domain + template + url."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM findings f "
+            "JOIN targets t ON t.id = f.target_id "
+            "WHERE t.domain = ? AND f.template = ? AND f.url = ? LIMIT 1",
+            (target, template, url),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def list_targets() -> list[dict]:
+    """All registered targets, ordered by domain."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, domain, program, scope FROM targets ORDER BY domain"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 # --- CLI ---------------------------------------------------------------------
 
 
