@@ -5,9 +5,9 @@ import re
 import time
 from pathlib import Path
 
-from . import (__version__, banner, dashboard, headi_scan, http_headers, metis_check,
-               nmap_scan, origin_deep, param_scan, report, secret_scan, stages, tracker,
-               utils)
+from . import (__version__, api_endpoints, banner, dashboard, headi_scan, http_headers,
+               metis_check, nmap_scan, origin_deep, param_scan, report, secret_scan,
+               stages, tech_scan, tracker, utils)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
-    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,secret,headers,cors,metis,headi,nmap")
+    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,secret,headers,cors,tech,api,metis,headi,nmap")
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
     p.add_argument("--headi", action="store_true", help="also run the headi header-injection scan (off by default; intrusive)")
     p.add_argument("--nmap", action="store_true", help="also run the nmap port scan (off by default; intrusive)")
@@ -250,6 +250,9 @@ def main(argv=None) -> int:
     if "content" not in skip:
         content = stages.content_discovery(target, outdir, args.wordlist)
 
+    if "api" not in skip:
+        findings += api_endpoints.api_endpoints_scan(target, outdir, max_hosts=min(args.max_hosts, 20))
+
     if "param" not in skip:
         findings += param_scan.param_scan(target, outdir, args.max_param_urls)
 
@@ -264,6 +267,8 @@ def main(argv=None) -> int:
         findings += http_headers.security_headers_scan(target, outdir, live)
     if "cors" not in skip:
         findings += http_headers.cors_scan(target, outdir, live)
+    if "tech" not in skip:
+        findings += tech_scan.tech_scan(target, outdir, live)
     if "nmap" not in skip and args.nmap:
         findings += nmap_scan.nmap_scan(target, outdir, rows, origins)
     if "headi" not in skip and args.headi:

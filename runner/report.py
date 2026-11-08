@@ -67,6 +67,7 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
     cf_hosts = [r for r in live if r.get("cloudflare")]
 
     secret = sqli = metis = headers_missing = headers_insecure = cors = headi = nmap_ports = 0
+    tech = api = 0
     sev: Counter = Counter()
     for f in findings:
         template = f.get("template") or ""
@@ -88,6 +89,10 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
             headi += 1
         elif template.startswith("nmap:"):
             nmap_ports += 1
+        elif template.startswith("tech-detect:"):
+            tech += 1
+        elif template == "api-endpoint":
+            api += 1
         else:
             sev[(f.get("severity") or "unknown").lower()] += 1
 
@@ -109,6 +114,8 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
         ("CORS misconfigurations", str(cors)),
         ("Header injection (headi)", str(headi)),
         ("Open ports (nmap)", str(nmap_ports)),
+        ("Technologies (whatweb)", str(tech)),
+        ("API endpoints (katana)", str(api)),
         ("Secret-exposure", str(secret)),
         ("sqlmap-sqli", str(sqli)),
         ("Metis", str(metis)),
