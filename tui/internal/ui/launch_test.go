@@ -99,6 +99,15 @@ func TestLaunchInvalidTarget(t *testing.T) {
 
 func TestLaunchSpawnsAndAttaches(t *testing.T) {
 	root := t.TempDir()
+	t.Cleanup(func() { // kill the fake engine even if the test fails
+		pids, _ := filepath.Glob(filepath.Join(root, "example.com", "*", "fake.pid"))
+		for _, p := range pids {
+			b, _ := os.ReadFile(p)
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+			}
+		}
+	})
 	tm := startLaunch(t, Config{OutputsRoot: root, EngineBin: fakeEngine(t)})
 	submitForm(tm, "HTTPS://Example.COM/path")
 	teatest.WaitFor(t, tm.Output(), contains("example.com ─ running"), teatest.WithDuration(8*time.Second))
@@ -109,17 +118,14 @@ func TestLaunchSpawnsAndAttaches(t *testing.T) {
 	if filepath.Dir(r.monitor.dir) != filepath.Join(root, "example.com") {
 		t.Fatalf("monitor dir = %s", r.monitor.dir)
 	}
-	if b, err := os.ReadFile(filepath.Join(r.monitor.dir, "fake.pid")); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
-		}
-	}
 }
 
 func TestLaunchNoStartShowsLogAndEscReturns(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(t.TempDir(), "bad.sh")
-	os.WriteFile(bin, []byte("#!/bin/sh\nprintf 'boom \\033[2Jhere\\n'\nexit 1\n"), 0o755)
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf 'boom \\033[2Jhere\\n'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	tm := startLaunch(t, Config{OutputsRoot: root, EngineBin: bin})
 	submitForm(tm, "example.com")
 	teatest.WaitFor(t, tm.Output(), contains("boom here"), teatest.WithDuration(8*time.Second))

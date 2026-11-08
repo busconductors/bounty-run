@@ -62,6 +62,11 @@ func (m *MonitorModel) header() string {
 	if m.ended {
 		state = "finished: " + m.endStatus
 		d = time.Duration(m.lastT-m.startT) * time.Millisecond
+	} else if m.killed {
+		state = "killed"
+		if m.startT > 0 {
+			d = m.killedAt.Sub(time.UnixMilli(m.startT))
+		}
 	} else {
 		state = "running"
 		if m.startT > 0 {
@@ -97,7 +102,7 @@ func (m *MonitorModel) footer() string {
 		return "esc close · q back"
 	}
 	f := "tab focus · f filter · enter detail · esc back"
-	if !m.ended {
+	if m.controllable() {
 		f += " · s skip · c cancel"
 	}
 	if m.ended && m.report != "" {

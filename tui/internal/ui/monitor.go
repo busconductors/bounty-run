@@ -115,7 +115,9 @@ type MonitorModel struct {
 	confirmStage   string
 	pending        *pendingAck
 	ctlSeq         int
-	hardKill       bool // "engine not responding" banner shown; K accepted
+	hardKill       bool      // "engine not responding" banner shown; K accepted
+	killed         bool      // hard kill succeeded; no run_end will follow
+	killedAt       time.Time // freezes the elapsed timer
 
 	focus         pane
 	detail        bool
@@ -218,12 +220,21 @@ func (m *MonitorModel) update(msg tea.Msg) tea.Cmd {
 			m.hardKill = true
 		}
 	case controlDoneMsg:
-		if msg.gen != m.gen || msg.err == nil {
+		if msg.gen != m.gen {
 			return nil
 		}
-		if msg.seq == 0 {
-			m.status = "hard kill: " + sanitize(msg.err.Error())
-		} else {
+		if msg.seq == 0 { // hard kill
+			if msg.err != nil {
+				m.status = "hard kill: " + sanitize(msg.err.Error())
+				m.hardKill = !m.ended // keep the banner so K can be retried
+				return nil
+			}
+			m.status = "hard kill sent"
+			m.killed, m.killedAt = true, time.Now()
+			m.pending, m.hardKill, m.confirm = nil, false, ""
+			return nil
+		}
+		if msg.err != nil {
 			m.status = "control: " + sanitize(msg.err.Error())
 			if m.pending != nil && m.pending.seq == msg.seq {
 				m.pending, m.hardKill = nil, false
@@ -249,7 +260,7 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if k.String() == "K" {
-		if m.hardKill && !m.ended {
+		if m.hardKill && !m.ended && !m.killed {
 			m.hardKill = false
 			return m.hardKillCmd()
 		}
@@ -291,12 +302,12 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 	case "o":
 		return m.openReport()
 	case "s":
-		if st := m.currentStage(); st != "" && !m.ended {
+		if st := m.currentStage(); st != "" && m.controllable() {
 			m.confirm, m.confirmStage = "skip", st
 		}
 		return nil
 	case "c":
-		if !m.ended {
+		if m.controllable() {
 			m.confirm = "cancel"
 		}
 		return nil
@@ -309,6 +320,9 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 	}
 	return cmd
 }
+
+// controllable reports whether skip/cancel may be offered.
+func (m *MonitorModel) controllable() bool { return !m.ended && !m.killed }
 
 // currentStage is the most recently listed stage that is running.
 func (m *MonitorModel) currentStage() string {
@@ -343,17 +357,12 @@ func (m *MonitorModel) sendControl() tea.Cmd {
 }
 
 // hardKillCmd reads run.json from disk and SIGKILLs the engine and tool groups.
-// If the recorded engine pid is no longer the same process (it died and the
-// pid may be reused), only the recorded tool groups are killed.
 func (m *MonitorModel) hardKillCmd() tea.Cmd {
 	dir, gen := m.dir, m.gen
 	return func() tea.Msg {
 		info, err := runstore.ReadInfo(dir)
 		if err != nil {
 			return controlDoneMsg{gen: gen, err: err}
-		}
-		if !runstore.Alive(info.PID, info.PIDStart) {
-			info.PGID = 0
 		}
 		return controlDoneMsg{gen: gen, err: engine.HardKill(info, dir)}
 	}

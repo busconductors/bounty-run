@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"bountyrun/tui/internal/events"
-	"bountyrun/tui/internal/runstore"
 )
 
 // runningDir is a run with vuln currently running and no run_end.
@@ -108,12 +107,11 @@ func TestMonitorHardKillKillsEngine(t *testing.T) {
 	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
 	waited := make(chan struct{})
 	go func() { _ = c.Wait(); close(waited) }()
-	ps, err := runstore.PIDStart(pid)
-	if err != nil {
+	// pid_start deliberately wrong: HardKill uses the recorded pgid regardless.
+	rj := fmt.Sprintf(`{"pid":%d,"pgid":%d,"pid_start":1,"target":"acme.com","flags":{},"started":1}`, pid, pid)
+	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(rj), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rj := fmt.Sprintf(`{"pid":%d,"pgid":%d,"pid_start":%d,"target":"acme.com","flags":{},"started":1}`, pid, pid, ps)
-	os.WriteFile(filepath.Join(dir, "run.json"), []byte(rj), 0o644)
 
 	tm := startControlMonitor(t, dir, 50*time.Millisecond)
 	tm.Send(key('K')) // no banner yet: ignored
@@ -131,7 +129,34 @@ func TestMonitorHardKillKillsEngine(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("engine not killed")
 	}
-	tm.Quit()
+	teatest.WaitFor(t, tm.Output(), contains("hard kill sent"), teatest.WithDuration(5*time.Second))
+	tm.Send(key('s'))
+	tm.Send(key('c'))
+	v := finalView(t, tm)
+	for _, w := range []string{"hard kill sent", "acme.com ─ killed"} {
+		if !strings.Contains(v, w) {
+			t.Fatalf("missing %q\n%s", w, v)
+		}
+	}
+	for _, bad := range []string{"y/n", "s skip", "K to hard kill"} {
+		if strings.Contains(v, bad) {
+			t.Fatalf("%q offered after kill\n%s", bad, v)
+		}
+	}
+}
+
+func TestMonitorHardKillFailureKeepsBanner(t *testing.T) {
+	dir := runningDir(t) // no run.json: ReadInfo fails
+	tm := startControlMonitor(t, dir, 50*time.Millisecond)
+	tm.Send(key('c'))
+	tm.Send(key('y'))
+	teatest.WaitFor(t, tm.Output(), contains("K to hard kill"), teatest.WithDuration(5*time.Second))
+	tm.Send(key('K'))
+	teatest.WaitFor(t, tm.Output(), contains("hard kill:"), teatest.WithDuration(5*time.Second))
+	v := finalView(t, tm)
+	if !strings.Contains(v, "run.json") || !strings.Contains(v, "K to hard kill") || strings.Contains(v, "killed") {
+		t.Fatalf("error/banner wrong after failed kill\n%s", v)
+	}
 }
 
 func TestMonitorAckClearsPending(t *testing.T) {
