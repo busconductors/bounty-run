@@ -50,7 +50,12 @@ bounty-run track stats
 ├── sqlmap_report.txt       # raw sqlmap output
 ├── findings.json           # deduped, structured findings
 ├── FINDINGS.md             # human-readable, severity-ordered report
-└── SUMMARY.md              # run summary
+├── SUMMARY.md              # run summary
+├── run.json                # engine pid/pgid/target/flags (only with --events or TUI launch)
+├── events.jsonl            # JSON-lines event stream (only with --events or TUI launch)
+├── control                 # pending skip/cancel commands (only with --events or TUI launch)
+├── pids                    # child-tool process groups (only with --events or TUI launch)
+└── engine.log              # TUI's capture of engine stdout/stderr (TUI launch only)
 ```
 
 ## Pipeline
@@ -113,7 +118,7 @@ partial report and exits 130. Without `--events` the CLI output is unchanged.
 | Monitor | tab | switch focus between output and findings |
 | Monitor | f | cycle severity filter |
 | Monitor | enter | finding detail (esc closes) |
-| Monitor | o | open report in pager (after the run ends) |
+| Monitor | o | open report in `$PAGER` (default `less`) after the run ends |
 | Monitor | s | skip current stage (y to confirm, any other key declines) |
 | Monitor | c | cancel run (y to confirm, any other key declines) |
 | Monitor | K | hard kill; only while the "engine not responding" banner shows |
@@ -130,10 +135,12 @@ partial report and exits 130. Without `--events` the CLI output is unchanged.
 - `pids` — process groups of running child tools (used for hard kill)
 - `engine.log` — engine stdout/stderr when started by the TUI
 
-For scripting, run the engine directly and follow the stream:
+For scripting, run the engine directly and follow the stream. The events file
+must sit inside the `-o` dir: `run.json`, `control` and `pids` are written to
+the events file's parent directory.
 
 ```
-bounty-run example.com --events outputs/example.com/manual/events.jsonl
+bounty-run example.com -o outputs/example.com/manual --events outputs/example.com/manual/events.jsonl
 tail -f outputs/example.com/manual/events.jsonl | jq -c .   # jq optional
 ```
 
