@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from runner import utils
+from runner import events, utils
 
 try:
     import requests
@@ -151,7 +151,9 @@ def dork_scan(target: str, outdir: Path, max_queries: int = 4,
     log_lines: list[str] = []
     ok = blocked = 0
 
-    for i, tmpl in enumerate(DORK_QUERIES[:max(0, max_queries)]):
+    queries = DORK_QUERIES[:max(0, max_queries)]
+    stage = events.current_stage() or "dork"
+    for i, tmpl in enumerate(queries):
         if i:
             time.sleep(delay)
         query = tmpl.format(t=target)
@@ -172,6 +174,7 @@ def dork_scan(target: str, outdir: Path, max_queries: int = 4,
                 ok += 1
             log_lines.append(f"{query}\t{engine}\t"
                              f"{'blocked' if is_blocked else 'ok'}\t{len(kept)}")
+        events.progress(stage, i + 1, len(queries))  # also polls skip/cancel
 
     try:
         (outdir / "dork.txt").write_text(

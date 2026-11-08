@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 try:
@@ -79,8 +79,10 @@ def secret_scan(target: str, outdir: Path) -> list[dict]:
     hosts = [h for h in _read_live_hosts(live_path) if _is_global(_resolve(h))]
 
     findings: list[dict] = []
-    for host in hosts:
+    stage = events.current_stage() or "secret"
+    for i, host in enumerate(hosts):
         findings.extend(_scan_host(host, max_js=MAX_JS_FILES, timeout=FETCH_TIMEOUT))
+        events.progress(stage, i + 1, len(hosts))  # also polls skip/cancel
 
     utils.log(f"secret scan: {len(findings)} finding(s) across {len(hosts)} host(s)")
     return findings

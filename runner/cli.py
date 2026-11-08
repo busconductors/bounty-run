@@ -359,6 +359,8 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
 
 def _finish(args, target: str, outdir: Path, skip: set[str], st: RunState) -> int:
     """Write the final (or partial) report, summary and tracker entries."""
+    # a cancel inside the origin stage leaves st.origins unmerged
+    st.origins = _merge_origins_by_ip(st.origins)
     subs, rows, cf, origins = st.subs, st.rows, st.cf, st.origins
     findings, content = st.findings, st.content
     if not st.summary_written:  # only on a run cancelled before the summary point

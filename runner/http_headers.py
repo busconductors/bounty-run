@@ -9,7 +9,7 @@ import string
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 try:
@@ -135,11 +135,13 @@ def cors_scan(target: str, outdir: Path, hosts: list[str] | None = None,
 
     findings: list[dict] = []
     csv_rows = ["URL,Origin,ACAO,ACAC"]
-    for host in live:
+    stage = events.current_stage() or "cors"
+    for i, host in enumerate(live):
         url = f"https://{host}"
         host_findings, host_csv = _probe_cors(url, host)
         findings.extend(host_findings)
         csv_rows.extend(host_csv)
+        events.progress(stage, i + 1, len(live))  # also polls skip/cancel
 
     (Path(outdir) / "cors_results.csv").write_text("\n".join(csv_rows) + "\n")
     utils.log(f"cors: {len(findings)} finding(s) across {len(live)} host(s)")

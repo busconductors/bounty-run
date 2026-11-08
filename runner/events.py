@@ -236,6 +236,13 @@ def stage(stage_id: str) -> Iterator[StageCtx]:
     t0 = time.monotonic()
     status = "ok"
     try:
+        try:
+            # Honour a cancel already pending before any stage work starts.
+            # A skip for this stage is sticky, so the body's first checkpoint
+            # re-raises it (a generator context manager cannot skip its body).
+            check_control()
+        except StageSkipped:
+            pass
         yield ctx
     except StageSkipped:
         status = "skipped"
