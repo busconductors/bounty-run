@@ -5,14 +5,15 @@ import re
 import time
 from pathlib import Path
 
-from . import (__version__, api_endpoints, banner, dashboard, headi_scan, http_headers,
-               metis_check, nmap_scan, origin_deep, param_scan, report, secret_scan,
-               stages, tech_scan, tracker, utils)
+from . import (__version__, api_endpoints, banner, dashboard, dork_scan, headi_scan,
+               http_headers, metis_check, nikto_scan, nmap_scan, origin_deep,
+               panel_detect, param_scan, report, secret_scan, stages, tech_scan,
+               tls_scan, tracker, utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
 # Total number of pipeline stages, for the stage-transition headers.
-TOTAL_STAGES = 15
+TOTAL_STAGES = 20
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,10 +29,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
-    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,secret,headers,cors,tech,api,metis,headi,nmap")
+    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,secret,headers,cors,tech,api,metis,headi,nmap,panel,waf,dork,tls,nikto")
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
     p.add_argument("--headi", action="store_true", help="also run the headi header-injection scan (off by default; intrusive)")
     p.add_argument("--nmap", action="store_true", help="also run the nmap port scan (off by default; intrusive)")
+    p.add_argument("--tls", action="store_true",
+                   help="also run the sslyze TLS/SSL deep scan (off by default; slow)")
+    p.add_argument("--nikto", action="store_true",
+                   help="also run the nikto web-server scan (off by default; intrusive, slow)")
     p.add_argument("--nmap-full", action="store_true", help="with --nmap, scan all 65535 ports (-p-) instead of top-1000")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
@@ -231,30 +236,48 @@ def main(argv=None) -> int:
     if "subs" not in skip:
         utils.stage_header(1, TOTAL_STAGES, "SUBDOMAIN ENUMERATION")
         subs = stages.subdomain_enum(target, outdir, skip_amass=not args.amass)
+    if "panel" not in skip:
+        utils.stage_header(2, TOTAL_STAGES, "PANEL DETECTION")
+        findings += panel_detect.panel_detect(target, outdir, subs)
     if "live" not in skip:
-        utils.stage_header(2, TOTAL_STAGES, "LIVE HOST PROBING")
+        utils.stage_header(3, TOTAL_STAGES, "LIVE HOST PROBING")
         rows = stages.live_hosts(subs, outdir, timeout=args.timeout,
                                  threads=args.threads, max_hosts=args.max_hosts)
+    live = [r["host"] for r in rows if r["status"]] or [target]
     if "cf" not in skip:
-        utils.stage_header(3, TOTAL_STAGES, "CLOUDFLARE DETECTION")
+        utils.stage_header(4, TOTAL_STAGES, "CLOUDFLARE DETECTION")
         cf = stages.cloudflare_detect(target, outdir)
 
     origins = []
     if cf["cloudflare"] and "origin" not in skip:
-        utils.stage_header(4, TOTAL_STAGES, "ORIGIN HUNTING")
+        utils.stage_header(5, TOTAL_STAGES, "ORIGIN HUNTING")
         origins = stages.origin_hunt(target, outdir, cf)
         if "origin_deep" not in skip:
             origins += origin_deep.origin_deep(target, outdir, cf)
     origins = _merge_origins_by_ip(origins)
 
     if "nmap" not in skip and args.nmap:
-        utils.stage_header(5, TOTAL_STAGES, "PORT SCAN (NMAP)")
+        utils.stage_header(6, TOTAL_STAGES, "PORT SCAN (NMAP)")
         findings += nmap_scan.nmap_scan(target, outdir, rows, origins, full=args.nmap_full)
+
+    host_cap = min(args.max_hosts, 20)
+    if "waf" not in skip:
+        utils.stage_header(7, TOTAL_STAGES, "WAF FINGERPRINT (WAFW00F)")
+        findings += waf_scan.waf_scan(target, outdir, hosts=live, max_hosts=host_cap)
+    if "dork" not in skip:
+        utils.stage_header(8, TOTAL_STAGES, "SEARCH-ENGINE DORKING (OSINT)")
+        findings += dork_scan.dork_scan(target, outdir)
+    if "tls" not in skip and args.tls:
+        utils.stage_header(9, TOTAL_STAGES, "TLS/SSL ANALYSIS (SSLYZE)")
+        findings += tls_scan.tls_scan(target, outdir, hosts=live, max_hosts=host_cap)
+    if "nikto" not in skip and args.nikto:
+        utils.stage_header(10, TOTAL_STAGES, "WEB-SERVER SCAN (NIKTO)")
+        findings += nikto_scan.nikto_scan(target, outdir, hosts=live, max_hosts=host_cap)
 
     write_summary(outdir, target, subs, rows, cf, origins)
 
     if "vuln" not in skip:
-        utils.stage_header(6, TOTAL_STAGES, "VULNERABILITY SCAN (NUCLEI)")
+        utils.stage_header(11, TOTAL_STAGES, "VULNERABILITY SCAN (NUCLEI)")
         findings += stages.vuln_scan(target, outdir, rows, severity=args.nuclei_severity,
                                      concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
                                      origins=origins)
@@ -262,37 +285,36 @@ def main(argv=None) -> int:
 
     content = []
     if "content" not in skip:
-        utils.stage_header(7, TOTAL_STAGES, "CONTENT DISCOVERY")
+        utils.stage_header(12, TOTAL_STAGES, "CONTENT DISCOVERY")
         content = stages.content_discovery(target, outdir, args.wordlist)
 
     if "api" not in skip:
-        utils.stage_header(8, TOTAL_STAGES, "API ENDPOINT ENUMERATION")
+        utils.stage_header(13, TOTAL_STAGES, "API ENDPOINT ENUMERATION")
         findings += api_endpoints.api_endpoints_scan(target, outdir, max_hosts=min(args.max_hosts, 20))
 
     if "param" not in skip:
-        utils.stage_header(9, TOTAL_STAGES, "PARAMETER / SQLi SCAN")
+        utils.stage_header(14, TOTAL_STAGES, "PARAMETER / SQLi SCAN")
         findings += param_scan.param_scan(target, outdir, args.max_param_urls)
 
     if "secret" not in skip:
-        utils.stage_header(10, TOTAL_STAGES, "SECRET SCAN")
+        utils.stage_header(15, TOTAL_STAGES, "SECRET SCAN")
         findings += secret_scan.secret_scan(target, outdir)
 
-    live = [r["host"] for r in rows if r["status"]] or [target]
     if "metis" not in skip and args.metis:
-        utils.stage_header(11, TOTAL_STAGES, "METIS CVE SWEEP")
+        utils.stage_header(16, TOTAL_STAGES, "METIS CVE SWEEP")
         findings += metis_check.metis_check(target, outdir, live)
 
     if "headers" not in skip:
-        utils.stage_header(12, TOTAL_STAGES, "SECURITY HEADERS")
+        utils.stage_header(17, TOTAL_STAGES, "SECURITY HEADERS")
         findings += http_headers.security_headers_scan(target, outdir, live)
     if "cors" not in skip:
-        utils.stage_header(13, TOTAL_STAGES, "CORS MISCONFIGURATION")
+        utils.stage_header(18, TOTAL_STAGES, "CORS MISCONFIGURATION")
         findings += http_headers.cors_scan(target, outdir, live)
     if "tech" not in skip:
-        utils.stage_header(14, TOTAL_STAGES, "TECH DETECTION")
+        utils.stage_header(19, TOTAL_STAGES, "TECH DETECTION")
         findings += tech_scan.tech_scan(target, outdir, live)
     if "headi" not in skip and args.headi:
-        utils.stage_header(15, TOTAL_STAGES, "HEADER INJECTION (HEADI)")
+        utils.stage_header(20, TOTAL_STAGES, "HEADER INJECTION (HEADI)")
         findings += headi_scan.headi_scan(target, outdir, rows)
 
     duration_s = time.monotonic() - start
