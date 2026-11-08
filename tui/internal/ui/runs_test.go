@@ -136,7 +136,7 @@ func TestDiscoverErrorKeepsList(t *testing.T) {
 	if !strings.Contains(v, "error: boom") || !strings.Contains(v, "a ") || !strings.Contains(v, "b ") {
 		t.Fatal(v)
 	}
-	m.root = "[" // invalid glob pattern -> real Discover error
+	m.store = runstore.NewStore("[") // invalid glob pattern -> real Discover error
 	msg := m.load()().(runsMsg)
 	if msg.err == nil {
 		t.Fatal("expected error")
@@ -211,4 +211,24 @@ func TestNewRunAppearsAfterTick(t *testing.T) {
 		`{"v":1,"t":1,"type":"run_start"}`)
 	teatest.WaitFor(t, tm.Output(), contains("late.example.com"), teatest.WithDuration(5*time.Second))
 	tm.Quit()
+}
+
+// A refresh tick that arrives while a load is still in flight must not start
+// a second load; the next tick after the result does.
+func TestRunsTickSkipsWhileLoading(t *testing.T) {
+	m := newRunsModel(t.TempDir())
+	m.Init()
+	if m.loads != 1 {
+		t.Fatalf("Init started %d loads", m.loads)
+	}
+	m.Update(tickMsg{})
+	m.Update(tickMsg{})
+	if m.loads != 1 {
+		t.Fatalf("overlapping ticks started %d loads", m.loads)
+	}
+	m.Update(runsMsg{})
+	m.Update(tickMsg{})
+	if m.loads != 2 {
+		t.Fatalf("tick after the result started %d loads, want 2 total", m.loads)
+	}
 }

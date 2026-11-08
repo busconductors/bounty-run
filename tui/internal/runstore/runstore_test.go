@@ -150,3 +150,87 @@ func TestGroupHasMemberSince(t *testing.T) {
 		t.Error("nonexistent group has members")
 	}
 }
+
+func storeOnly(t *testing.T, s *Store) Run {
+	t.Helper()
+	runs, err := s.Discover()
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("Discover: %v %v", runs, err)
+	}
+	return runs[0]
+}
+
+func appendFile(t *testing.T, path, s string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+func TestStoreEndedRunNotReread(t *testing.T) {
+	root := t.TempDir()
+	d := writeRun(t, root, "a.com", "1", 999999999, 1, 1000,
+		`{"v":1,"t":1000,"type":"run_start"}`,
+		`{"v":1,"t":6000,"type":"run_end","status":"cancelled","totals":{"high":1}}`)
+	s := NewStore(root)
+	if r := storeOnly(t, s); r.Status != Cancelled {
+		t.Fatalf("got %+v", r)
+	}
+	// run_end is final: a rewritten file is not even looked at again.
+	if err := os.WriteFile(filepath.Join(d, "events.jsonl"),
+		[]byte(`{"v":1,"t":9000,"type":"run_end","status":"failed","totals":{}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := storeOnly(t, s); r.Status != Cancelled || r.Sev["high"] != 1 || r.Elapsed.Milliseconds() != 5000 {
+		t.Fatalf("ended run re-derived: %+v", r)
+	}
+	// A run dir that disappears drops out of the list.
+	if err := os.RemoveAll(d); err != nil {
+		t.Fatal(err)
+	}
+	if runs, err := s.Discover(); err != nil || len(runs) != 0 {
+		t.Fatalf("removed run still listed: %v %v", runs, err)
+	}
+}
+
+func TestStoreLiveRunIncremental(t *testing.T) {
+	root := t.TempDir()
+	d := writeRun(t, root, "a.com", "1", os.Getpid(), selfStart(t), 1000,
+		`{"v":1,"t":1000,"type":"run_start"}`,
+		`{"v":1,"t":1001,"type":"stage_start","stage":"subs"}`)
+	ev := filepath.Join(d, "events.jsonl")
+	s := NewStore(root)
+	if r := storeOnly(t, s); r.Status != Running || r.CurrentStage != "subs" {
+		t.Fatalf("got %+v", r)
+	}
+	appendFile(t, ev, `{"v":1,"t":1002,"type":"stage_end","stage":"subs","status":"ok"}`+"\n"+
+		`{"v":1,"t":1003,"type":"stage_start","stage":"vuln"}`+"\n"+
+		`{"v":1,"t":1004,"type":"finding","severity":"high"}`+"\n")
+	if r := storeOnly(t, s); r.CurrentStage != "vuln" || r.Sev["high"] != 1 {
+		t.Fatalf("appended events not reflected: %+v", r)
+	}
+	// A half-written last line is held back until it completes, then counted once.
+	appendFile(t, ev, `{"v":1,"t":1005,"type":"finding",`)
+	if r := storeOnly(t, s); r.Sev["high"] != 1 {
+		t.Fatalf("partial line counted: %+v", r)
+	}
+	appendFile(t, ev, `"severity":"high"}`+"\n")
+	r := storeOnly(t, s)
+	if r.Sev["high"] != 2 {
+		t.Fatalf("completed line not counted once: %+v", r)
+	}
+	// Returned runs do not share mutable state with the cache.
+	r.Sev["high"] = 99
+	if r2 := storeOnly(t, s); r2.Sev["high"] != 2 {
+		t.Fatalf("cache aliased: %+v", r2)
+	}
+	appendFile(t, ev, `{"v":1,"t":7000,"type":"run_end","status":"ok","totals":{"high":2}}`+"\n")
+	if r := storeOnly(t, s); r.Status != OK || !r.Ended || r.CurrentStage != "" {
+		t.Fatalf("run_end not applied: %+v", r)
+	}
+}

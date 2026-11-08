@@ -26,14 +26,24 @@ type runsModel struct {
 	selDir string // selected run's dir; selection follows it across refreshes
 	err    error
 	width  int
+
+	store   *runstore.Store // caches replay state across refreshes
+	loading bool            // a load is in flight; ticks do not start another
+	loads   int             // loads started (tests)
 }
 
-func newRunsModel(root string) *runsModel { return &runsModel{root: root, width: 80} }
+func newRunsModel(root string) *runsModel {
+	return &runsModel{root: root, width: 80, store: runstore.NewStore(root)}
+}
 
+// load starts a refresh. Only one runs at a time (the Store is not meant for
+// overlapping scans, and a slow disk must not pile up goroutines).
 func (m *runsModel) load() tea.Cmd {
-	root := m.root
+	m.loading = true
+	m.loads++
+	store := m.store
 	return func() tea.Msg {
-		runs, err := runstore.Discover(root)
+		runs, err := store.Discover()
 		return runsMsg{runs, err}
 	}
 }
@@ -47,6 +57,7 @@ func (m *runsModel) Init() tea.Cmd { return tea.Batch(m.load(), tick()) }
 func (m *runsModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case runsMsg:
+		m.loading = false
 		m.err = msg.err
 		if msg.err != nil {
 			return nil // keep the previous list
@@ -54,6 +65,9 @@ func (m *runsModel) Update(msg tea.Msg) tea.Cmd {
 		m.runs = msg.runs
 		m.resync()
 	case tickMsg:
+		if m.loading {
+			return tick()
+		}
 		return tea.Batch(m.load(), tick())
 	case tea.KeyPressMsg:
 		switch msg.String() {
