@@ -58,7 +58,7 @@ def _hosts_from_rows(rows, outdir: Path, target: str) -> list[str]:
 def headi_scan(target: str, outdir: Path, rows: list[dict] | None = None,
                timeout: int = 300) -> list[dict]:
     """Run headi against live hosts; return header-injection findings."""
-    utils.log("Stage — header injection (headi)")
+    utils.log("header injection (headi)")
     binary = _resolve_binary()
     if not binary:
         utils.warn("headi binary not found (set HEADI_BIN) — skipping header-injection scan")

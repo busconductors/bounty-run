@@ -97,7 +97,7 @@ def api_endpoints_scan(target: str, outdir: Path, hosts: list[str] | None = None
                        depth: int = 3, max_hosts: int = 20,
                        timeout: int = 300) -> list[dict]:
     """Crawl live hosts with katana and emit API-endpoint findings."""
-    utils.log("Stage — API endpoint enumeration (katana)")
+    utils.log("API endpoint enumeration (katana)")
     if not utils.have("katana"):
         utils.warn("katana not found — skipping API endpoint enumeration")
         return []

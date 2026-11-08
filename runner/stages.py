@@ -19,7 +19,7 @@ except ImportError:
 
 def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True) -> list[str]:
     """Stage 1: passive subdomain discovery via subfinder (+ optional amass)."""
-    utils.log(f"Stage 1 — subdomain enumeration ({target})")
+    utils.log(f"subdomain enumeration ({target})")
     subs = {target}
 
     if utils.have("subfinder"):
@@ -75,7 +75,7 @@ def live_hosts(subdomains: list[str], outdir: Path, timeout: int = 8,
                threads: int = 30, max_hosts: int = 1000) -> list[dict]:
     """Stage 2: probe subdomains concurrently, record status + server + CF."""
     targets = subdomains[:max_hosts]
-    utils.log(f"Stage 2 — probing {len(targets)} hosts ({threads} threads)")
+    utils.log(f"probing {len(targets)} hosts ({threads} threads)")
     if not HAVE_REQUESTS:
         utils.warn("requests not available — skipping live-host probe")
         return []
@@ -99,7 +99,7 @@ def live_hosts(subdomains: list[str], outdir: Path, timeout: int = 8,
 
 def cloudflare_detect(target: str, outdir: Path) -> dict:
     """Stage 3: detect Cloudflare via response headers + resolved IP."""
-    utils.log(f"Stage 3 — Cloudflare detection ({target})")
+    utils.log(f"Cloudflare detection ({target})")
     result = {"target": target, "cloudflare": False, "evidence": []}
     try:
         result["ip"] = socket.gethostbyname(target)
@@ -211,7 +211,7 @@ def _verify_origin(target: str, ip: str) -> dict:
 
 def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     """Stage 4: find the origin IP behind Cloudflare via leak subdomains + MX."""
-    utils.log(f"Stage 4 — origin hunting ({target})")
+    utils.log(f"origin hunting ({target})")
     edge_ip = cf_result.get("ip") or _resolve(target)
     utils.log(f"  edge IP (Cloudflare): {edge_ip or 'unknown'}")
 
@@ -352,7 +352,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     origin server while presenting the correct virtual host, instead of the
     403/404-blocked Cloudflare edge.  Findings from every pass are merged.
     """
-    utils.log("Stage 5 — vulnerability scan (nuclei)")
+    utils.log("vulnerability scan (nuclei)")
     if not utils.have("nuclei"):
         utils.warn("nuclei not found — skipping")
         return []
@@ -400,7 +400,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
 
 def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 40) -> list[str]:
     """Stage 6: ffuf content discovery against the main target."""
-    utils.log("Stage 6 — content discovery (ffuf)")
+    utils.log("content discovery (ffuf)")
     if not utils.have("ffuf"):
         utils.warn("ffuf not found — skipping")
         return []

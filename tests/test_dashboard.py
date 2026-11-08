@@ -158,6 +158,34 @@ class TestWriteRunSummary(DashboardTestCase):
         self.assertNotIn("Origin candidates", doc2)
         self.assertNotIn("Discovered content", doc2)
 
+    def test_open_ports_nmap_card(self):
+        findings = [
+            {"severity": "info", "template": "nmap:80/tcp", "name": "Open port 80",
+             "url": "", "host": "1.2.3.4", "evidence": "http"},
+            {"severity": "info", "template": "nmap:443/tcp", "name": "Open port 443",
+             "url": "", "host": "1.2.3.4", "evidence": "https"},
+            {"severity": "high", "template": "sqli", "name": "SQLi",
+             "url": "https://example.com/x", "host": "example.com", "evidence": ""},
+        ]
+        path = self._summary(findings=findings)
+        doc = path.read_text()
+        self.assertIn("open ports (nmap)", doc)
+        # The card value is the count of nmap:* templated findings (2 here).
+        self.assertIn(
+            '<div class="card-label">open ports (nmap)</div>'
+            '<div class="card-value">2</div>',
+            doc,
+        )
+
+    def test_open_ports_nmap_card_zero_when_absent(self):
+        path = self._summary(findings=[])
+        doc = path.read_text()
+        self.assertIn(
+            '<div class="card-label">open ports (nmap)</div>'
+            '<div class="card-value">0</div>',
+            doc,
+        )
+
     def test_finding_count_equals_dedupe(self):
         findings = [
             {"severity": "high", "template": "sqli", "name": "A",

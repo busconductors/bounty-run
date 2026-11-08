@@ -66,7 +66,7 @@ _SCRIPT_SRC_RE = re.compile(r'<script\b[^>]*?\bsrc\s*=\s*["\']([^"\']+)["\']', r
 
 def secret_scan(target: str, outdir: Path) -> list[dict]:
     """Scan live hosts' homepages + same-origin JS for exposed secrets."""
-    utils.log("Stage — secret scan (HTML + JS)")
+    utils.log("secret scan (HTML + JS)")
     if not HAVE_REQUESTS:
         utils.warn("requests not installed — skipping secret scan")
         return []

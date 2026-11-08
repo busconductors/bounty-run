@@ -52,7 +52,7 @@ def _candidate_ips(target: str, rows: list[dict] | None,
 def nmap_scan(target: str, outdir: Path, rows: list[dict] | None = None,
               origins: list[dict] | None = None, timeout: int = 900) -> list[dict]:
     """Run a medium-aggressive nmap scan over collected IPs; return port findings."""
-    utils.log("Stage — nmap port scan")
+    utils.log("nmap port scan")
     if not utils.have("nmap"):
         utils.warn("nmap not found — skipping port scan")
         return []

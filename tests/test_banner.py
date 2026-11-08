@@ -6,9 +6,11 @@ Pure functions only — no network, no external tools. Run with stdlib unittest:
     # or directly:
     python3 tests/test_banner.py -v
 """
+import io
 import os
 import sys
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 # Make the project root importable regardless of cwd / how the test is invoked.
@@ -34,6 +36,42 @@ class TestBannerRender(unittest.TestCase):
         out = banner.render()
         self.assertIsInstance(out, str)
         self.assertNotEqual(out, "")
+
+    def test_render_uses_red_glyph_color_when_color_enabled(self):
+        # With color forced on, '#' art glyphs are wrapped in the red SGR code.
+        orig = utils._color_enabled
+        utils._color_enabled = lambda: True
+        self.addCleanup(setattr, utils, "_color_enabled", orig)
+        out = banner.render()
+        self.assertIn("\033[91m#\033[0m", out)
+        # Bright cyan must no longer be used for the art glyphs.
+        self.assertNotIn("\033[96m#\033[0m", out)
+
+    def test_print_banner_renders_without_error(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            banner.print_banner()
+        self.assertNotEqual(buf.getvalue(), "")
+
+
+class TestStageHeader(unittest.TestCase):
+    def test_stage_header_renders_without_error(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            utils.stage_header(5, 15, "VULNERABILITY SCAN (NUCLEI)")
+        out = buf.getvalue()
+        self.assertIn("STAGE 5/15 - VULNERABILITY SCAN (NUCLEI)", out)
+        # Three lines: top rule, label, bottom rule.
+        self.assertEqual(len([ln for ln in out.splitlines() if ln.strip()]), 3)
+
+    def test_stage_header_is_plain_when_color_disabled(self):
+        orig = utils._color_enabled
+        utils._color_enabled = lambda: False
+        self.addCleanup(setattr, utils, "_color_enabled", orig)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            utils.stage_header(1, 15, "SUBDOMAIN ENUMERATION")
+        self.assertNotIn("\033[", buf.getvalue())
 
 
 class TestColorize(unittest.TestCase):

@@ -11,6 +11,9 @@ from . import (__version__, api_endpoints, banner, dashboard, headi_scan, http_h
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
+# Total number of pipeline stages, for the stage-transition headers.
+TOTAL_STAGES = 15
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -222,56 +225,73 @@ def main(argv=None) -> int:
     rows = []
     cf = {"target": target, "cloudflare": False, "evidence": []}
 
+    findings = []
+
     if "subs" not in skip:
+        utils.stage_header(1, TOTAL_STAGES, "SUBDOMAIN ENUMERATION")
         subs = stages.subdomain_enum(target, outdir, skip_amass=not args.amass)
     if "live" not in skip:
+        utils.stage_header(2, TOTAL_STAGES, "LIVE HOST PROBING")
         rows = stages.live_hosts(subs, outdir, timeout=args.timeout,
                                  threads=args.threads, max_hosts=args.max_hosts)
     if "cf" not in skip:
+        utils.stage_header(3, TOTAL_STAGES, "CLOUDFLARE DETECTION")
         cf = stages.cloudflare_detect(target, outdir)
 
     origins = []
     if cf["cloudflare"] and "origin" not in skip:
+        utils.stage_header(4, TOTAL_STAGES, "ORIGIN HUNTING")
         origins = stages.origin_hunt(target, outdir, cf)
         if "origin_deep" not in skip:
             origins += origin_deep.origin_deep(target, outdir, cf)
     origins = _merge_origins_by_ip(origins)
 
+    if "nmap" not in skip and args.nmap:
+        utils.stage_header(5, TOTAL_STAGES, "PORT SCAN (NMAP)")
+        findings += nmap_scan.nmap_scan(target, outdir, rows, origins)
+
     write_summary(outdir, target, subs, rows, cf, origins)
 
-    findings = []
     if "vuln" not in skip:
-        findings = stages.vuln_scan(target, outdir, rows, severity=args.nuclei_severity,
-                                    concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
-                                    origins=origins)
+        utils.stage_header(6, TOTAL_STAGES, "VULNERABILITY SCAN (NUCLEI)")
+        findings += stages.vuln_scan(target, outdir, rows, severity=args.nuclei_severity,
+                                     concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
+                                     origins=origins)
         report.write_findings_report(outdir, target, findings, [], origins=origins)
 
     content = []
     if "content" not in skip:
+        utils.stage_header(7, TOTAL_STAGES, "CONTENT DISCOVERY")
         content = stages.content_discovery(target, outdir, args.wordlist)
 
     if "api" not in skip:
+        utils.stage_header(8, TOTAL_STAGES, "API ENDPOINT ENUMERATION")
         findings += api_endpoints.api_endpoints_scan(target, outdir, max_hosts=min(args.max_hosts, 20))
 
     if "param" not in skip:
+        utils.stage_header(9, TOTAL_STAGES, "PARAMETER / SQLi SCAN")
         findings += param_scan.param_scan(target, outdir, args.max_param_urls)
 
     if "secret" not in skip:
+        utils.stage_header(10, TOTAL_STAGES, "SECRET SCAN")
         findings += secret_scan.secret_scan(target, outdir)
 
     live = [r["host"] for r in rows if r["status"]] or [target]
     if "metis" not in skip and args.metis:
+        utils.stage_header(11, TOTAL_STAGES, "METIS CVE SWEEP")
         findings += metis_check.metis_check(target, outdir, live)
 
     if "headers" not in skip:
+        utils.stage_header(12, TOTAL_STAGES, "SECURITY HEADERS")
         findings += http_headers.security_headers_scan(target, outdir, live)
     if "cors" not in skip:
+        utils.stage_header(13, TOTAL_STAGES, "CORS MISCONFIGURATION")
         findings += http_headers.cors_scan(target, outdir, live)
     if "tech" not in skip:
+        utils.stage_header(14, TOTAL_STAGES, "TECH DETECTION")
         findings += tech_scan.tech_scan(target, outdir, live)
-    if "nmap" not in skip and args.nmap:
-        findings += nmap_scan.nmap_scan(target, outdir, rows, origins)
     if "headi" not in skip and args.headi:
+        utils.stage_header(15, TOTAL_STAGES, "HEADER INJECTION (HEADI)")
         findings += headi_scan.headi_scan(target, outdir, rows)
 
     duration_s = time.monotonic() - start

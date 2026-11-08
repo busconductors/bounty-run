@@ -20,7 +20,7 @@ def render() -> str:
     lines = []
     for line in text.splitlines():
         if "#" in line:
-            lines.append("".join(utils.colorize(ch, "96") if ch == "#" else ch for ch in line))
+            lines.append("".join(utils.colorize(ch, "91") if ch == "#" else ch for ch in line))
         elif any("\u2800" <= ch <= "\u28ff" for ch in line):
             lines.append(line)
         else:

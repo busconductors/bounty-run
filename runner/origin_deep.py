@@ -34,7 +34,7 @@ def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     Returns ``list[{"ip", "sources", "status", "remote_ip"}]`` — the same shape
     as :func:`stages.origin_hunt`, so ``cli.py`` can merge the two lists.
     """
-    utils.log(f"Stage 4b — deep origin discovery via crt.sh ({target})")
+    utils.log(f"deep origin discovery via crt.sh ({target})")
 
     # 1. Query crt.sh for every certificate whose SANs mention <target>.
     crt_url = f"https://crt.sh/?q=%25.{target}&output=json"

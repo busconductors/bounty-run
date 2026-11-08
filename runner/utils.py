@@ -29,6 +29,21 @@ SEVERITY_COLOR = {
 }
 
 
+def stage_header(num: int, total: int, name: str, width: int = 64) -> None:
+    """Print a red-accented, rule-style boxed stage transition header.
+
+    Renders a top rule, a centered ``STAGE n/total - NAME`` line and a closing
+    rule.  The accent color is applied via ``colorize`` (itself gated by
+    ``_color_enabled``), so piped / redirected output carries no escape codes.
+    """
+    label = f"STAGE {num}/{total} - {name}"
+    rule = "─" * width
+    centered = label.center(width)
+    print(colorize(rule, "91"), flush=True)
+    print(colorize(centered, "1;91"), flush=True)
+    print(colorize(rule, "91"), flush=True)
+
+
 def log(msg: str) -> None:
     print(colorize(f"[+] {msg}", "2"), flush=True)
 

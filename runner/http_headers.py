@@ -56,7 +56,7 @@ def _live_hosts(outdir: Path, target: str, hosts: list[str] | None) -> list[str]
 def security_headers_scan(target: str, outdir: Path, hosts: list[str] | None = None,
                           include_deprecated: bool = False) -> list[dict]:
     """Invoke vendored shcheck.py and return missing/insecure-header findings."""
-    utils.log("Stage — security headers (shcheck)")
+    utils.log("security headers (shcheck)")
     if not SHCHECK.exists():
         utils.warn("shcheck.py not vendored — skipping security-header scan")
         return []
@@ -123,7 +123,7 @@ def _weak_value_severity(hdr: str, value: str) -> str | None:
 def cors_scan(target: str, outdir: Path, hosts: list[str] | None = None,
               threads: int = 10) -> list[dict]:
     """Reimplemented 6-origin CORS probe; return misconfiguration findings."""
-    utils.log("Stage — CORS misconfiguration")
+    utils.log("CORS misconfiguration")
     if not HAVE_REQUESTS:
         utils.warn("requests not installed — skipping CORS scan")
         return []

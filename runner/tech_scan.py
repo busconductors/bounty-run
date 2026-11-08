@@ -74,7 +74,7 @@ def _parse_whatweb_json(raw: str) -> list[dict]:
 def tech_scan(target: str, outdir: Path, hosts: list[str] | None = None,
               timeout: int = 300) -> list[dict]:
     """Fingerprint live hosts with whatweb; emit one finding per technology."""
-    utils.log("Stage — tech detection (whatweb)")
+    utils.log("tech detection (whatweb)")
     if not utils.have("whatweb"):
         utils.warn("whatweb not found — skipping tech detection")
         return []
