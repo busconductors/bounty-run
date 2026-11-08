@@ -169,7 +169,8 @@ def normalize(target):
 
 
 def print_error(target, e):
-    sys.stdout = sys.__stdout__
+    # NB: do not reset sys.stdout here — with -j, stdout is redirected to
+    # /dev/null so error text doesn't corrupt the JSON printed at the end.
     if isinstance(e, ValueError):
         print("Unknown url type")
 

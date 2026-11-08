@@ -73,6 +73,33 @@ class TestCorsScan(unittest.TestCase):
     def test_classify_mangled_medium(self):
         self.assertEqual(http_headers._classify("mangled_front", "x.com", "false", "x.com"), "medium")
 
+    def test_classify_mangled_wildcard_medium(self):
+        self.assertEqual(
+            http_headers._classify("mangled_front", "*", "", "attacker-mangled-origin.com"), "medium")
+
+    def test_classify_mangled_own_fixed_origin_safe(self):
+        self.assertIsNone(
+            http_headers._classify("mangled_front", "https://own-origin.com", "",
+                                   "attacker-mangled-origin.com"))
+
+    def test_classify_mangled_reflected_medium(self):
+        self.assertEqual(
+            http_headers._classify("mangled_front", "attacker-mangled-origin.com", "",
+                                   "attacker-mangled-origin.com"), "medium")
+
+    def test_classify_mangled_rear_reflected_with_scheme_medium(self):
+        self.assertEqual(
+            http_headers._classify("mangled_rear", "https://h.random.tld", "", "h.random.tld"),
+            "medium")
+
+    def test_classify_reflected_with_scheme_high(self):
+        self.assertEqual(
+            http_headers._classify("reflected", "https://abc.com", "false", "abc.com"), "high")
+
+    def test_classify_reflected_other_origin_none(self):
+        self.assertIsNone(
+            http_headers._classify("reflected", "https://site.com", "false", "abc.com"))
+
     def test_classify_scheme_low(self):
         self.assertEqual(http_headers._classify("scheme", "http://h", "false", "http://h"), "low")
 

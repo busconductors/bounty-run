@@ -191,13 +191,28 @@ def _send_origin(url: str, origin: str) -> tuple[str, str]:
     return acao, acac
 
 
+def _strip_scheme(value: str) -> str:
+    """Normalize an origin for comparison: drop scheme and trailing slash, lowercase."""
+    v = (value or "").strip().lower()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    return v.rstrip("/")
+
+
+def _reflects(acao: str, origin: str) -> bool:
+    """True if ACAO echoes the probe origin (scheme-insensitive)."""
+    return bool(acao) and _strip_scheme(acao) == _strip_scheme(origin)
+
+
 def _classify(kind: str, acao: str, acac: str, origin: str) -> str | None:
     if kind == "reflected":
-        return "high" if acao and acao == origin else None
+        return "high" if _reflects(acao, origin) else None
     if kind == "null":
         return "medium" if acao == "null" else None
     if kind in ("mangled_front", "mangled_rear"):
-        return "medium" if acao else None
+        # Only flag when the manipulated origin is actually accepted; a server
+        # returning its own fixed origin is not reflecting the attacker.
+        return "medium" if (acao == "*" or _reflects(acao, origin)) else None
     if kind == "scheme":
         return "low" if acao else None
     return None
