@@ -37,15 +37,30 @@ class TestBannerRender(unittest.TestCase):
         self.assertIsInstance(out, str)
         self.assertNotEqual(out, "")
 
-    def test_render_uses_red_glyph_color_when_color_enabled(self):
-        # With color forced on, '#' art glyphs are wrapped in the red SGR code.
+    def test_render_uses_red_when_color_enabled(self):
+        # With color forced on, the face, wordmark and credit render red.
         orig = utils._color_enabled
         utils._color_enabled = lambda: True
         self.addCleanup(setattr, utils, "_color_enabled", orig)
         out = banner.render()
-        self.assertIn("\033[91m#\033[0m", out)
-        # Bright cyan must no longer be used for the art glyphs.
-        self.assertNotIn("\033[96m#\033[0m", out)
+        art_lines = [ln for ln in out.splitlines() if ln and "recon orchestrator" not in ln]
+        self.assertTrue(art_lines)
+        for ln in art_lines:
+            self.assertTrue(ln.startswith("\033[91m"), ln)
+        # Bright cyan must no longer be used anywhere.
+        self.assertNotIn("\033[96m", out)
+
+    def test_banner_asset_has_face_and_no_hash_blocks(self):
+        orig = utils._color_enabled
+        utils._color_enabled = lambda: False
+        self.addCleanup(setattr, utils, "_color_enabled", orig)
+        out = banner.render()
+        braille = [ln for ln in out.splitlines()
+                   if any("\u2801" <= ch <= "\u28ff" for ch in ln)]
+        self.assertGreaterEqual(len(braille), 10)
+        self.assertNotIn("#", out)
+        self.assertIn("|___/\\_,_|_||_\\__|", out)  # "Bunty" in figlet small
+        self.assertIn("|____\\__,_|_.__/", out)      # "Lab" in figlet small
 
     def test_print_banner_renders_without_error(self):
         buf = io.StringIO()

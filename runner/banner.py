@@ -1,4 +1,4 @@
-"""Startup banner: pre-rendered ASCII + Braille logo, colorized."""
+"""Startup banner: Braille face + figlet-`small` wordmark/credit, in red."""
 from pathlib import Path
 
 from runner import utils
@@ -7,9 +7,9 @@ from runner import utils
 def render() -> str:
     """Return the colorized startup banner, or a literal fallback if missing.
 
-    - every `#` glyph -> bright cyan ("96")
-    - lines with no `#` and no Braille char (U+2800–U+28FF) -> dim ("2")
-    - Braille logo lines -> left as-is
+    Everything renders bright red ("91"): the Braille face, the figlet-`small`
+    wordmark and the "by Strasser Lab" credit. The plain-prose tagline is
+    dimmed red ("2;91") so it sits behind the art. Blank lines stay blank.
     """
     asset = Path(__file__).resolve().parent.parent / "assets" / "startup_banner.txt"
     try:
@@ -19,12 +19,12 @@ def render() -> str:
 
     lines = []
     for line in text.splitlines():
-        if "#" in line:
-            lines.append("".join(utils.colorize(ch, "91") if ch == "#" else ch for ch in line))
-        elif any("\u2800" <= ch <= "\u28ff" for ch in line):
-            lines.append(line)
+        if not line.strip():
+            lines.append("")
+        elif line.strip().startswith("recon orchestrator"):
+            lines.append(utils.colorize(line, "2;91"))
         else:
-            lines.append(utils.colorize(line, "2"))
+            lines.append(utils.colorize(line, "91"))
     return "\n".join(lines)
 
 
