@@ -17,6 +17,7 @@ _path: Path | None = None
 _current_stage: str | None = None
 _cancelled = False
 _skipped: set[str] = set()
+_consume_seq = 0
 _skip_reason: str | None = None
 _children: set[int] = set()
 
@@ -151,23 +152,30 @@ def check_control() -> None:
     if d is None:
         return
     with _lock:
+        global _consume_seq
+        _consume_seq += 1
+        mine = d / f".control.consumed.{os.getpid()}.{_consume_seq}"
         try:
-            text = (d / "control").read_text(encoding="utf-8", errors="replace")
+            # Atomic claim: a concurrent writer's rename lands on a fresh
+            # "control", never on content we have already read.
+            os.replace(d / "control", mine)
         except OSError:
-            text = ""
-        consumed = False
-        for ln in text.splitlines():
-            parts = ln.split()
-            if parts == ["cancel"]:
-                _cancelled = True
-            elif len(parts) == 2 and parts[0] == "skip":
-                _skipped.add(parts[1])
-                consumed = True
-        if consumed:
+            mine = None
+        if mine is not None:
             try:
-                (d / "control").write_text("")
+                text = mine.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            try:
+                mine.unlink()
             except OSError:
                 pass
+            for ln in text.splitlines():
+                parts = ln.split()
+                if parts == ["cancel"]:
+                    _cancelled = True
+                elif len(parts) == 2 and parts[0] == "skip":
+                    _skipped.add(parts[1])
         cancelled = _cancelled
         skipped = _current_stage in _skipped
     if cancelled:

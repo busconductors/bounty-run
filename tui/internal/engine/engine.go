@@ -173,7 +173,14 @@ func Skip(dir, stage string) error { return writeControl(dir, "skip "+stage+"\n"
 func Cancel(dir string) error { return writeControl(dir, "cancel\n") }
 
 // writeControl writes via temp file + rename so the engine never sees a partial line.
-func writeControl(dir, content string) error {
+func writeControl(dir, line string) error {
+	// Append semantics: keep any command the engine has not consumed yet.
+	// (Missing file counts as empty.)
+	old, err := os.ReadFile(filepath.Join(dir, "control"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	content := string(old) + line
 	f, err := os.CreateTemp(dir, ".control-*")
 	if err != nil {
 		return err
@@ -208,9 +215,10 @@ func HardKill(info runstore.RunInfo, dir string) error {
 			}
 		}
 	}
+	self := syscall.Getpgrp() // never kill the TUI's own group
 	var errs []error
 	for _, g := range groups {
-		if g <= 1 {
+		if g <= 1 || g == self {
 			continue
 		}
 		if err := syscall.Kill(-g, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {

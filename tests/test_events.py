@@ -108,7 +108,18 @@ class TestControl(unittest.TestCase):
         events._set_current_stage("vuln")
         with self.assertRaises(events.StageSkipped):
             events.check_control()
-        self.assertEqual((self.tmp / "control").read_text(), "")
+        self.assertFalse((self.tmp / "control").exists())
+
+    def test_skip_and_cancel_in_one_file_both_apply(self):
+        events.init(self.path)
+        events._set_current_stage("vuln")
+        self._ctl("skip nikto\nbogus line here\n\ncancel\n")
+        with self.assertRaises(events.RunCancelled):
+            events.check_control()
+        self.assertIn("nikto", events._skipped)
+        self.assertTrue(events._cancelled)
+        self.assertFalse((self.tmp / "control").exists())
+        self.assertEqual([p.name for p in self.tmp.glob(".control.consumed.*")], [])
 
     def test_skip_is_sticky_across_threads(self):
         events.init(self.path)

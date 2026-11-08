@@ -174,7 +174,7 @@ func TestControlAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(filepath.Join(dir, "control"))
-	if string(b) != "cancel\n" {
+	if string(b) != "skip vuln\ncancel\n" {
 		t.Errorf("control = %q", b)
 	}
 	ents, _ := os.ReadDir(dir)
@@ -199,7 +199,7 @@ func startGroup(t *testing.T) int {
 func TestHardKillKillsRecordedPgids(t *testing.T) {
 	dir := t.TempDir()
 	a, b := startGroup(t), startGroup(t)
-	if err := os.WriteFile(filepath.Join(dir, "pids"), []byte(strconv.Itoa(b)+"\n\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "pids"), []byte("garbage\n"+strconv.Itoa(b)+"\n\n12x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := HardKill(runstore.RunInfo{PGID: a}, dir); err != nil {
@@ -220,5 +220,34 @@ func TestHardKillKillsRecordedPgids(t *testing.T) {
 	}
 	if err := HardKill(runstore.RunInfo{PGID: 1}, t.TempDir()); err != nil {
 		t.Errorf("pgid 1: %v", err)
+	}
+}
+
+func TestHardKillSparesOwnGroup(t *testing.T) {
+	dir := t.TempDir()
+	own := syscall.Getpgrp()
+	if err := os.WriteFile(filepath.Join(dir, "pids"), []byte(strconv.Itoa(own)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := HardKill(runstore.RunInfo{PGID: own}, dir); err != nil {
+		t.Fatal(err)
+	}
+	// still alive if we get here
+}
+
+func TestControlAppends(t *testing.T) {
+	dir := t.TempDir()
+	_ = Skip(dir, "vuln")
+	_ = Cancel(dir)
+	b, _ := os.ReadFile(filepath.Join(dir, "control"))
+	if string(b) != "skip vuln\ncancel\n" {
+		t.Errorf("control = %q", b)
+	}
+	d2 := t.TempDir()
+	_ = Cancel(d2)
+	_ = Skip(d2, "nikto")
+	b, _ = os.ReadFile(filepath.Join(d2, "control"))
+	if string(b) != "cancel\nskip nikto\n" {
+		t.Errorf("control = %q", b)
 	}
 }
