@@ -312,14 +312,45 @@ def _patience_banner() -> None:
     print(b("=" * 60), flush=True)
 
 
+def _parse_nuclei_jsonl(path: Path) -> list[dict]:
+    """Parse one nuclei JSONL output file into finding dicts (defensively)."""
+    findings = []
+    if not path.exists():
+        return findings
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            j = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(j, dict):
+            continue
+        info = j.get("info")
+        if not isinstance(info, dict):
+            info = {}
+        findings.append({
+            "severity": str(info.get("severity") or "unknown").lower(),
+            "template": j.get("template-id", ""),
+            "name": info.get("name", ""),
+            "url": j.get("matched-at", ""),
+            "host": j.get("host", ""),
+        })
+    return findings
+
+
 def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "info,low,medium,high,critical",
               concurrency: int = 25, timeout: int = 1800, origins: list[dict] = None) -> list[dict]:
     """Stage 5: run nuclei against live hosts, parse JSONL into findings.
 
     `origins` is an optional list of dicts (each with an 'ip' key) for origin
-    servers discovered behind Cloudflare.  Each origin IP is appended to the
-    nuclei target list as both https://<ip> and http://<ip> so nuclei reaches
-    the real origin instead of the 403-blocked Cloudflare edge.
+    servers discovered behind Cloudflare.  nuclei (v3) has no static
+    hostname->IP map / custom-DNS flag, so each origin IP is scanned in a
+    SEPARATE nuclei pass over https://<ip> and http://<ip> while forcing
+    SNI=<target> (-sni) and Host=<target> (-H).  That connects to the real
+    origin server while presenting the correct virtual host, instead of the
+    403/404-blocked Cloudflare edge.  Findings from every pass are merged.
     """
     utils.log("Stage 5 — vulnerability scan (nuclei)")
     if not utils.have("nuclei"):
@@ -332,17 +363,6 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     hosts = [h for h in hosts if _is_global(_resolve(h))]
     if not hosts:
         hosts = [target]
-    # Origin IPs are already public-verified upstream; append both schemes so
-    # nuclei hits the real origin server behind Cloudflare.  Dedupe only.
-    seen = set(hosts)
-    for o in (origins or []):
-        ip = (o or {}).get("ip")
-        if not ip:
-            continue
-        for url in (f"https://{ip}", f"http://{ip}"):
-            if url not in seen:
-                seen.add(url)
-                hosts.append(url)
     hosts_file = outdir / "nuclei_targets.txt"
     hosts_file.write_text("\n".join(hosts) + "\n")
     utils.log(f"  scanning {len(hosts)} host(s) [{severity}] — this can take a few minutes")
@@ -351,30 +371,29 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
         f"-c {concurrency} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
         timeout=timeout,
     )
-    findings = []
-    jl = outdir / "nuclei.jsonl"
-    if jl.exists():
-        for line in jl.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                j = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(j, dict):
-                continue
-            info = j.get("info")
-            if not isinstance(info, dict):
-                info = {}
-            severity = str(info.get("severity") or "unknown").lower()
-            findings.append({
-                "severity": severity,
-                "template": j.get("template-id", ""),
-                "name": info.get("name", ""),
-                "url": j.get("matched-at", ""),
-                "host": j.get("host", ""),
-            })
+    findings = _parse_nuclei_jsonl(outdir / "nuclei.jsonl")
+
+    # Origin passes: one nuclei invocation per unique, public origin IP that
+    # reaches the origin directly (SNI + Host = target), merged into findings.
+    done = set()
+    for o in (origins or []):
+        ip = (o or {}).get("ip")
+        # SSRF guard: only scan public origin IPs; dedupe.
+        if not ip or ip in done or not _is_global(ip):
+            continue
+        done.add(ip)
+        origin_targets = outdir / f"nuclei_origin_{ip}.txt"
+        origin_targets.write_text(f"https://{ip}\nhttp://{ip}\n")
+        origin_jsonl = outdir / f"nuclei_origin_{ip}.jsonl"
+        utils.log(f"  scanning origin {ip} as {target} (SNI+Host) — behind Cloudflare")
+        utils.run(
+            f"nuclei -l {shlex.quote(str(origin_targets))} -severity {shlex.quote(severity)} "
+            f"-sni {shlex.quote(target)} -H {shlex.quote('Host: ' + target)} "
+            f"-c {concurrency} -jsonl -silent -o {shlex.quote(str(origin_jsonl))}",
+            timeout=timeout,
+        )
+        findings.extend(_parse_nuclei_jsonl(origin_jsonl))
+
     utils.log(f"  {len(findings)} finding(s)")
     return findings
 

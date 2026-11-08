@@ -144,34 +144,56 @@ class VulnScanTests(unittest.TestCase):
         self.assertIn(shlex.quote(str(self.outdir / "nuclei.jsonl")), cmd)
         self.assertIn(shlex.quote(str(self.outdir / "nuclei_targets.txt")), cmd)
 
-    def test_origin_ips_are_appended_as_both_schemes(self):
+    def test_origin_ips_are_not_appended_as_bare_urls(self):
+        # Origin IPs must NOT be added to the hostname target list — a bare IP
+        # makes nuclei send SNI/Host=<ip>, which the origin cannot route.
         self._run_scan_with_origins(
             [{"host": "example.com", "status": 200}],
             origins=[{"ip": "5.6.7.8"}, {"ip": "9.10.11.12"}],
         )
         targets = (self.outdir / "nuclei_targets.txt").read_text().splitlines()
         self.assertIn("example.com", targets)
-        self.assertIn("https://5.6.7.8", targets)
-        self.assertIn("http://5.6.7.8", targets)
-        self.assertIn("https://9.10.11.12", targets)
-        self.assertIn("http://9.10.11.12", targets)
+        for bare in ("https://5.6.7.8", "http://5.6.7.8",
+                     "https://9.10.11.12", "http://9.10.11.12"):
+            self.assertNotIn(bare, targets)
+
+    def test_origin_pass_uses_sni_and_host_header(self):
+        # Each origin IP gets its own nuclei pass that forces SNI + Host so it
+        # reaches the real origin behind Cloudflare with the right vhost.
+        run = self._run_scan_with_origins(
+            [{"host": "example.com", "status": 200}],
+            origins=[{"ip": "5.6.7.8"}, {"ip": "9.10.11.12"}],
+        )
+        origin_cmds = [c.args[0] for c in run.call_args_list
+                       if "nuclei_origin_" in c.args[0]]
+        self.assertEqual(len(origin_cmds), 2)
+        for ip, cmd in zip(("5.6.7.8", "9.10.11.12"), origin_cmds):
+            self.assertIn("-sni example.com", cmd)
+            self.assertIn(shlex.quote("Host: example.com"), cmd)
+            # Reaches the origin IP, not the hostname (which resolves to edge).
+            targets = (self.outdir / f"nuclei_origin_{ip}.txt").read_text().splitlines()
+            self.assertIn(f"https://{ip}", targets)
+            self.assertIn(f"http://{ip}", targets)
 
     def test_origin_ips_are_deduped(self):
-        self._run_scan_with_origins(
+        run = self._run_scan_with_origins(
             [{"host": "example.com", "status": 200}],
             origins=[{"ip": "5.6.7.8"}, {"ip": "5.6.7.8"}, {"ip": None}, {}],
         )
-        targets = (self.outdir / "nuclei_targets.txt").read_text().splitlines()
-        self.assertEqual(targets.count("https://5.6.7.8"), 1)
-        self.assertEqual(targets.count("http://5.6.7.8"), 1)
+        origin_cmds = [c.args[0] for c in run.call_args_list
+                       if "nuclei_origin_" in c.args[0]]
+        # One pass for the single unique IP; None/empty origins are skipped.
+        self.assertEqual(len(origin_cmds), 1)
+        self.assertIn("nuclei_origin_5.6.7.8", origin_cmds[0])
 
     def _run_scan_with_origins(self, live_rows, origins):
         with mock.patch.object(utils, "have", return_value=True), \
-             mock.patch.object(utils, "run", return_value=""), \
+             mock.patch.object(utils, "run", return_value="") as run, \
              mock.patch.object(utils, "log"), \
              mock.patch.object(stages, "_resolve",
                                side_effect=lambda h: {"example.com": "8.8.8.8"}.get(h, "")):
             stages.vuln_scan("example.com", self.outdir, live_rows, origins=origins)
+        return run
 
     def test_non_global_hosts_are_excluded(self):
         self._run_scan([
