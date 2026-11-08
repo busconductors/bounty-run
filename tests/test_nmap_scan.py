@@ -130,6 +130,51 @@ class TestNmapScan(unittest.TestCase):
             self.assertEqual(len(findings), 3)
             self.assertTrue((outdir / "nmap_open_ports.txt").exists())
 
+    def test_default_uses_top_ports(self):
+        rows = [{"host": "example.com", "status": 200}]
+        captured = {}
+        with TemporaryDirectory() as d:
+            outdir = Path(d)
+
+            def fake_run(cmd, timeout=900):
+                captured["cmd"] = cmd
+                (outdir / "nmap.xml").write_text(NMAP_XML)
+                return ""
+
+            with mock.patch.object(nmap_scan.utils, "have", return_value=True), \
+                 mock.patch.object(nmap_scan, "_resolve", return_value="93.184.216.34"), \
+                 mock.patch.object(nmap_scan, "_is_global", return_value=True), \
+                 mock.patch.object(nmap_scan.utils, "log"), \
+                 mock.patch.object(nmap_scan.utils, "warn"), \
+                 mock.patch.object(nmap_scan.utils, "run", side_effect=fake_run):
+                nmap_scan.nmap_scan("example.com", outdir, rows)
+
+        self.assertIn("--top-ports 1000", captured["cmd"])
+        self.assertIn("--open", captured["cmd"])
+        self.assertNotIn("-p-", captured["cmd"])
+
+    def test_full_uses_all_ports(self):
+        rows = [{"host": "example.com", "status": 200}]
+        captured = {}
+        with TemporaryDirectory() as d:
+            outdir = Path(d)
+
+            def fake_run(cmd, timeout=900):
+                captured["cmd"] = cmd
+                (outdir / "nmap.xml").write_text(NMAP_XML)
+                return ""
+
+            with mock.patch.object(nmap_scan.utils, "have", return_value=True), \
+                 mock.patch.object(nmap_scan, "_resolve", return_value="93.184.216.34"), \
+                 mock.patch.object(nmap_scan, "_is_global", return_value=True), \
+                 mock.patch.object(nmap_scan.utils, "log"), \
+                 mock.patch.object(nmap_scan.utils, "warn"), \
+                 mock.patch.object(nmap_scan.utils, "run", side_effect=fake_run):
+                nmap_scan.nmap_scan("example.com", outdir, rows, full=True)
+
+        self.assertIn("-p-", captured["cmd"])
+        self.assertNotIn("--top-ports 1000", captured["cmd"])
+
     def test_missing_nmap_returns_empty(self):
         with mock.patch.object(nmap_scan.utils, "have", return_value=False), \
              mock.patch.object(nmap_scan.utils, "warn"), \

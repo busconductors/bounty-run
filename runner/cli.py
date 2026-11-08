@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
     p.add_argument("--headi", action="store_true", help="also run the headi header-injection scan (off by default; intrusive)")
     p.add_argument("--nmap", action="store_true", help="also run the nmap port scan (off by default; intrusive)")
+    p.add_argument("--nmap-full", action="store_true", help="with --nmap, scan all 65535 ports (-p-) instead of top-1000")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
     p.add_argument("--nuclei-severity", default="info,low,medium,high,critical",
@@ -248,7 +249,7 @@ def main(argv=None) -> int:
 
     if "nmap" not in skip and args.nmap:
         utils.stage_header(5, TOTAL_STAGES, "PORT SCAN (NMAP)")
-        findings += nmap_scan.nmap_scan(target, outdir, rows, origins)
+        findings += nmap_scan.nmap_scan(target, outdir, rows, origins, full=args.nmap_full)
 
     write_summary(outdir, target, subs, rows, cf, origins)
 

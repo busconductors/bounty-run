@@ -1,7 +1,8 @@
 """nmap port-scan stage (Phase 8).
 
 Turns the IPs we already hold (live hosts + origin candidates + the target) into
-service/port intelligence. ONE profile: medium-aggressive `-T4 -sS -sV -sC -p-`.
+service/port intelligence. Default: `-T4 -sS -sV -sC --top-ports 1000 --open`
+(finishes in minutes); `full=True` opts into a full `-p-` scan.
 
 Flow:
   1. Collect candidate IPs: resolve each live host in `rows`, each origin's `ip`,
@@ -50,7 +51,8 @@ def _candidate_ips(target: str, rows: list[dict] | None,
 
 
 def nmap_scan(target: str, outdir: Path, rows: list[dict] | None = None,
-              origins: list[dict] | None = None, timeout: int = 900) -> list[dict]:
+              origins: list[dict] | None = None, timeout: int = 900,
+              full: bool = False) -> list[dict]:
     """Run a medium-aggressive nmap scan over collected IPs; return port findings."""
     utils.log("nmap port scan")
     if not utils.have("nmap"):
@@ -63,9 +65,10 @@ def nmap_scan(target: str, outdir: Path, rows: list[dict] | None = None,
         return []
 
     xml_path = Path(outdir) / "nmap.xml"
-    utils.log(f"  scanning {len(ips)} IP(s) [-T4 -sS -sV -sC -p-] — this can take a while")
+    port_spec = "-p-" if full else "--top-ports 1000"
+    utils.log(f"  scanning {len(ips)} IP(s) [-T4 -sS -sV -sC {port_spec}]")
     utils.run(
-        f"nmap -T4 -sS -sV -sC -p- -oX {xml_path} {' '.join(ips)}",
+        f"nmap -T4 -sS -sV -sC {port_spec} --open -oX {xml_path} {' '.join(ips)}",
         timeout=timeout,
     )
 
