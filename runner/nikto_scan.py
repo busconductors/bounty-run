@@ -24,10 +24,10 @@ import hashlib
 import json
 import re
 import shlex
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 # (category, compiled rule, severity) — case-insensitive, first match wins.
@@ -150,6 +150,8 @@ def _scan_host(host: str, nikto_dir: Path, maxtime: int) -> list[dict]:
             utils.warn(f"nikto produced no output for {host}")
             return []
         items = _parse_nikto_json(out.read_text(errors="replace"))
+    except (events.RunCancelled, events.StageSkipped):
+        raise
     except Exception as e:  # noqa: BLE001 — one bad host must not sink the stage
         utils.warn(f"nikto failed for {host}: {e}")
         return []
@@ -164,6 +166,7 @@ def nikto_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     utils.log("nikto web-server scan")
     if not utils.have("nikto"):
         utils.warn("nikto not found — skipping nikto scan")
+        events.mark_skipped("tool missing: nikto")
         return []
 
     try:
@@ -179,9 +182,20 @@ def nikto_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     nikto_dir.mkdir(parents=True, exist_ok=True)
     utils.log(f"  scanning {len(targets)} host(s) [maxtime {maxtime}s, {workers} workers]")
 
-    findings: list[dict] = []
+    stage = events.current_stage() or "nikto"
+    total = len(targets)
+    results: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for host_findings in pool.map(lambda h: _scan_host(h, nikto_dir, maxtime), targets):
-            findings.extend(host_findings)
+        futures = {pool.submit(_scan_host, h, nikto_dir, maxtime): h for h in targets}
+        done = 0
+        for fut in as_completed(futures):
+            host = futures[fut]
+            results[host] = fut.result()
+            done += 1
+            events.progress(stage, done, total)
+
+    findings: list[dict] = []
+    for host in targets:
+        findings.extend(results.get(host, []))
     utils.log(f"nikto: {len(findings)} item(s) across {len(targets)} host(s)")
     return findings

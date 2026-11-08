@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import utils
+from . import events, utils
 
 try:
     import requests
@@ -111,12 +111,16 @@ def live_hosts(subdomains: list[str], outdir: Path, timeout: int = 8,
         return []
 
     rows = []
+    stage = events.current_stage() or "live"
+    total = len(targets)
     with ThreadPoolExecutor(max_workers=threads) as ex:
         futures = {ex.submit(_probe_host, s, timeout): s for s in targets}
         for done, fut in enumerate(as_completed(futures), 1):
             rows.append(fut.result())
             if done % 500 == 0:
                 utils.log(f"  ... probed {done}/{len(targets)}")
+            if done % 10 == 0 or done == total:
+                events.progress(stage, done, total)
 
     rows.sort(key=lambda r: (r["status"] == 0, r["host"]))
     outfile = outdir / "live_hosts.txt"
@@ -184,6 +188,7 @@ def _resolve(host: str) -> str:
 def _mx_hosts(domain: str) -> list[str]:
     """Return MX hostnames via dig."""
     if not utils.have("dig"):
+        events.mark_skipped("tool missing: dig")
         return []
     out = utils.run(f"dig +short MX {domain}", timeout=20)
     hosts = []
@@ -269,10 +274,14 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
             add(ip, f"MX:{mx}")
 
     rows = []
-    for ip, sources in sorted(candidates.items()):
+    stage = events.current_stage() or "origin"
+    sorted_candidates = sorted(candidates.items())
+    total = len(sorted_candidates)
+    for done, (ip, sources) in enumerate(sorted_candidates, 1):
         v = _verify_origin(target, ip)
         rows.append({"ip": ip, "sources": sources, "status": v["status"],
                      "remote_ip": v["remote_ip"]})
+        events.progress(stage, done, total)
 
     outfile = outdir / "origin_candidates.txt"
     lines = [f"{r['ip']}\t{r['status']}\t{','.join(r['sources'])}" for r in rows]
@@ -342,32 +351,45 @@ def _patience_banner() -> None:
     print(b("=" * 60), flush=True)
 
 
+def _nuclei_line_to_finding(line: str) -> dict | None:
+    """Map one nuclei JSONL line to a finding dict; `None` if not parseable."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        j = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(j, dict):
+        return None
+    info = j.get("info")
+    if not isinstance(info, dict):
+        info = {}
+    return {
+        "severity": str(info.get("severity") or "unknown").lower(),
+        "template": j.get("template-id", ""),
+        "name": info.get("name", ""),
+        "url": j.get("matched-at", ""),
+        "host": j.get("host", ""),
+    }
+
+
 def _parse_nuclei_jsonl(path: Path) -> list[dict]:
     """Parse one nuclei JSONL output file into finding dicts (defensively)."""
     findings = []
     if not path.exists():
         return findings
     for line in path.read_text().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            j = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(j, dict):
-            continue
-        info = j.get("info")
-        if not isinstance(info, dict):
-            info = {}
-        findings.append({
-            "severity": str(info.get("severity") or "unknown").lower(),
-            "template": j.get("template-id", ""),
-            "name": info.get("name", ""),
-            "url": j.get("matched-at", ""),
-            "host": j.get("host", ""),
-        })
+        f = _nuclei_line_to_finding(line)
+        if f is not None:
+            findings.append(f)
     return findings
+
+
+def _emit_nuclei_finding_from_line(line: str) -> None:
+    f = _nuclei_line_to_finding(line)
+    if f is not None:
+        events.finding(f["severity"], f["template"], f["host"], f["url"], f["name"])
 
 
 def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "info,low,medium,high,critical",
@@ -385,6 +407,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     utils.log("vulnerability scan (nuclei)")
     if not utils.have("nuclei"):
         utils.warn("nuclei not found — skipping")
+        events.mark_skipped("tool missing: nuclei")
         return []
     _patience_banner()
     concurrency = _clamp_concurrency(concurrency)
@@ -400,6 +423,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
         f"nuclei -l {shlex.quote(str(hosts_file))} -severity {shlex.quote(severity)} "
         f"-c {concurrency} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
         timeout=timeout,
+        on_line=_emit_nuclei_finding_from_line,
     )
     findings = _parse_nuclei_jsonl(outdir / "nuclei.jsonl")
 
@@ -421,6 +445,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
             f"-sni {shlex.quote(target)} -H {shlex.quote('Host: ' + target)} "
             f"-c {concurrency} -jsonl -silent -o {shlex.quote(str(origin_jsonl))}",
             timeout=timeout,
+            on_line=_emit_nuclei_finding_from_line,
         )
         findings.extend(_parse_nuclei_jsonl(origin_jsonl))
 
@@ -433,14 +458,22 @@ def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 4
     utils.log("content discovery (ffuf)")
     if not utils.have("ffuf"):
         utils.warn("ffuf not found — skipping")
+        events.mark_skipped("tool missing: ffuf")
         return []
     if not Path(wordlist).exists():
         utils.warn(f"wordlist not found: {wordlist} — skipping ffuf")
         return []
+
+    def _on_line(line: str) -> None:
+        line = line.strip()
+        if line:
+            events.finding("info", "ffuf:path", target, f"https://{target}/{line}", line)
+
     out = utils.run(
         f"ffuf -u https://{target}/FUZZ -w {shlex.quote(wordlist)} "
         f"-mc 200,204,301,302,307,401,403 -ac -t {threads} -s",
         timeout=600,
+        on_line=_on_line,
     )
     paths = sorted({line.strip() for line in out.splitlines() if line.strip()})
     outfile = outdir / "content_discovery.txt"

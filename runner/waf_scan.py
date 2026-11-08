@@ -25,7 +25,7 @@ import shlex
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 
@@ -59,6 +59,7 @@ def waf_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     utils.log("WAF fingerprinting (wafw00f)")
     if not utils.have("wafw00f"):
         utils.warn("wafw00f not found — skipping WAF fingerprinting")
+        events.mark_skipped("tool missing: wafw00f")
         return []
 
     live = _hosts(target, hosts, max_hosts)

@@ -36,11 +36,11 @@ older sslyze still emits that key, it is honoured.
 import json
 import re
 import shlex
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 PORT = 443
@@ -253,6 +253,8 @@ def _scan_host(host: str, jsondir: Path, timeout: int, now: datetime) -> list[di
             utils.warn(f"sslyze: no JSON output for {host} (timeout or connect error)")
             return []
         doc = json.loads(out.read_text(errors="replace"))
+    except (events.RunCancelled, events.StageSkipped):
+        raise
     except Exception as e:  # noqa: BLE001
         utils.warn(f"sslyze: failed for {host}: {e}")
         return []
@@ -265,6 +267,7 @@ def tls_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     utils.log("TLS/SSL analysis (sslyze)")
     if not utils.have("sslyze"):
         utils.warn("sslyze not found — skipping TLS/SSL analysis")
+        events.mark_skipped("tool missing: sslyze")
         return []
 
     targets = _collect_hosts(target, hosts, max_hosts)
@@ -277,11 +280,21 @@ def tls_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     jsondir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
 
-    findings: list[dict] = []
+    stage = events.current_stage() or "tls"
+    total = len(targets)
+    results: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        results = list(pool.map(lambda h: _scan_host(h, jsondir, timeout, now), targets))
-    for per_host in results:
-        findings.extend(per_host)
+        futures = {pool.submit(_scan_host, h, jsondir, timeout, now): h for h in targets}
+        done = 0
+        for fut in as_completed(futures):
+            host = futures[fut]
+            results[host] = fut.result()
+            done += 1
+            events.progress(stage, done, total)
+
+    findings: list[dict] = []
+    for host in targets:
+        findings.extend(results.get(host, []))
 
     (outdir / "tls_scan.txt").write_text(
         "".join(f"{f['host']}\t{f['template']}\t{f['severity']}\n" for f in findings))

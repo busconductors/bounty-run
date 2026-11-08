@@ -16,7 +16,7 @@ Flow:
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 # Ports whose exposure is worth a bump to low severity; everything else is info.
@@ -57,6 +57,7 @@ def nmap_scan(target: str, outdir: Path, rows: list[dict] | None = None,
     utils.log("nmap port scan")
     if not utils.have("nmap"):
         utils.warn("nmap not found — skipping port scan")
+        events.mark_skipped("tool missing: nmap")
         return []
 
     ips = _candidate_ips(target, rows, origins)

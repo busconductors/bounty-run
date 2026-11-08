@@ -95,6 +95,7 @@ def stage_end(stage: str, status: str, duration_ms: int, counts: dict,
 
 
 def progress(stage: str, done: int, total: int) -> None:
+    check_control()
     emit("progress", stage=stage, done=done, total=total)
 
 

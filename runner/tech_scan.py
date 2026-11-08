@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 
@@ -77,6 +77,7 @@ def tech_scan(target: str, outdir: Path, hosts: list[str] | None = None,
     utils.log("tech detection (whatweb)")
     if not utils.have("whatweb"):
         utils.warn("whatweb not found — skipping tech detection")
+        events.mark_skipped("tool missing: whatweb")
         return []
 
     live = _live_hosts(outdir, target, hosts)

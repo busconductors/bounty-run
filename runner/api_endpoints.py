@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from runner import utils
+from runner import events, utils
 from runner.stages import _is_global, _resolve
 
 # Path substrings that mark a URL as API-like.
@@ -100,6 +100,7 @@ def api_endpoints_scan(target: str, outdir: Path, hosts: list[str] | None = None
     utils.log("API endpoint enumeration (katana)")
     if not utils.have("katana"):
         utils.warn("katana not found — skipping API endpoint enumeration")
+        events.mark_skipped("tool missing: katana")
         return []
 
     live = _live_hosts(outdir, target, hosts, max_hosts)

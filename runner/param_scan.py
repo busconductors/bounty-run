@@ -17,7 +17,7 @@ import shlex
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
-from runner import utils
+from runner import events, utils
 
 # A real UA + retries/backoff + --fail so throttled error bodies (429/503 HTML)
 # don't get fed to json.loads. --compressed keeps the 500-row payload small.
@@ -178,13 +178,17 @@ def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
 
     if not utils.have("sqlmap"):
         utils.warn("  sqlmap not found on PATH; skipping injection testing")
+        events.mark_skipped("tool missing: sqlmap")
         return []
 
     report_parts = []
-    for url in endpoints:
+    stage = events.current_stage() or "param"
+    total = len(endpoints)
+    for done, url in enumerate(endpoints, 1):
         cmd = f"sqlmap -u {shlex.quote(url)} {SQLMAP_FLAGS}"
         out = utils.run(cmd, timeout=300)
         report_parts.append(f"### {url}\n{out}\n")
+        events.progress(stage, done, total)
         if _is_injectable(out):
             findings.append({
                 "severity": "high",
