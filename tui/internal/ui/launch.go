@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strconv"
@@ -168,15 +169,38 @@ func startRun(cfg Config, o engine.Options) tea.Cmd {
 		if err != nil {
 			return launchResultMsg{err: err}
 		}
-		if _, err := engine.Spawn(cfg.EngineBin, engine.Argv(o, dir), dir); err != nil {
+		pid, err := engine.Spawn(cfg.EngineBin, engine.Argv(o, dir), dir)
+		if err != nil {
 			_ = os.RemoveAll(dir) // the leaf we just made; no phantom run
 			return launchResultMsg{err: err}
 		}
+		// Spawn uses setsid, so the engine leads its own group (pgid == pid).
+		info := runstore.RunInfo{Dir: dir, PID: pid, PGID: pid}
+		started, stErr := runstore.PIDStart(pid)
+		info.PIDStart = started
 		if err := engine.WaitStarted(dir, launchWait); err != nil {
+			if errors.Is(err, engine.ErrNoStart) {
+				err = stopUnstarted(info, stErr == nil)
+			}
 			return launchResultMsg{err: err} // dir kept: engine.log explains why
 		}
 		return AttachMsg{Dir: dir}
 	}
+}
+
+// stopUnstarted hard-kills an engine that never emitted run_start (guarded
+// like any hard kill) and describes the outcome with the engine.log tail.
+// known is false when the engine had already exited before its start time
+// could be read; there is then nothing safe to signal.
+func stopUnstarted(info runstore.RunInfo, known bool) error {
+	outcome := "stopped"
+	if known {
+		if err := engine.HardKill(info, info.Dir); err != nil {
+			outcome = "stop failed: " + err.Error()
+		}
+	}
+	return fmt.Errorf("engine did not start within %s — %s\nengine.log tail:\n%s",
+		launchWait, outcome, engine.LogTail(info.Dir, 20))
 }
 
 func (l *launchModel) Update(msg tea.Msg) tea.Cmd {

@@ -149,6 +149,9 @@ func hasRunStart(path string) bool {
 	return false
 }
 
+// LogTail returns the last n lines of dir/engine.log.
+func LogTail(dir string, n int) string { return logTail(filepath.Join(dir, "engine.log"), n) }
+
 func logTail(path string, n int) string {
 	f, err := os.Open(path)
 	if err != nil {
