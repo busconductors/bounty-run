@@ -1,0 +1,53 @@
+{"v": 1, "t": 1762600000500, "type": "run_start", "target": "acme.com", "flags": {"tls": false}, "stages": ["subs", "live", "vuln"]}
+{"v": 1, "t": 1762600001000, "type": "stage_start", "stage": "subs"}
+{"v": 1, "t": 1762600001500, "type": "output", "stage": "subs", "tool": "subfinder", "stream": "stdout", "line": "subfinder line 1"}
+{"v": 1, "t": 1762600002000, "type": "progress", "stage": "subs", "done": 1, "total": 7}
+{"v": 1, "t": 1762600002500, "type": "output", "stage": "subs", "tool": "subfinder", "stream": "stdout", "line": "subfinder line 2"}
+{"v": 1, "t": 1762600003000, "type": "progress", "stage": "subs", "done": 2, "total": 7}
+{"v": 1, "t": 1762600003500, "type": "output", "stage": "subs", "tool": "subfinder", "stream": "stdout", "line": "subfinder line 3"}
+{"v": 1, "t": 1762600004000, "type": "progress", "stage": "subs", "done": 3, "total": 7}
+{"v": 1, "t": 1762600004500, "type": "output", "stage": "subs", "tool": "subfinder", "stream": "stdout", "line": "subfinder line 4"}
+{"v": 1, "t": 1762600005000, "type": "progress", "stage": "subs", "done": 4, "total": 7}
+{"v": 1, "t": 1762600005500, "type": "output", "stage": "subs", "tool": "subfinder", "stream": "stdout", "line": "subfinder line 5"}
+{"v": 1, "t": 1762600006000, "type": "progress", "stage": "subs", "done": 5, "total": 7}
+{"v": 1, "t": 1762600006500, "type": "output", "stage": "subs", "tool": "subfinder", "stream": "stdout", "line": "subfinder line 6"}
+{"v": 1, "t": 1762600007000, "type": "progress", "stage": "subs", "done": 6, "total": 7}
+{"v": 1, "t": 1762600007500, "type": "output", "stage": "subs", "tool": "subfinder", "stream": "stdout", "line": "subfinder line 7"}
+{"v": 1, "t": 1762600008000, "type": "progress", "stage": "subs", "done": 7, "total": 7}
+{"v": 1, "t": 1762600008500, "type": "stage_end", "stage": "subs", "status": "ok", "duration_ms": 3500, "counts": {"subdomains": 212}}
+{"v": 1, "t": 1762600009000, "type": "stage_start", "stage": "live"}
+{"v": 1, "t": 1762600009500, "type": "output", "stage": "live", "tool": "httpx", "stream": "stdout", "line": "httpx line 8"}
+{"v": 1, "t": 1762600010000, "type": "progress", "stage": "live", "done": 1, "total": 6}
+{"v": 1, "t": 1762600010500, "type": "output", "stage": "live", "tool": "httpx", "stream": "stdout", "line": "httpx line 9"}
+{"v": 1, "t": 1762600011000, "type": "progress", "stage": "live", "done": 2, "total": 6}
+{"v": 1, "t": 1762600011500, "type": "output", "stage": "live", "tool": "httpx", "stream": "stdout", "line": "httpx line 10"}
+{"v": 1, "t": 1762600012000, "type": "progress", "stage": "live", "done": 3, "total": 6}
+{"v": 1, "t": 1762600012500, "type": "output", "stage": "live", "tool": "httpx", "stream": "stdout", "line": "httpx line 11"}
+{"v": 1, "t": 1762600013000, "type": "progress", "stage": "live", "done": 4, "total": 6}
+{"v": 1, "t": 1762600013500, "type": "output", "stage": "live", "tool": "httpx", "stream": "stdout", "line": "httpx line 12"}
+{"v": 1, "t": 1762600014000, "type": "progress", "stage": "live", "done": 5, "total": 6}
+{"v": 1, "t": 1762600014500, "type": "output", "stage": "live", "tool": "httpx", "stream": "stdout", "line": "httpx line 13"}
+{"v": 1, "t": 1762600015000, "type": "progress", "stage": "live", "done": 6, "total": 6}
+{"v": 1, "t": 1762600015500, "type": "stage_end", "stage": "live", "status": "ok", "duration_ms": 3500, "counts": {"live": 48}}
+{"v": 1, "t": 1762600016000, "type": "stage_start", "stage": "vuln"}
+{"v": 1, "t": 1762600016500, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "nuclei line 14"}
+{"v": 1, "t": 1762600017000, "type": "progress", "stage": "vuln", "done": 1, "total": 7}
+{"v": 1, "t": 1762600017500, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "nuclei line 15"}
+{"v": 1, "t": 1762600018000, "type": "progress", "stage": "vuln", "done": 2, "total": 7}
+{"v": 1, "t": 1762600018500, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "nuclei line 16"}
+{"v": 1, "t": 1762600019000, "type": "progress", "stage": "vuln", "done": 3, "total": 7}
+{"v": 1, "t": 1762600019500, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "nuclei line 17"}
+{"v": 1, "t": 1762600020000, "type": "progress", "stage": "vuln", "done": 4, "total": 7}
+{"v": 1, "t": 1762600020500, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "nuclei line 18"}
+{"v": 1, "t": 1762600021000, "type": "progress", "stage": "vuln", "done": 5, "total": 7}
+{"v": 1, "t": 1762600021500, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "nuclei line 19"}
+{"v": 1, "t": 1762600022000, "type": "progress", "stage": "vuln", "done": 6, "total": 7}
+{"v": 1, "t": 1762600022500, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "nuclei line 20"}
+{"v": 1, "t": 1762600023000, "type": "progress", "stage": "vuln", "done": 7, "total": 7}
+{"v": 1, "t": 1762600023500, "type": "finding", "severity": "medium", "template": "cors-misconfig", "host": "api.acme.com", "url": "https://api.acme.com/", "summary": "CORS reflects arbitrary origin"}
+{"v": 1, "t": 1762600024000, "type": "finding", "severity": "high", "template": "exposed-git", "host": "dev.acme.com", "url": "https://dev.acme.com/.git/config", "summary": "Git repository exposed"}
+{"v": 1, "t": 1762600024500, "type": "finding", "severity": "low", "template": "weak-cipher", "host": "www.acme.com", "url": "https://www.acme.com/", "summary": "Weak TLS cipher offered"}
+{"v": 1, "t": 1762600025000, "type": "finding", "severity": "info", "template": "tech-detect", "host": "acme.com", "url": "https://acme.com/", "summary": "nginx detected"}
+{"v": 1, "t": 1762600025500, "type": "stage_end", "stage": "vuln", "status": "ok", "duration_ms": 3500, "counts": {"findings": 4}}
+{"v": 1, "t": 1762600026000, "type": "log", "level": "info", "msg": "report written"}
+{"v": 1, "t": 1762600026500, "type": "run_end", "status": "ok", "totals": {"critical": 0, "high": 1, "medium": 1, "low": 1, "info": 1}, "report": "/tmp/acme/FINDINGS.md", "summary": "/tmp/acme/SUMMARY.md"}

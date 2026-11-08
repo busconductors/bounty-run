@@ -22,7 +22,7 @@ type NewRunMsg struct{}
 type Root struct {
 	cfg           Config
 	runs          *runsModel
-	monitor       *monitorPlaceholder
+	monitor       *MonitorModel
 	screen        string
 	width, height int
 }
@@ -42,12 +42,23 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		r.width, r.height = m.Width, m.Height
 		r.runs.width = m.Width
+		if r.monitor != nil {
+			r.monitor.update(m)
+		}
+		return r, nil
 	case ShowRunsMsg:
-		r.screen, r.monitor = "runs", nil
+		r.closeMonitor()
+		r.screen = "runs"
 		return r, nil
 	case AttachMsg:
-		r.screen, r.monitor = "monitor", &monitorPlaceholder{dir: m.Dir}
-		return r, nil
+		// A fresh model per attach; the previous Tail (if any) is cancelled.
+		r.closeMonitor()
+		mm := NewMonitor(m.Dir, r.cfg)
+		if r.width > 0 && r.height > 0 {
+			mm.update(tea.WindowSizeMsg{Width: r.width, Height: r.height})
+		}
+		r.screen, r.monitor = "monitor", &mm
+		return r, r.monitor.Init()
 	case NewRunMsg:
 		return r, nil
 	}
@@ -56,7 +67,7 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r, r.runs.Update(msg)
 	}
 	if r.screen == "monitor" && r.monitor != nil {
-		return r, r.monitor.Update(msg)
+		return r, r.monitor.update(msg)
 	}
 	return r, r.runs.Update(msg)
 }
@@ -64,7 +75,7 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (r *Root) View() tea.View {
 	var s string
 	if r.screen == "monitor" && r.monitor != nil {
-		s = r.monitor.View()
+		s = r.monitor.render()
 	} else {
 		s = r.runs.View()
 	}
@@ -73,16 +84,9 @@ func (r *Root) View() tea.View {
 	return v
 }
 
-// monitorPlaceholder stands in for the Monitor screen until it is implemented.
-type monitorPlaceholder struct{ dir string }
-
-func (m *monitorPlaceholder) Update(msg tea.Msg) tea.Cmd {
-	if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" {
-		return func() tea.Msg { return ShowRunsMsg{} }
+func (r *Root) closeMonitor() {
+	if r.monitor != nil {
+		r.monitor.Close()
+		r.monitor = nil
 	}
-	return nil
-}
-
-func (m *monitorPlaceholder) View() string {
-	return "monitor: " + m.dir + "\n\nesc back"
 }

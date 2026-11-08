@@ -78,15 +78,15 @@ func TestRunsEnterAttaches(t *testing.T) {
 	tm := teatest.NewTestModel(t, NewRoot(Config{OutputsRoot: root}))
 	teatest.WaitFor(t, tm.Output(), contains("live.example.com"), teatest.WithDuration(5*time.Second))
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	teatest.WaitFor(t, tm.Output(), contains("monitor:"), teatest.WithDuration(5*time.Second))
+	teatest.WaitFor(t, tm.Output(), contains("f filter"), teatest.WithDuration(5*time.Second))
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEscape})
 	teatest.WaitFor(t, tm.Output(), contains("1/3 active"), teatest.WithDuration(5*time.Second))
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
-	teatest.WaitFor(t, tm.Output(), contains("monitor:"), teatest.WithDuration(5*time.Second))
+	teatest.WaitFor(t, tm.Output(), contains("f filter"), teatest.WithDuration(5*time.Second))
 	tm.Quit()
 	r := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second)).(*Root)
 	if r.Screen() != "monitor" || r.monitor.dir != live {
-		t.Fatalf("screen %q dir %v", r.Screen(), r.monitor)
+		t.Fatalf("screen %q monitor %p", r.Screen(), r.monitor)
 	}
 }
 

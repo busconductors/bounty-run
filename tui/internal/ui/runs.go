@@ -151,13 +151,13 @@ func sevCells(sev map[string]int, styled bool) string {
 
 func (m *runsModel) row(r runstore.Run, selected bool) string {
 	g, gs := glyph(r.Status)
-	stage := r.CurrentStage
+	stage := oneLine(r.CurrentStage)
 	if stage == "" {
 		stage = "—"
 	}
-	rest := fmt.Sprintf(" %s %s %s ", padTo(clip(r.Info.Target, 22), 22),
+	rest := fmt.Sprintf(" %s %s %s ", padTo(clip(oneLine(r.Info.Target), 22), 22),
 		padTo(clip(stage, 10), 10), padTo(fmtElapsed(r.Elapsed), 7))
-	status := string(r.Status)
+	status := oneLine(string(r.Status))
 	if selected {
 		return cursorStyle.Render(g + rest + sevCells(r.Sev, false) + " " + status)
 	}
@@ -170,10 +170,10 @@ func (m *runsModel) View() string {
 	b.WriteString(titleStyle.Render("Runs") + "  " +
 		dimStyle.Render(fmt.Sprintf("%d/%d active", active, maxActive)) + "\n\n")
 	if len(m.runs) == 0 {
-		b.WriteString(dimStyle.Render("no runs found in "+m.root) + "\n")
+		b.WriteString(dimStyle.Render("no runs found in "+oneLine(m.root)) + "\n")
 	}
 	if m.err != nil {
-		b.WriteString(badStyle.Render("error: "+m.err.Error()) + "\n")
+		b.WriteString(badStyle.Render("error: "+oneLine(m.err.Error())) + "\n")
 	}
 	for i, r := range m.runs {
 		b.WriteString(m.row(r, i == m.cursor) + "\n")
