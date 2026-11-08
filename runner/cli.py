@@ -3,17 +3,26 @@ import argparse
 import os
 import re
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import (__version__, api_endpoints, banner, dashboard, dork_scan, headi_scan,
-               http_headers, metis_check, nikto_scan, nmap_scan, origin_deep,
-               panel_detect, param_scan, report, secret_scan, stages, tech_scan,
-               tls_scan, tracker, utils, waf_scan)
+from . import (__version__, api_endpoints, banner, dashboard, dork_scan, events,
+               headi_scan, http_headers, metis_check, nikto_scan, nmap_scan,
+               origin_deep, panel_detect, param_scan, report, secret_scan, stages,
+               tech_scan, tls_scan, tracker, utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
 # Total number of pipeline stages, for the stage-transition headers.
 TOTAL_STAGES = 20
+
+# Event stage ids, in pipeline order (same names as --skip).
+STAGE_IDS = ["subs", "panel", "live", "cf", "origin", "nmap", "waf", "dork", "tls",
+             "nikto", "vuln", "content", "api", "param", "secret", "metis",
+             "headers", "cors", "tech", "headi"]
+# Stages that only run when their opt-in flag (same name) is set.
+OPT_IN_STAGES = {"nmap", "tls", "nikto", "metis", "headi"}
+SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,7 +61,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="prompt for output directory + engagement name (-o skips the prompts)")
     p.add_argument("--no-banner", action="store_true", help="suppress the startup banner")
     p.add_argument("--no-track", action="store_true", help="do not ingest findings into the tracker DB")
+    p.add_argument("--events", metavar="PATH",
+                   help="write a JSON-lines event log to PATH (for monitoring the run)")
     return p
+
+
+def PLANNED_STAGES(args, skip: set[str]) -> list[str]:
+    """Ordered stage ids that will run (origin included provisionally)."""
+    return [s for s in STAGE_IDS
+            if s not in skip and (s not in OPT_IN_STAGES or getattr(args, s))]
 
 
 def _positive_int(value: str) -> int:
@@ -207,117 +224,137 @@ def ingest_findings(target: str, findings: list[dict]) -> int:
     return added
 
 
-def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
-    target = _normalize_target(args.target)
-    if not target:
-        print("error: invalid target — use a bare domain (e.g. example.com)",
-              file=__import__("sys").stderr)
-        return 2
+@dataclass
+class RunState:
+    """Results gathered so far; enough for a (partial) report at any point."""
+    target: str
+    subs: list = field(default_factory=list)
+    rows: list = field(default_factory=list)
+    cf: dict = field(default_factory=dict)
+    origins: list = field(default_factory=list)
+    findings: list = field(default_factory=list)
+    content: list = field(default_factory=list)
+    start: float = field(default_factory=lambda: time.monotonic())
+    summary_written: bool = False
 
-    if not args.no_banner:
-        banner.print_banner()
+    def __post_init__(self):
+        self.subs = self.subs or [self.target]
+        self.cf = self.cf or {"target": self.target, "cloudflare": False, "evidence": []}
 
-    outdir = _resolve_outdir(target, args.output_dir, args.interactive)
-    outdir.mkdir(parents=True, exist_ok=True)
 
-    utils.log(f"Bounty Runner v{__version__} — target: {target}")
-    utils.log(f"output dir: {outdir}")
-
-    skip = set(x.strip() for x in (args.skip or "").split(",") if x.strip())
-    start = time.monotonic()
-
-    subs = [target]
-    rows = []
-    cf = {"target": target, "cloudflare": False, "evidence": []}
-
-    findings = []
-
+def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> None:
     if "subs" not in skip:
-        utils.stage_header(1, TOTAL_STAGES, "SUBDOMAIN ENUMERATION")
-        subs = stages.subdomain_enum(target, outdir, skip_amass=not args.amass)
+        with events.stage("subs") as sc:
+            utils.stage_header(1, TOTAL_STAGES, "SUBDOMAIN ENUMERATION")
+            st.subs = stages.subdomain_enum(target, outdir, skip_amass=not args.amass)
+            sc.counts["subdomains"] = len(st.subs)
     if "panel" not in skip:
-        utils.stage_header(2, TOTAL_STAGES, "PANEL DETECTION")
-        findings += panel_detect.panel_detect(target, outdir, subs)
+        with events.stage("panel") as sc:
+            utils.stage_header(2, TOTAL_STAGES, "PANEL DETECTION")
+            new = panel_detect.panel_detect(target, outdir, st.subs)
+            st.findings += new
+            sc.counts["findings"] = len(new)
     if "live" not in skip:
-        utils.stage_header(3, TOTAL_STAGES, "LIVE HOST PROBING")
-        rows = stages.live_hosts(subs, outdir, timeout=args.timeout,
-                                 threads=args.threads, max_hosts=args.max_hosts)
-    live = [r["host"] for r in rows if r["status"]] or [target]
+        with events.stage("live") as sc:
+            utils.stage_header(3, TOTAL_STAGES, "LIVE HOST PROBING")
+            st.rows = stages.live_hosts(st.subs, outdir, timeout=args.timeout,
+                                        threads=args.threads, max_hosts=args.max_hosts)
+            sc.counts["live"] = len([r for r in st.rows if r["status"]])
+    live = [r["host"] for r in st.rows if r["status"]] or [target]
     if "cf" not in skip:
-        utils.stage_header(4, TOTAL_STAGES, "CLOUDFLARE DETECTION")
-        cf = stages.cloudflare_detect(target, outdir)
+        with events.stage("cf") as sc:
+            utils.stage_header(4, TOTAL_STAGES, "CLOUDFLARE DETECTION")
+            st.cf = stages.cloudflare_detect(target, outdir)
+            sc.counts["cloudflare"] = int(bool(st.cf["cloudflare"]))
 
-    origins = []
-    if cf["cloudflare"] and "origin" not in skip:
-        utils.stage_header(5, TOTAL_STAGES, "ORIGIN HUNTING")
-        origins = stages.origin_hunt(target, outdir, cf)
-        if "origin_deep" not in skip:
-            origins += origin_deep.origin_deep(target, outdir, cf)
-    origins = _merge_origins_by_ip(origins)
+    if "origin" not in skip:
+        if st.cf["cloudflare"]:
+            with events.stage("origin") as sc:
+                utils.stage_header(5, TOTAL_STAGES, "ORIGIN HUNTING")
+                st.origins = stages.origin_hunt(target, outdir, st.cf)
+                if "origin_deep" not in skip:
+                    st.origins = st.origins + origin_deep.origin_deep(target, outdir, st.cf)
+                sc.counts["origins"] = len(_merge_origins_by_ip(st.origins))
+        elif events.enabled():
+            with events.stage("origin"):
+                events.mark_skipped("no cloudflare")
+    st.origins = _merge_origins_by_ip(st.origins)
+
+    def scan(stage_id, num, title, fn, *a, **kw):
+        with events.stage(stage_id) as sc:
+            utils.stage_header(num, TOTAL_STAGES, title)
+            new = fn(*a, **kw)
+            st.findings += new
+            sc.counts["findings"] = len(new)
 
     if "nmap" not in skip and args.nmap:
-        utils.stage_header(6, TOTAL_STAGES, "PORT SCAN (NMAP)")
-        findings += nmap_scan.nmap_scan(target, outdir, rows, origins, full=args.nmap_full)
+        scan("nmap", 6, "PORT SCAN (NMAP)", nmap_scan.nmap_scan,
+             target, outdir, st.rows, st.origins, full=args.nmap_full)
 
     host_cap = min(args.max_hosts, 20)
     if "waf" not in skip:
-        utils.stage_header(7, TOTAL_STAGES, "WAF FINGERPRINT (WAFW00F)")
-        findings += waf_scan.waf_scan(target, outdir, hosts=live, max_hosts=host_cap)
+        scan("waf", 7, "WAF FINGERPRINT (WAFW00F)", waf_scan.waf_scan,
+             target, outdir, hosts=live, max_hosts=host_cap)
     if "dork" not in skip:
-        utils.stage_header(8, TOTAL_STAGES, "SEARCH-ENGINE DORKING (OSINT)")
-        findings += dork_scan.dork_scan(target, outdir)
+        scan("dork", 8, "SEARCH-ENGINE DORKING (OSINT)", dork_scan.dork_scan, target, outdir)
     if "tls" not in skip and args.tls:
-        utils.stage_header(9, TOTAL_STAGES, "TLS/SSL ANALYSIS (SSLYZE)")
-        findings += tls_scan.tls_scan(target, outdir, hosts=live, max_hosts=host_cap)
+        scan("tls", 9, "TLS/SSL ANALYSIS (SSLYZE)", tls_scan.tls_scan,
+             target, outdir, hosts=live, max_hosts=host_cap)
     if "nikto" not in skip and args.nikto:
-        utils.stage_header(10, TOTAL_STAGES, "WEB-SERVER SCAN (NIKTO)")
-        findings += nikto_scan.nikto_scan(target, outdir, hosts=live, max_hosts=host_cap)
+        scan("nikto", 10, "WEB-SERVER SCAN (NIKTO)", nikto_scan.nikto_scan,
+             target, outdir, hosts=live, max_hosts=host_cap)
 
-    write_summary(outdir, target, subs, rows, cf, origins)
+    write_summary(outdir, target, st.subs, st.rows, st.cf, st.origins)
+    st.summary_written = True
 
     if "vuln" not in skip:
-        utils.stage_header(11, TOTAL_STAGES, "VULNERABILITY SCAN (NUCLEI)")
-        findings += stages.vuln_scan(target, outdir, rows, severity=args.nuclei_severity,
-                                     concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
-                                     origins=origins)
-        report.write_findings_report(outdir, target, findings, [], origins=origins)
+        with events.stage("vuln") as sc:
+            utils.stage_header(11, TOTAL_STAGES, "VULNERABILITY SCAN (NUCLEI)")
+            new = stages.vuln_scan(target, outdir, st.rows, severity=args.nuclei_severity,
+                                   concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
+                                   origins=st.origins)
+            st.findings += new
+            sc.counts["findings"] = len(new)
+            report.write_findings_report(outdir, target, st.findings, [], origins=st.origins)
 
-    content = []
     if "content" not in skip:
-        utils.stage_header(12, TOTAL_STAGES, "CONTENT DISCOVERY")
-        content = stages.content_discovery(target, outdir, args.wordlist)
+        with events.stage("content") as sc:
+            utils.stage_header(12, TOTAL_STAGES, "CONTENT DISCOVERY")
+            st.content = stages.content_discovery(target, outdir, args.wordlist)
+            sc.counts["content"] = len(st.content)
 
     if "api" not in skip:
-        utils.stage_header(13, TOTAL_STAGES, "API ENDPOINT ENUMERATION")
-        findings += api_endpoints.api_endpoints_scan(target, outdir, max_hosts=min(args.max_hosts, 20))
-
+        scan("api", 13, "API ENDPOINT ENUMERATION", api_endpoints.api_endpoints_scan,
+             target, outdir, max_hosts=min(args.max_hosts, 20))
     if "param" not in skip:
-        utils.stage_header(14, TOTAL_STAGES, "PARAMETER / SQLi SCAN")
-        findings += param_scan.param_scan(target, outdir, args.max_param_urls)
-
+        scan("param", 14, "PARAMETER / SQLi SCAN", param_scan.param_scan,
+             target, outdir, args.max_param_urls)
     if "secret" not in skip:
-        utils.stage_header(15, TOTAL_STAGES, "SECRET SCAN")
-        findings += secret_scan.secret_scan(target, outdir)
-
+        scan("secret", 15, "SECRET SCAN", secret_scan.secret_scan, target, outdir)
     if "metis" not in skip and args.metis:
-        utils.stage_header(16, TOTAL_STAGES, "METIS CVE SWEEP")
-        findings += metis_check.metis_check(target, outdir, live)
+        scan("metis", 16, "METIS CVE SWEEP", metis_check.metis_check, target, outdir, live)
 
     if "headers" not in skip:
-        utils.stage_header(17, TOTAL_STAGES, "SECURITY HEADERS")
-        findings += http_headers.security_headers_scan(target, outdir, live)
+        scan("headers", 17, "SECURITY HEADERS", http_headers.security_headers_scan,
+             target, outdir, live)
     if "cors" not in skip:
-        utils.stage_header(18, TOTAL_STAGES, "CORS MISCONFIGURATION")
-        findings += http_headers.cors_scan(target, outdir, live)
+        scan("cors", 18, "CORS MISCONFIGURATION", http_headers.cors_scan, target, outdir, live)
     if "tech" not in skip:
-        utils.stage_header(19, TOTAL_STAGES, "TECH DETECTION")
-        findings += tech_scan.tech_scan(target, outdir, live)
+        scan("tech", 19, "TECH DETECTION", tech_scan.tech_scan, target, outdir, live)
     if "headi" not in skip and args.headi:
-        utils.stage_header(20, TOTAL_STAGES, "HEADER INJECTION (HEADI)")
-        findings += headi_scan.headi_scan(target, outdir, rows)
+        scan("headi", 20, "HEADER INJECTION (HEADI)", headi_scan.headi_scan,
+             target, outdir, st.rows)
 
-    duration_s = time.monotonic() - start
+
+def _finish(args, target: str, outdir: Path, skip: set[str], st: RunState) -> int:
+    """Write the final (or partial) report, summary and tracker entries."""
+    subs, rows, cf, origins = st.subs, st.rows, st.cf, st.origins
+    findings, content = st.findings, st.content
+    if not st.summary_written:  # only on a run cancelled before the summary point
+        write_summary(outdir, target, subs, rows, cf, origins)
+        st.summary_written = True
+
+    duration_s = time.monotonic() - st.start
     m = report.build_metrics(target, subs, rows, cf, origins, findings, content, duration_s, skip)
     n_findings = report.write_findings_report(outdir, target, findings, content, origins=origins, metrics=m)
     dashboard.write_run_summary(outdir, target, findings, content, origins,
@@ -345,3 +382,65 @@ def main(argv=None) -> int:
     utils.log(f"  subdomains {len(subs)} | live {len([r for r in rows if r['status']])} | findings {n_findings} | content {len(content)}")
     utils.log("done.")
     return 0
+
+
+def _totals(findings: list[dict]) -> dict:
+    """Unique findings counted by severity."""
+    totals = dict.fromkeys(SEVERITIES, 0)
+    for f in report.dedupe(findings):
+        sev = f.get("severity")
+        if sev in totals:
+            totals[sev] += 1
+    return totals
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    target = _normalize_target(args.target)
+    if not target:
+        print("error: invalid target — use a bare domain (e.g. example.com)",
+              file=__import__("sys").stderr)
+        return 2
+
+    if not args.no_banner:
+        banner.print_banner()
+
+    outdir = _resolve_outdir(target, args.output_dir, args.interactive)
+    outdir.mkdir(parents=True, exist_ok=True)
+    skip = set(x.strip() for x in (args.skip or "").split(",") if x.strip())
+
+    if args.events:
+        events_path = Path(args.events)
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        events.init(events_path)
+        flags = {k: v for k, v in vars(args).items() if k != "events"}
+        events.write_run_json(target, flags, __version__)
+        events.run_start(target, flags, PLANNED_STAGES(args, skip))
+
+    try:
+        return _run(args, target, outdir, skip)
+    finally:
+        if args.events:
+            events.reset()
+
+
+def _run(args, target: str, outdir: Path, skip: set[str]) -> int:
+    utils.log(f"Bounty Runner v{__version__} — target: {target}")
+    utils.log(f"output dir: {outdir}")
+
+    st = RunState(target, start=time.monotonic())
+    report_path, summary_path = str(outdir / "FINDINGS.md"), str(outdir / "SUMMARY.md")
+    try:
+        try:
+            _pipeline(args, target, outdir, skip, st)
+        except events.RunCancelled:
+            # partial report from whatever the finished stages gathered
+            _finish(args, target, outdir, skip, st)
+            events.run_end("cancelled", _totals(st.findings), report_path, summary_path)
+            return 130
+        rc = _finish(args, target, outdir, skip, st)
+    except Exception as e:
+        events.run_end("failed", _totals(st.findings), report_path, summary_path, error=repr(e))
+        raise
+    events.run_end("ok", _totals(st.findings), report_path, summary_path)
+    return rc

@@ -6,7 +6,10 @@ import json
 import os
 import threading
 import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterator
 
 _lock = threading.Lock()
 _fh = None
@@ -197,3 +200,48 @@ def unregister_child(pgid: int) -> None:
 def mark_skipped(reason: str) -> None:
     global _skip_reason
     _skip_reason = reason
+
+
+@dataclass
+class StageCtx:
+    stage: str
+    counts: dict = field(default_factory=dict)
+
+
+@contextmanager
+def stage(stage_id: str) -> Iterator[StageCtx]:
+    """Wrap one pipeline stage: stage_start on entry, stage_end on exit.
+
+    StageSkipped is suppressed (status ``skipped``) so the pipeline continues;
+    RunCancelled (``cancelled``) and any other exception (``failed``) re-raise.
+    A ``mark_skipped`` reason set inside the stage turns ``ok`` into
+    ``skipped``.  When events are disabled this is a plain no-op.
+    """
+    global _skip_reason
+    ctx = StageCtx(stage_id)
+    if not enabled():
+        yield ctx
+        return
+    _skip_reason = None
+    _set_current_stage(stage_id)
+    stage_start(stage_id)
+    t0 = time.monotonic()
+    status = "ok"
+    try:
+        yield ctx
+    except StageSkipped:
+        status = "skipped"
+    except RunCancelled:
+        status = "cancelled"
+        raise
+    except BaseException:
+        status = "failed"
+        raise
+    finally:
+        reason = _skip_reason
+        if status == "ok" and reason is not None:
+            status = "skipped"
+        stage_end(stage_id, status, int((time.monotonic() - t0) * 1000),
+                  ctx.counts, reason if status == "skipped" else None)
+        _skip_reason = None
+        _set_current_stage(None)
