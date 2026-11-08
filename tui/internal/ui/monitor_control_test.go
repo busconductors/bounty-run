@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"bountyrun/tui/internal/events"
+	"bountyrun/tui/internal/runstore"
 )
 
 // runningDir is a run with vuln currently running and no run_end.
@@ -107,11 +108,7 @@ func TestMonitorHardKillKillsEngine(t *testing.T) {
 	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
 	waited := make(chan struct{})
 	go func() { _ = c.Wait(); close(waited) }()
-	// pid_start deliberately wrong: HardKill uses the recorded pgid regardless.
-	rj := fmt.Sprintf(`{"pid":%d,"pgid":%d,"pid_start":1,"target":"acme.com","flags":{},"started":1}`, pid, pid)
-	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(rj), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRunJSON(t, dir, pid, pidStartOf(t, pid))
 
 	tm := startControlMonitor(t, dir, 50*time.Millisecond)
 	tm.Send(key('K')) // no banner yet: ignored
@@ -206,5 +203,102 @@ func TestMonitorNoControlWhenEnded(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "control")); err == nil {
 		t.Fatal("control written on ended run")
+	}
+}
+
+func pidStartOf(t *testing.T, pid int) int64 {
+	t.Helper()
+	st, err := runstore.PIDStart(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func writeRunJSON(t *testing.T, dir string, pid int, pidStart int64) {
+	t.Helper()
+	rj := fmt.Sprintf(`{"pid":%d,"pgid":%d,"pid_start":%d,"target":"acme.com","flags":{},"started":1}`, pid, pid, pidStart)
+	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(rj), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// deadPID returns the pid of a process that has exited and been reaped.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	c := exec.Command("true")
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return c.Process.Pid
+}
+
+func assertNoControl(t *testing.T, v, dir string) {
+	t.Helper()
+	if !strings.Contains(v, "acme.com ─ crashed") {
+		t.Fatalf("not shown as crashed\n%s", v)
+	}
+	for _, bad := range []string{"y/n", "s skip", "c cancel", "K to hard kill"} {
+		if strings.Contains(v, bad) {
+			t.Fatalf("%q offered on a crashed run\n%s", bad, v)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "control")); err == nil {
+		t.Fatal("control written on a crashed run")
+	}
+}
+
+func TestMonitorCrashedRunNotControllable(t *testing.T) {
+	dir := runningDir(t)
+	writeRunJSON(t, dir, deadPID(t), 1)
+	mm := NewMonitor(dir, Config{})
+	mm.controlTimeout = 50 * time.Millisecond
+	tm := teatest.NewTestModel(t, &monHarness{m: &mm}, teatest.WithInitialTermSize(120, 40))
+	teatest.WaitFor(t, tm.Output(), contains("crashed"), teatest.WithDuration(5*time.Second))
+	for _, k := range []rune{'s', 'y', 'c', 'y', 'K'} {
+		tm.Send(key(k))
+	}
+	time.Sleep(200 * time.Millisecond) // an ack timer, were one started, would have fired
+	assertNoControl(t, finalView(t, tm), dir)
+}
+
+func TestMonitorDetectsCrashWhileAttached(t *testing.T) {
+	dir := runningDir(t)
+	c := exec.Command("sleep", "60")
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := c.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+	go func() { _ = c.Wait() }()
+	writeRunJSON(t, dir, pid, pidStartOf(t, pid))
+
+	tm := startControlMonitor(t, dir, time.Hour)
+	tm.Send(key('c'))
+	teatest.WaitFor(t, tm.Output(), contains("cancel run? y/n"), teatest.WithDuration(5*time.Second))
+	_ = syscall.Kill(pid, syscall.SIGKILL) // the engine dies without run_end
+	teatest.WaitFor(t, tm.Output(), contains("crashed"), teatest.WithDuration(5*time.Second))
+	tm.Send(key('y')) // the stale prompt was withdrawn: no control write
+	assertNoControl(t, finalView(t, tm), dir)
+}
+
+func TestMonitorCrashedElapsedFrozen(t *testing.T) {
+	mm := NewMonitor("/runs/a", Config{})
+	m := &mm
+	now := time.Now().UnixMilli()
+	start := now - 2*time.Hour.Milliseconds()
+	m.update(tailMsg{gen: m.gen, msgs: []tea.Msg{
+		events.Msg{RunDir: "/runs/a", Ev: events.Event{T: start, Type: "run_start", Target: "a.com"}},
+		events.Msg{RunDir: "/runs/a", Ev: events.Event{T: start + 5*time.Minute.Milliseconds(), Type: "log"}},
+	}})
+	if cmd := m.update(livenessMsg{gen: m.gen, dead: true}); cmd != nil {
+		t.Error("liveness kept ticking after the crash")
+	}
+	if h := plain(m.header()); !strings.Contains(h, "a.com ─ crashed 0h05m") {
+		t.Fatalf("header = %q", h)
+	}
+	if m.update(livenessMsg{gen: m.gen + 1, dead: false}) != nil {
+		t.Error("stale liveness message handled")
 	}
 }

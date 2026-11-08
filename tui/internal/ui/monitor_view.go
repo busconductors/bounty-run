@@ -67,6 +67,11 @@ func (m *MonitorModel) header() string {
 		if m.startT > 0 {
 			d = m.killedAt.Sub(time.UnixMilli(m.startT))
 		}
+	} else if m.crashed {
+		state = "crashed" // frozen at the last event: the engine's last sign of life
+		if m.startT > 0 {
+			d = time.Duration(m.lastT-m.startT) * time.Millisecond
+		}
 	} else {
 		state = "running"
 		if m.startT > 0 {

@@ -59,6 +59,17 @@ type controlDoneMsg struct {
 	err error
 }
 
+// livenessInterval is how often the Monitor checks that the engine is alive.
+const livenessInterval = time.Second
+
+// livenessMsg reports one engine liveness check for attach gen. dead means
+// run.json was readable and its pid is gone (or reused); an unreadable
+// run.json proves nothing and counts as alive.
+type livenessMsg struct {
+	gen  uint64
+	dead bool
+}
+
 type pane int
 
 const (
@@ -118,6 +129,7 @@ type MonitorModel struct {
 	hardKill       bool      // "engine not responding" banner shown; K accepted
 	killed         bool      // hard kill succeeded; no run_end will follow
 	killedAt       time.Time // freezes the elapsed timer
+	crashed        bool      // engine gone without run_end; nothing is controllable
 
 	focus         pane
 	detail        bool
@@ -154,7 +166,20 @@ func (m *MonitorModel) Init() tea.Cmd {
 		defer close(done)
 		events.Tail(ctx, path, ch)
 	}()
-	return m.wait()
+	return tea.Batch(m.wait(), m.checkLiveness(0))
+}
+
+// checkLiveness checks the engine named in run.json after delay (0: now).
+func (m *MonitorModel) checkLiveness(delay time.Duration) tea.Cmd {
+	dir, gen := m.dir, m.gen
+	check := func() tea.Msg {
+		info, err := runstore.ReadInfo(dir)
+		return livenessMsg{gen: gen, dead: err == nil && !runstore.Alive(info.PID, info.PIDStart)}
+	}
+	if delay == 0 {
+		return check
+	}
+	return tea.Tick(delay, func(time.Time) tea.Msg { return check() })
 }
 
 // Close cancels the Tail goroutine. Safe to call more than once or before Init.
@@ -215,8 +240,18 @@ func (m *MonitorModel) update(msg tea.Msg) tea.Cmd {
 		if msg.err != nil {
 			m.status = "pager: " + sanitize(msg.err.Error())
 		}
+	case livenessMsg:
+		if msg.gen != m.gen || m.ended || m.killed || m.crashed {
+			return nil // stale attach, or the run's fate is already known
+		}
+		if msg.dead {
+			m.crashed = true
+			m.pending, m.hardKill, m.confirm = nil, false, ""
+			return nil
+		}
+		return m.checkLiveness(livenessInterval)
 	case ackTimeoutMsg:
-		if msg.gen == m.gen && m.pending != nil && m.pending.seq == msg.seq && !m.ended {
+		if msg.gen == m.gen && m.pending != nil && m.pending.seq == msg.seq && !m.ended && !m.crashed {
 			m.hardKill = true
 		}
 	case controlDoneMsg:
@@ -226,7 +261,7 @@ func (m *MonitorModel) update(msg tea.Msg) tea.Cmd {
 		if msg.seq == 0 { // hard kill
 			if msg.err != nil {
 				m.status = "hard kill: " + sanitize(msg.err.Error())
-				m.hardKill = !m.ended // keep the banner so K can be retried
+				m.hardKill = m.controllable() // keep the banner so K can be retried
 				return nil
 			}
 			m.status = "hard kill sent"
@@ -253,14 +288,14 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 	}
 	if m.confirm != "" {
-		if k.String() == "y" {
+		if k.String() == "y" && m.controllable() {
 			return m.sendControl()
 		}
 		m.confirm = "" // any other key declines
 		return nil
 	}
 	if k.String() == "K" {
-		if m.hardKill && !m.ended && !m.killed {
+		if m.hardKill && m.controllable() {
 			m.hardKill = false
 			return m.hardKillCmd()
 		}
@@ -322,7 +357,7 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 }
 
 // controllable reports whether skip/cancel may be offered.
-func (m *MonitorModel) controllable() bool { return !m.ended && !m.killed }
+func (m *MonitorModel) controllable() bool { return !m.ended && !m.killed && !m.crashed }
 
 // currentStage is the most recently listed stage that is running.
 func (m *MonitorModel) currentStage() string {
