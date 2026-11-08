@@ -5,9 +5,11 @@ from pathlib import Path
 
 from runner.cli import main as cli_main
 from runner.dashboard import generate as dashboard_generate
+from runner.launcher import maybe_exec_tui
 from runner.tracker import main as tracker_main
 
 if __name__ == "__main__":
+    maybe_exec_tui()  # bare `bounty-run` on a terminal → bin/bounty-tui (does not return)
     if len(sys.argv) > 1 and sys.argv[1] == "track":
         sys.exit(tracker_main(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == "dashboard":

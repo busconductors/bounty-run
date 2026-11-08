@@ -15,6 +15,7 @@ const version = "0.1.0-dev"
 
 func main() {
 	outputs := flag.String("outputs", "", "outputs root (default $BOUNTY_OUTPUTS or ~/tools/bounty-run/outputs)")
+	noSplash := flag.Bool("no-splash", false, "skip the startup banner")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -33,7 +34,7 @@ func main() {
 	if engine == "" {
 		engine = "bounty-run"
 	}
-	cfg := ui.Config{OutputsRoot: root, EngineBin: engine}
+	cfg := ui.Config{OutputsRoot: root, EngineBin: engine, Splash: !*noSplash}
 	if _, err := tea.NewProgram(ui.NewRoot(cfg)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "bounty-tui:", err)
 		os.Exit(1)

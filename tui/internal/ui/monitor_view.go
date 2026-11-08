@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -12,17 +13,40 @@ import (
 
 const timelineWidth = 34
 
+// Pane chrome: a rounded border plus one cell of padding each side.
+const (
+	paneChromeW = 4
+	paneChromeH = 2
+)
+
+// bodyHeight is the pane area: the terminal minus header, status and footer
+// lines (the status line is always reserved so the panes never jump).
+func (m *MonitorModel) bodyHeight() int { return max(m.height-3, 12) }
+
+// rightInnerWidth is the Output/Findings content width.
+func (m *MonitorModel) rightInnerWidth() int {
+	return max(m.width-(timelineWidth+paneChromeW), 34) - paneChromeW
+}
+
 // layout sizes the sub-components from the terminal size.
 func (m *MonitorModel) layout() {
-	bodyH := max(m.height-2, 6)
-	rw := max(m.width-timelineWidth-3, 30)
-	outH := (bodyH - 2) * 3 / 5
+	inner := m.bodyHeight() - 2*paneChromeH - 2 // two boxes, one title line each
+	rw := m.rightInnerWidth()
+	outH := inner * 3 / 5
 	m.vp.SetWidth(rw)
 	m.vp.SetHeight(outH)
 	m.tbl.SetWidth(rw)
-	m.tbl.SetHeight(bodyH - 2 - outH)
+	m.tbl.SetHeight(inner - outH)
 	hostW := max(rw-8-22-6, 10)
 	m.tbl.SetColumns([]table.Column{{Title: "SEV", Width: 8}, {Title: "TEMPLATE", Width: 22}, {Title: "HOST", Width: hostW}})
+	st := table.DefaultStyles()
+	st.Header = st.Header.Foreground(colMuted).BorderStyle(lipgloss.NormalBorder()).
+		BorderBottom(true).BorderForeground(colBorder)
+	st.Selected = lipgloss.NewStyle().Bold(true).Foreground(colText).Background(colPanel)
+	m.tbl.SetStyles(st)
+	m.bar = progress.New(progress.WithoutPercentage(), progress.WithWidth(10),
+		progress.WithColors(colAmber, colRed))
+	m.bar.EmptyColor = colBorder
 }
 
 // View implements tea.Model for standalone use (tests); Root calls render.
@@ -46,7 +70,9 @@ func (m *MonitorModel) render() string {
 	b.WriteString(m.header() + "\n")
 	b.WriteString(body + "\n")
 	if m.status != "" {
-		b.WriteString(badStyle.Render(m.status) + "\n")
+		b.WriteString(badStyle.Render("✗ "+m.status) + "\n")
+	} else if !m.incompatible && !m.detail {
+		b.WriteString("\n") // reserved status line (see bodyHeight)
 	}
 	b.WriteString(m.footerLine())
 	return b.String()
@@ -58,17 +84,26 @@ func (m *MonitorModel) header() string {
 		name = sanitize(m.dir)
 	}
 	var state string
+	stStyle := runStyle
 	var d time.Duration
 	if m.ended {
 		state = "finished: " + m.endStatus
+		switch m.endStatus {
+		case "ok":
+			stStyle = okStyle
+		case "cancelled":
+			stStyle = greyStyle
+		default:
+			stStyle = badStyle
+		}
 		d = time.Duration(m.lastT-m.startT) * time.Millisecond
 	} else if m.killed {
-		state = "killed"
+		state, stStyle = "killed", badStyle
 		if m.startT > 0 {
 			d = m.killedAt.Sub(time.UnixMilli(m.startT))
 		}
 	} else if m.crashed {
-		state = "crashed" // frozen at the last event: the engine's last sign of life
+		state, stStyle = "crashed", badStyle // frozen at the engine's last sign of life
 		if m.startT > 0 {
 			d = time.Duration(m.lastT-m.startT) * time.Millisecond
 		}
@@ -78,7 +113,8 @@ func (m *MonitorModel) header() string {
 			d = time.Since(time.UnixMilli(m.startT))
 		}
 	}
-	h := titleStyle.Render(name) + " ─ " + state + " " + fmtElapsed(max(d, 0))
+	h := badgeStyle.Render("BOUNTY RUN") + " " + titleStyle.Render(name) + greyStyle.Render(" ─ ") +
+		stStyle.Bold(true).Render(state) + " " + dimStyle.Render(fmtElapsed(max(d, 0)))
 	if m.endErr != "" {
 		h += "  " + badStyle.Render("error: "+clip(m.endErr, max(m.width-lipgloss.Width(h)-10, 10)))
 	}
@@ -90,13 +126,13 @@ func (m *MonitorModel) header() string {
 func (m *MonitorModel) footerLine() string {
 	switch {
 	case m.confirm == "skip":
-		return warnStyle.Render("skip " + m.confirmStage + "? y/n")
+		return warnStyle.Bold(true).Render("skip " + m.confirmStage + "? y/n")
 	case m.confirm == "cancel":
-		return warnStyle.Render("cancel run? y/n")
+		return warnStyle.Bold(true).Render("cancel run? y/n")
 	case m.hardKill:
-		return badStyle.Render("engine not responding — K to hard kill")
+		return badStyle.Bold(true).Render("engine not responding — K to hard kill")
 	}
-	return dimStyle.Render(m.footer())
+	return helpBar(strings.Split(m.footer(), " · ")...)
 }
 
 func (m *MonitorModel) footer() string {
@@ -122,17 +158,25 @@ func stageGlyph(status string) (string, lipgloss.Style) {
 		return "✓", okStyle
 	case "running":
 		return "▶", runStyle
-	case "failed", "cancelled":
+	case "failed":
 		return "✗", badStyle
+	case "cancelled":
+		return "✗", greyStyle
 	case "skipped":
-		return "⏭", warnStyle
+		return "⏭", greyStyle
 	}
 	return "·", dimStyle
 }
 
 func (m *MonitorModel) stageLine(s stageState) string {
 	g, gs := stageGlyph(s.status)
-	line := gs.Render(g) + " " + padTo(clip(s.id, 12), 12) + " "
+	id := padTo(clip(s.id, 12), 12)
+	if s.status == "running" {
+		id = titleStyle.Render(id)
+	} else if s.status == "" || s.status == "pending" {
+		id = dimStyle.Render(id)
+	}
+	line := gs.Render(g) + " " + id + " "
 	switch s.status {
 	case "running":
 		if s.total > 0 {
@@ -145,7 +189,7 @@ func (m *MonitorModel) stageLine(s stageState) string {
 			for _, c := range s.counts {
 				n += c
 			}
-			line += fmt.Sprintf("%d", n)
+			line += okStyle.Render(fmt.Sprintf("%d", n))
 		}
 	default:
 		if s.reason != "" {
@@ -156,31 +200,36 @@ func (m *MonitorModel) stageLine(s stageState) string {
 }
 
 func (m *MonitorModel) bodyView() string {
-	bodyH := max(m.height-2, 6)
-	if m.status != "" {
-		bodyH--
-	}
+	bodyH := m.bodyHeight()
 	var left []string
 	for _, s := range m.stages {
 		left = append(left, m.stageLine(s))
 	}
-	leftCol := lipgloss.NewStyle().Width(timelineWidth).MaxWidth(timelineWidth).
-		Height(bodyH).MaxHeight(bodyH).Render(strings.Join(left, "\n"))
-	sep := strings.TrimSuffix(strings.Repeat(" │ \n", bodyH), "\n")
-
-	outTitle, findTitle := "Output", fmt.Sprintf("Findings (filter: %s) %d/%d",
-		sevFilters[m.filter], len(m.visible), len(m.findings))
-	if m.focus == paneOutput {
-		outTitle = titleStyle.Render(outTitle)
-		findTitle = dimStyle.Render(findTitle)
-	} else {
-		outTitle = dimStyle.Render(outTitle)
-		findTitle = titleStyle.Render(findTitle)
+	if room := bodyH - paneChromeH - 1; len(left) > room { // keep the bottom border
+		left = left[:max(room, 0)]
 	}
-	rw := max(m.width-timelineWidth-3, 30)
-	right := lipgloss.NewStyle().MaxWidth(rw).Height(bodyH).MaxHeight(bodyH).Render(
-		lipgloss.JoinVertical(lipgloss.Left, outTitle, m.vp.View(), findTitle, m.tbl.View()))
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, sep, right)
+	timeline := titleStyle.Render("Stages") + "\n" + strings.Join(left, "\n")
+	leftCol := paneBox(false).Width(timelineWidth + paneChromeW).Height(bodyH).MaxHeight(bodyH).
+		Render(lipgloss.NewStyle().MaxWidth(timelineWidth).Render(timeline))
+
+	outFocus := m.focus == paneOutput
+	paneTitle := func(t string, focused bool) string {
+		if focused {
+			return accentStyle.Render(t)
+		}
+		return dimStyle.Render(t)
+	}
+	filter := fmt.Sprintf("filter: %s", sevFilters[m.filter])
+	findTitle := paneTitle("Findings", !outFocus) + " " + dimStyle.Render("("+filter+")") + " " +
+		dimStyle.Render(fmt.Sprintf("%d/%d", len(m.visible), len(m.findings)))
+	rw := m.rightInnerWidth() + paneChromeW
+	inner := lipgloss.NewStyle().MaxWidth(rw - paneChromeW)
+	outBox := paneBox(outFocus).Width(rw).Render(
+		inner.Render(paneTitle("Output", outFocus) + "\n" + m.vp.View()))
+	findBox := paneBox(!outFocus).Width(rw).Render(
+		inner.Render(findTitle + "\n" + m.tbl.View()))
+	right := lipgloss.NewStyle().MaxHeight(bodyH).Render(lipgloss.JoinVertical(lipgloss.Left, outBox, findBox))
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, right)
 }
 
 func (m *MonitorModel) detailView() string {
@@ -197,5 +246,5 @@ func (m *MonitorModel) detailView() string {
 		field("URL", f.url),
 		field("Summary", f.summary),
 	}, "\n")
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(w).Render(content)
+	return paneBox(true).Width(w).Render(accentStyle.Render("Finding") + "\n\n" + content)
 }

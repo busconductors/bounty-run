@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 
 	"bountyrun/tui/internal/engine"
 	"bountyrun/tui/internal/runstore"
@@ -96,7 +97,7 @@ func (l *launchModel) buildForm() *huh.Form {
 			Value(&l.timeout).Validate(posInt),
 		huh.NewInput().Title("Max param URLs").Placeholder("default").
 			Value(&l.maxParam).Validate(posInt),
-	)).WithShowHelp(true)
+	)).WithShowHelp(true).WithTheme(huh.ThemeFunc(formTheme))
 	f.SubmitCmd = func() tea.Msg { return launchSubmitMsg{} }
 	f.CancelCmd = nil
 	return f
@@ -106,7 +107,7 @@ func (l *launchModel) buildForm() *huh.Form {
 func (l *launchModel) Init() tea.Cmd {
 	cmd := l.form.Init()
 	if l.width > 0 {
-		_, c := l.form.Update(tea.WindowSizeMsg{Width: l.width, Height: l.height})
+		_, c := l.form.Update(l.formSize())
 		cmd = tea.Batch(cmd, c)
 	}
 	return cmd
@@ -207,6 +208,11 @@ func (l *launchModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		l.width, l.height = msg.Width, msg.Height
+		if l.state != launchEditing {
+			return nil
+		}
+		_, cmd := l.form.Update(l.formSize()) // the form gets its pane, not the terminal
+		return cmd
 	case launchSubmitMsg:
 		if l.state != launchEditing {
 			return nil
@@ -250,22 +256,83 @@ func (l *launchModel) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+// Launch layout: the form pane, with the banner beside it when it fits.
+const (
+	launchPaneW = 52 // form pane, border and padding included
+	launchGap   = 3
+)
+
+func (l *launchModel) showBanner() bool {
+	return l.state != launchFailed && l.width >= launchPaneW+launchGap+bannerWidth() &&
+		l.height >= bannerHeight()+2
+}
+
+func (l *launchModel) paneWidth() int {
+	if l.showBanner() || l.width <= 0 {
+		return launchPaneW
+	}
+	return min(max(l.width, 40), 100)
+}
+
+// formSize is the WindowSizeMsg the huh form sees: the pane's inner area.
+func (l *launchModel) formSize() tea.WindowSizeMsg {
+	return tea.WindowSizeMsg{Width: l.paneWidth() - 4, Height: max(l.height-4, 10)}
+}
+
 func (l *launchModel) View() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("New run") + "\n\n")
+	var help string
 	switch l.state {
 	case launchEditing:
-		b.WriteString(l.form.View() + "\n")
+		b.WriteString(l.form.View())
 		if l.inlineErr != "" {
-			b.WriteString(badStyle.Render(l.inlineErr) + "\n")
+			b.WriteString("\n" + badStyle.Render("✗ "+l.inlineErr))
 		}
-		b.WriteString("\n" + dimStyle.Render("enter next · shift+tab back · space/x toggle · esc back"))
+		help = helpBar("enter next", "shift+tab back", "space/x toggle", "esc back")
 	case launchStarting:
-		b.WriteString(dimStyle.Render("starting engine…"))
+		b.WriteString(runStyle.Render("●") + " " + dimStyle.Render("starting engine…"))
+		help = dimStyle.Render("waiting for run_start")
 	case launchFailed:
-		b.WriteString(badStyle.Render("launch failed") + "\n\n")
-		b.WriteString(strings.Join(l.failure, "\n") + "\n\n")
-		b.WriteString(dimStyle.Render("esc back"))
+		b.WriteString(badStyle.Bold(true).Render("✗ launch failed") + "\n\n")
+		b.WriteString(strings.Join(l.failure, "\n"))
+		help = helpBar("esc back")
 	}
-	return b.String()
+	box := paneBox(true).Width(l.paneWidth()).Render(strings.TrimRight(b.String(), "\n"))
+	if l.showBanner() {
+		box = lipgloss.JoinHorizontal(lipgloss.Top, box, strings.Repeat(" ", launchGap), bannerView())
+	}
+	return headerBar("New run", "") + "\n" + box + "\n" + help
+}
+
+// formTheme is huh's Charm theme recoloured to the app palette: red accent
+// for the focused field, muted descriptions, green selections.
+func formTheme(isDark bool) *huh.Styles {
+	t := huh.ThemeCharm(isDark)
+	f := &t.Focused
+	f.Base = f.Base.BorderForeground(colRed)
+	f.Title = f.Title.Foreground(colRed).Bold(true)
+	f.Description = f.Description.Foreground(colMuted)
+	f.ErrorIndicator = f.ErrorIndicator.Foreground(colRed)
+	f.ErrorMessage = f.ErrorMessage.Foreground(colRed)
+	f.SelectSelector = f.SelectSelector.Foreground(colRed)
+	f.MultiSelectSelector = f.MultiSelectSelector.Foreground(colRed)
+	f.SelectedOption = f.SelectedOption.Foreground(colGreen)
+	f.SelectedPrefix = f.SelectedPrefix.Foreground(colGreen)
+	f.UnselectedOption = f.UnselectedOption.Foreground(colText)
+	f.UnselectedPrefix = f.UnselectedPrefix.Foreground(colFaint)
+	f.TextInput.Cursor = f.TextInput.Cursor.Foreground(colRed)
+	f.TextInput.Prompt = f.TextInput.Prompt.Foreground(colRed)
+	f.TextInput.Placeholder = f.TextInput.Placeholder.Foreground(colFaint)
+	f.FocusedButton = f.FocusedButton.Background(colRed).Foreground(colBase)
+	f.Next = f.FocusedButton
+	t.Blurred = *f
+	t.Blurred.Base = t.Blurred.Base.BorderStyle(lipgloss.HiddenBorder())
+	t.Blurred.Title = t.Blurred.Title.Foreground(colMuted).Bold(false)
+	t.Blurred.MultiSelectSelector = t.Blurred.MultiSelectSelector.SetString("  ")
+	t.Blurred.NextIndicator = lipgloss.NewStyle()
+	t.Blurred.PrevIndicator = lipgloss.NewStyle()
+	t.Help.ShortKey = t.Help.ShortKey.Foreground(colText)
+	t.Help.ShortDesc = t.Help.ShortDesc.Foreground(colMuted)
+	t.Help.ShortSeparator = t.Help.ShortSeparator.Foreground(colFaint)
+	return t
 }

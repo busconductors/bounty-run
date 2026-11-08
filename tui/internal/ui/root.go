@@ -7,6 +7,8 @@ import (
 // Config carries startup settings from main.
 type Config struct {
 	OutputsRoot, EngineBin string
+	// Splash shows the banner for a moment (or until a key) before Runs.
+	Splash bool
 }
 
 // ShowRunsMsg switches to the Runs screen.
@@ -30,19 +32,28 @@ type Root struct {
 
 // NewRoot builds the root model on the Runs screen.
 func NewRoot(cfg Config) tea.Model {
-	return &Root{cfg: cfg, runs: newRunsModel(cfg.OutputsRoot), screen: "runs"}
+	screen := "runs"
+	if cfg.Splash {
+		screen = "splash"
+	}
+	return &Root{cfg: cfg, runs: newRunsModel(cfg.OutputsRoot), screen: screen}
 }
 
-// Screen returns "runs", "launch" or "monitor".
+// Screen returns "splash", "runs", "launch" or "monitor".
 func (r *Root) Screen() string { return r.screen }
 
-func (r *Root) Init() tea.Cmd { return r.runs.Init() }
+func (r *Root) Init() tea.Cmd {
+	if r.screen == "splash" {
+		return tea.Batch(r.runs.Init(), splashTimer()) // runs load behind the splash
+	}
+	return r.runs.Init()
+}
 
 func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		r.width, r.height = m.Width, m.Height
-		r.runs.width = m.Width
+		r.runs.width, r.runs.height = m.Width, m.Height
 		if r.monitor != nil {
 			r.monitor.update(m)
 		}
@@ -72,9 +83,22 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		r.screen = "launch"
 		return r, r.launch.Init()
 	}
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case runsMsg, tickMsg: // refresh keeps running while attached
 		return r, r.runs.Update(msg)
+	case splashDoneMsg:
+		if r.screen == "splash" {
+			r.screen = "runs"
+		}
+		return r, nil
+	case tea.KeyPressMsg:
+		if r.screen == "splash" { // any key dismisses; ctrl+c still quits
+			if msg.String() == "ctrl+c" {
+				return r, tea.Quit
+			}
+			r.screen = "runs"
+			return r, nil
+		}
 	}
 	if r.screen == "monitor" && r.monitor != nil {
 		return r, r.monitor.update(msg)
@@ -87,7 +111,9 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (r *Root) View() tea.View {
 	var s string
-	if r.screen == "monitor" && r.monitor != nil {
+	if r.screen == "splash" {
+		s = splashView(r.width, r.height)
+	} else if r.screen == "monitor" && r.monitor != nil {
 		s = r.monitor.render()
 	} else if r.screen == "launch" && r.launch != nil {
 		s = r.launch.View()
@@ -96,6 +122,9 @@ func (r *Root) View() tea.View {
 	}
 	v := tea.NewView(s)
 	v.AltScreen = true
+	v.BackgroundColor = colBase // the dashboard's dark base; restored on exit
+	v.ForegroundColor = colText
+	v.WindowTitle = "Bounty Run"
 	return v
 }
 

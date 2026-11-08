@@ -26,6 +26,7 @@ type runsModel struct {
 	selDir string // selected run's dir; selection follows it across refreshes
 	err    error
 	width  int
+	height int // 0 = unknown: the pane sizes to its content
 
 	store   *runstore.Store // caches replay state across refreshes
 	loading bool            // a load is in flight; ticks do not start another
@@ -119,7 +120,7 @@ func glyph(s runstore.Status) (string, lipgloss.Style) {
 	case runstore.Failed, runstore.Crashed:
 		return "✗", badStyle
 	case runstore.Cancelled:
-		return "■", warnStyle
+		return "■", greyStyle
 	}
 	return "?", dimStyle // incompatible or unknown status
 }
@@ -178,20 +179,35 @@ func (m *runsModel) row(r runstore.Run, selected bool) string {
 	return gs.Render(g) + rest + sevCells(r.Sev, true) + " " + status
 }
 
+// runsHeading labels the row columns; it lines up with row().
+var runsHeading = "  " + padTo("TARGET", 22) + " " + padTo("STAGE", 10) + " " +
+	padTo("ELAPSED", 7) + " " + padTo("FINDINGS", 15) + " STATUS"
+
 func (m *runsModel) View() string {
 	active := runstore.ActiveCount(m.runs)
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Runs") + "  " +
-		dimStyle.Render(fmt.Sprintf("%d/%d active", active, maxActive)) + "\n\n")
-	if len(m.runs) == 0 {
-		b.WriteString(dimStyle.Render("no runs found in "+oneLine(m.root)) + "\n")
+	ctx := fmt.Sprintf("%d/%d active", active, maxActive)
+	if active >= maxActive {
+		ctx = warnStyle.Render(ctx)
+	} else {
+		ctx = dimStyle.Render(ctx)
 	}
-	if m.err != nil {
-		b.WriteString(badStyle.Render("error: "+oneLine(m.err.Error())) + "\n")
+	var b strings.Builder
+	b.WriteString(dimStyle.Bold(true).Render(runsHeading) + "\n")
+	if len(m.runs) == 0 {
+		b.WriteString("\n" + dimStyle.Render("no runs found in "+oneLine(m.root)) + "\n" +
+			dimStyle.Render("press ") + keyStyle.Render("n") + dimStyle.Render(" to launch one") + "\n")
 	}
 	for i, r := range m.runs {
 		b.WriteString(m.row(r, i == m.cursor) + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("↑/↓ select · enter attach · n new · q quit"))
-	return b.String()
+	if m.err != nil {
+		b.WriteString("\n" + badStyle.Render("error: "+oneLine(m.err.Error())) + "\n")
+	}
+	box := paneBox(true).Width(max(m.width, 74))
+	if m.height > 0 {
+		box = box.Height(max(m.height-2, 5))
+	}
+	return headerBar("Runs", "") + "  " + ctx + "\n" +
+		box.Render(strings.TrimSuffix(b.String(), "\n")) + "\n" +
+		helpBar("↑/↓ select", "enter attach", "n new", "q quit")
 }

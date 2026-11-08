@@ -513,7 +513,7 @@ func (m *MonitorModel) refreshFindings() {
 			continue
 		}
 		m.visible = append(m.visible, i)
-		rows = append(rows, table.Row{strings.ToUpper(f.severity), f.template, f.host})
+		rows = append(rows, table.Row{fgOnly(sevFg(f.severity), strings.ToUpper(f.severity)), f.template, f.host})
 	}
 	m.tbl.SetRows(rows)
 	if len(rows) > 0 && m.tbl.Cursor() < 0 {

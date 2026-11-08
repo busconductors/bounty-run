@@ -183,6 +183,7 @@ func TestRenderedDetails(t *testing.T) {
 	lines := strings.Split(v, "\n")
 	var rows []string
 	for _, l := range lines {
+		l = strings.TrimLeft(l, "│ ") // rows sit inside the pane border
 		for _, g := range []string{"●", "✓", "✗", "?"} {
 			if strings.HasPrefix(l, g+" ") {
 				rows = append(rows, l)
