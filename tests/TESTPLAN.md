@@ -166,3 +166,25 @@ python3 bounty_run.py <soft404-domain> -o /tmp/br-ffuf-flood --skip subs,live,cf
       `nuclei.jsonl` line count vs `findings.json` entry count).
 - [ ] `SUMMARY.md` always lists run time, subdomain count, live-host count, and
       Cloudflare status.
+
+---
+
+## Phase 12 — panel / WAF / dork / TLS / nikto
+
+Run only against hosts you own or are authorized to test.
+
+- [ ] **Default run** — `python3 bounty_run.py <authorized-domain> -o /tmp/br-p12`
+      creates `panels.txt`, `wafw00f.json`, and `dork_urls.txt` in the run
+      directory (each may be empty, but must exist when the tool/stage ran).
+- [ ] **`--tls`** — `python3 bounty_run.py <authorized-domain> -o /tmp/br-tls --tls`
+      creates `sslyze/<host>.json` for each scanned host and `tls_scan.txt`;
+      any TLS issue appears as a `tls:` finding in `FINDINGS.md`.
+- [ ] **`--nikto` respects `-maxtime`** — `python3 bounty_run.py <authorized-domain>
+      -o /tmp/br-nikto --nikto` against a single host: the WEB-SERVER SCAN (NIKTO)
+      stage finishes in ≤ ~6 min and writes `nikto/<host>.json`.
+- [ ] **`--skip dork`** — console output contains no
+      `SEARCH-ENGINE DORKING` stage header and no `dork.txt`/`dork_urls.txt` is written.
+- [ ] **All engines blocked** — with Mojeek and DuckDuckGo both blocking
+      (e.g. rate-limited IP, or route both through a proxy that returns 403),
+      the dork stage prints `every search engine blocked — dork results NOT complete`
+      and the run still exits `0`.

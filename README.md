@@ -15,6 +15,9 @@ bounty-run example.com --amass         # also run amass passive enum
 bounty-run example.com --timeout 5     # faster HTTP probe
 bounty-run example.com --skip param    # skip sqlmap (slow, active stage)
 bounty-run example.com --max-param-urls 10   # cap sqlmap targets
+bounty-run example.com --tls           # also run the sslyze TLS/SSL deep scan (opt-in, slow)
+bounty-run example.com --nikto         # also run nikto web-server scan (opt-in, intrusive)
+bounty-run example.com --skip dork     # skip passive search-engine dorking
 
 # Findings tracker
 bounty-run track add-target example.com --program "Acme Bug Bounty"
@@ -30,10 +33,17 @@ bounty-run track stats
 ~/tools/bounty-run/outputs/<target>/<timestamp>/
 ├── subfinder.txt           # raw subfinder output
 ├── subdomains.txt          # deduped subdomain list
+├── panels.txt              # cPanel/webmail/phpMyAdmin-style subdomains (<sub>\t<kind>\t<severity>)
 ├── live_hosts.txt          # host → status → server → CF flag
 ├── cloudflare.json         # Cloudflare detection result + evidence
 ├── origin_candidates.txt   # origin IPs behind Cloudflare (if any)
 ├── origin_deep.txt         # crt.sh deep-origin candidates
+├── wafw00f.json            # raw wafw00f WAF fingerprint output
+├── dork_urls.txt           # in-scope URLs found by Mojeek/DDG dorking
+├── dork.txt                # per-request dork log (<query>\t<engine>\t<ok|blocked>\t<hits>)
+├── sslyze/<host>.json      # raw sslyze JSON per host (--tls)
+├── tls_scan.txt            # TLS issues (<host>\t<template>\t<severity>) (--tls)
+├── nikto/<host>.json       # raw nikto JSON per host (--nikto)
 ├── nuclei.jsonl            # raw nuclei findings (JSONL)
 ├── content_discovery.txt   # ffuf-discovered paths
 ├── param_urls.txt          # parameterized URLs (Wayback CDX)
@@ -46,16 +56,24 @@ bounty-run track stats
 ## Pipeline
 
 1. Subdomain enum — `subfinder` (+ `amass` with `--amass`)
-2. Live hosts — HTTP/HTTPS probe (status, server, Cloudflare flag)
-3. Cloudflare detect — `cf-ray`/`server`/`cf-cache-status` headers + resolved IP
-4. Origin hunt (when CF detected) — leak-subdomain sweep + MX records, filtered
+2. Panel detection — flag cPanel/webmail/phpMyAdmin-style subdomains (no network)
+3. Live hosts — HTTP/HTTPS probe (status, server, Cloudflare flag)
+4. Cloudflare detect — `cf-ray`/`server`/`cf-cache-status` headers + resolved IP
+5. Origin hunt (when CF detected) — leak-subdomain sweep + MX records, filtered
    against Cloudflare's published AS13335 ranges, verified with `curl --resolve`
-5. Deep origin (when CF detected) — crt.sh cert-transparency SAN history, resolved
+6. Deep origin (when CF detected) — crt.sh cert-transparency SAN history, resolved
    and CF-filtered (Shodan/Censys documented as manual follow-up)
-6. Vuln scan — `nuclei` against live hosts (`-jsonl`), parsed into findings
-7. Content discovery — `ffuf` against the main target (auto-calibrated)
-8. Param testing — Wayback CDX param discovery + `sqlmap` injection testing
-9. Report — dedupe by (template, host), severity-ordered `FINDINGS.md` + `findings.json`
+7. WAF fingerprint — `wafw00f` against live hosts (`waf:<name>` info findings)
+8. Search-engine dorking — passive Mojeek/DuckDuckGo queries for exposed files
+   and panels, results filtered to in-scope hosts
+9. TLS/SSL analysis (`--tls`) — `sslyze` protocols, weak ciphers, Heartbleed,
+   ROBOT, certificate checks per host (`tls:*` findings)
+10. Web-server scan (`--nikto`) — `nikto` per host, bounded by `-maxtime`
+    (`nikto:*` findings)
+11. Vuln scan — `nuclei` against live hosts (`-jsonl`), parsed into findings
+12. Content discovery — `ffuf` against the main target (auto-calibrated)
+13. Param testing — Wayback CDX param discovery + `sqlmap` injection testing
+14. Report — dedupe by (template, host), severity-ordered `FINDINGS.md` + `findings.json`
 
 Phase 5 (next): interactive dashboard, SpyHunt automation.
 
@@ -63,3 +81,8 @@ Phase 5 (next): interactive dashboard, SpyHunt automation.
 
 - Run only against targets you own or have written permission to test.
 - `amass` passive enum needs API keys configured to return anything useful.
+- Phase 12 external dependencies: `wafw00f` (WAF stage), `sslyze` (`--tls`),
+  `nikto` (`--nikto`), and the Mojeek / DuckDuckGo HTML search endpoints
+  (dork stage). Missing tools are skipped with a warning; if every search
+  engine blocks the dork queries, a "blocked" warning is printed and dork
+  results are incomplete.
