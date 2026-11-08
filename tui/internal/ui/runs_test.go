@@ -2,14 +2,17 @@ package ui
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"bountyrun/tui/internal/runstore"
@@ -100,4 +103,112 @@ func TestUnknownStatusGlyph(t *testing.T) {
 	if g, _ := glyph(runstore.Status("exploded")); g != "?" {
 		t.Fatal(g)
 	}
+}
+
+func plain(s string) string { return ansi.Strip(s) }
+
+func mkRuns(dirs ...string) []runstore.Run {
+	var rs []runstore.Run
+	for _, d := range dirs {
+		rs = append(rs, runstore.Run{Info: runstore.RunInfo{Dir: d, Target: d}, Status: runstore.OK, Sev: map[string]int{}})
+	}
+	return rs
+}
+
+func TestRowAlignmentSelectedVsNot(t *testing.T) {
+	m := newRunsModel("x")
+	r := runstore.Run{Info: runstore.RunInfo{Target: "a.com"}, Status: runstore.Crashed,
+		Sev: map[string]int{"high": 2}, Elapsed: 72 * time.Minute}
+	sel, un := plain(m.row(r, true)), plain(m.row(r, false))
+	if strings.Index(sel, "crashed") != strings.Index(un, "crashed") || strings.Index(sel, "H2") != strings.Index(un, "H2") {
+		t.Fatalf("misaligned:\n%q\n%q", sel, un)
+	}
+	if sel != un {
+		t.Fatalf("plain text differs:\n%q\n%q", sel, un)
+	}
+}
+
+func TestDiscoverErrorKeepsList(t *testing.T) {
+	m := newRunsModel("x")
+	m.Update(runsMsg{runs: mkRuns("a", "b")})
+	m.Update(runsMsg{err: errors.New("boom")})
+	v := plain(m.View())
+	if !strings.Contains(v, "error: boom") || !strings.Contains(v, "a ") || !strings.Contains(v, "b ") {
+		t.Fatal(v)
+	}
+	m.root = "[" // invalid glob pattern -> real Discover error
+	msg := m.load()().(runsMsg)
+	if msg.err == nil {
+		t.Fatal("expected error")
+	}
+	m.Update(msg)
+	m.Update(runsMsg{runs: mkRuns("a", "b")})
+	if strings.Contains(plain(m.View()), "error:") {
+		t.Fatal("error should clear on success")
+	}
+}
+
+func TestSelectionFollowsDir(t *testing.T) {
+	m := newRunsModel("x")
+	m.Update(runsMsg{runs: mkRuns("a", "b", "c")})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // b
+	m.Update(runsMsg{runs: mkRuns("new", "a", "b", "c")})
+	if m.cursor != 2 {
+		t.Fatalf("cursor %d", m.cursor)
+	}
+	cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := cmd().(AttachMsg).Dir; got != "b" {
+		t.Fatal(got)
+	}
+	// selected run vanishes: clamp
+	m.Update(runsMsg{runs: mkRuns("a")})
+	if m.cursor != 0 || m.selDir != "a" {
+		t.Fatalf("cursor %d sel %q", m.cursor, m.selDir)
+	}
+}
+
+func TestRenderedDetails(t *testing.T) {
+	root, _ := fixtureRoot(t)
+	m := newRunsModel(root)
+	m.Update(m.load()())
+	v := plain(m.View())
+	for _, w := range []string{"C1", "L4", "H1", "—"} {
+		if !strings.Contains(v, w) {
+			t.Errorf("missing %q in\n%s", w, v)
+		}
+	}
+	if !regexp.MustCompile(`\dh\d\dm`).MatchString(v) {
+		t.Errorf("no XhYYm in\n%s", v)
+	}
+	lines := strings.Split(v, "\n")
+	var rows []string
+	for _, l := range lines {
+		for _, g := range []string{"●", "✓", "✗", "?"} {
+			if strings.HasPrefix(l, g+" ") {
+				rows = append(rows, l)
+			}
+		}
+	}
+	if len(rows) != 4 || !strings.HasPrefix(rows[0], "●") {
+		t.Fatalf("rows %q", rows)
+	}
+	found := false
+	for _, l := range rows {
+		if strings.HasPrefix(l, "? ") && strings.Contains(l, "weird") && strings.Contains(l, "exploded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unknown row missing: %q", rows)
+	}
+}
+
+func TestNewRunAppearsAfterTick(t *testing.T) {
+	root, _ := fixtureRoot(t)
+	tm := teatest.NewTestModel(t, NewRoot(Config{OutputsRoot: root}))
+	teatest.WaitFor(t, tm.Output(), contains("live.example.com"), teatest.WithDuration(5*time.Second))
+	writeRun(t, root, "late.example.com", "9", 999999999, 1, time.Now().UnixMilli(),
+		`{"v":1,"t":1,"type":"run_start"}`)
+	teatest.WaitFor(t, tm.Output(), contains("late.example.com"), teatest.WithDuration(5*time.Second))
+	tm.Quit()
 }

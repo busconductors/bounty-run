@@ -13,13 +13,18 @@ import (
 
 const maxActive = 3
 
-type runsMsg struct{ runs []runstore.Run }
+type runsMsg struct {
+	runs []runstore.Run
+	err  error
+}
 type tickMsg struct{}
 
 type runsModel struct {
 	root   string
 	runs   []runstore.Run
 	cursor int
+	selDir string // selected run's dir; selection follows it across refreshes
+	err    error
 	width  int
 }
 
@@ -28,8 +33,8 @@ func newRunsModel(root string) *runsModel { return &runsModel{root: root, width:
 func (m *runsModel) load() tea.Cmd {
 	root := m.root
 	return func() tea.Msg {
-		runs, _ := runstore.Discover(root)
-		return runsMsg{runs}
+		runs, err := runstore.Discover(root)
+		return runsMsg{runs, err}
 	}
 }
 
@@ -42,10 +47,12 @@ func (m *runsModel) Init() tea.Cmd { return tea.Batch(m.load(), tick()) }
 func (m *runsModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case runsMsg:
-		m.runs = msg.runs
-		if m.cursor >= len(m.runs) {
-			m.cursor = max(0, len(m.runs)-1)
+		m.err = msg.err
+		if msg.err != nil {
+			return nil // keep the previous list
 		}
+		m.runs = msg.runs
+		m.resync()
 	case tickMsg:
 		return tea.Batch(m.load(), tick())
 	case tea.KeyPressMsg:
@@ -53,10 +60,12 @@ func (m *runsModel) Update(msg tea.Msg) tea.Cmd {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				m.selDir = m.runs[m.cursor].Info.Dir
 			}
 		case "down", "j":
 			if m.cursor < len(m.runs)-1 {
 				m.cursor++
+				m.selDir = m.runs[m.cursor].Info.Dir
 			}
 		case "enter":
 			if m.cursor < len(m.runs) {
@@ -70,6 +79,21 @@ func (m *runsModel) Update(msg tea.Msg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// resync re-finds the selected dir after the list changed, else clamps.
+func (m *runsModel) resync() {
+	for i, r := range m.runs {
+		if r.Info.Dir == m.selDir {
+			m.cursor = i
+			return
+		}
+	}
+	m.cursor = min(m.cursor, max(0, len(m.runs)-1))
+	m.selDir = ""
+	if m.cursor < len(m.runs) {
+		m.selDir = m.runs[m.cursor].Info.Dir
+	}
 }
 
 func glyph(s runstore.Status) (string, lipgloss.Style) {
@@ -106,7 +130,7 @@ func clip(s string, w int) string {
 	return s
 }
 
-func sevCells(sev map[string]int) string {
+func sevCells(sev map[string]int, styled bool) string {
 	total := 0
 	for _, k := range []string{"critical", "high", "medium", "low"} {
 		total += sev[k]
@@ -116,7 +140,11 @@ func sevCells(sev map[string]int) string {
 	}
 	var parts []string
 	for _, c := range []struct{ k, l string }{{"critical", "C"}, {"high", "H"}, {"medium", "M"}, {"low", "L"}} {
-		parts = append(parts, sevStyle(c.k).Render(fmt.Sprintf("%s%d", c.l, sev[c.k])))
+		t := fmt.Sprintf("%s%d", c.l, sev[c.k])
+		if styled {
+			t = sevStyle(c.k).Render(t)
+		}
+		parts = append(parts, t)
 	}
 	return padTo(strings.Join(parts, " "), 15)
 }
@@ -127,14 +155,13 @@ func (m *runsModel) row(r runstore.Run, selected bool) string {
 	if stage == "" {
 		stage = "—"
 	}
-	plain := fmt.Sprintf("%s %s %s %s ", g, padTo(clip(r.Info.Target, 22), 22),
+	rest := fmt.Sprintf(" %s %s %s ", padTo(clip(r.Info.Target, 22), 22),
 		padTo(clip(stage, 10), 10), padTo(fmtElapsed(r.Elapsed), 7))
 	status := string(r.Status)
 	if selected {
-		return cursorStyle.Render(plain) + " " + sevCells(r.Sev) + " " + status
+		return cursorStyle.Render(g + rest + sevCells(r.Sev, false) + " " + status)
 	}
-	_ = gs
-	return gs.Render(g) + strings.TrimPrefix(plain, g) + sevCells(r.Sev) + " " + status
+	return gs.Render(g) + rest + sevCells(r.Sev, true) + " " + status
 }
 
 func (m *runsModel) View() string {
@@ -144,6 +171,9 @@ func (m *runsModel) View() string {
 		dimStyle.Render(fmt.Sprintf("%d/%d active", active, maxActive)) + "\n\n")
 	if len(m.runs) == 0 {
 		b.WriteString(dimStyle.Render("no runs found in "+m.root) + "\n")
+	}
+	if m.err != nil {
+		b.WriteString(badStyle.Render("error: "+m.err.Error()) + "\n")
 	}
 	for i, r := range m.runs {
 		b.WriteString(m.row(r, i == m.cursor) + "\n")
