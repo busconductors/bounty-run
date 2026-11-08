@@ -1,0 +1,357 @@
+{
+  "invalid_server_strings": [],
+  "server_scan_results": [
+    {
+      "uuid": "3f980640-c0ba-4c2b-9bfd-3851fa7c8c37",
+      "server_location": {
+        "hostname": "example.com",
+        "port": 443,
+        "connection_type": "DIRECT",
+        "ip_address": "93.184.215.14",
+        "http_proxy_settings": null
+      },
+      "network_configuration": {
+        "tls_server_name_indication": "example.com",
+        "tls_opportunistic_encryption": null,
+        "tls_client_auth_credentials": null,
+        "xmpp_to_hostname": null,
+        "network_timeout": 5,
+        "network_max_retries": 3
+      },
+      "connectivity_status": "COMPLETED",
+      "connectivity_error_trace": null,
+      "connectivity_result": {
+        "highest_tls_version_supported": "TLS_1_3",
+        "cipher_suite_supported": "TLS_AES_256_GCM_SHA384",
+        "client_auth_requirement": "DISABLED",
+        "supports_ecdh_key_exchange": true
+      },
+      "scan_status": "COMPLETED",
+      "scan_result": {
+        "certificate_info": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "hostname_used_for_server_name_indication": "example.com",
+            "certificate_deployments": [
+              {
+                "received_certificate_chain": [
+                  {
+                    "as_pem": "-----BEGIN CERTIFICATE-----\n(trimmed)\n-----END CERTIFICATE-----\n",
+                    "hpkp_pin": "toyMGpiThuoVaTygu6QeCcnum2PKJknnGOsHalH7BzU=",
+                    "fingerprint_sha1": "AAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    "fingerprint_sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    "serial_number": 1234567890,
+                    "not_valid_before": "2026-09-26T00:00:00Z",
+                    "not_valid_after": "2026-11-20T00:00:00Z",
+                    "subject_alternative_name": {
+                      "dns_names": [
+                        "other.example.net"
+                      ],
+                      "ip_addresses": []
+                    },
+                    "signature_hash_algorithm": {
+                      "name": "sha256",
+                      "digest_size": 32
+                    },
+                    "signature_algorithm_oid": {
+                      "name": "ecdsa-with-SHA256",
+                      "dotted_string": "1.2.840.10045.4.3.2"
+                    },
+                    "subject": {
+                      "rfc4514_string": "CN=other.example.net",
+                      "attributes": [
+                        {
+                          "oid": {
+                            "name": "commonName",
+                            "dotted_string": "2.5.4.3"
+                          },
+                          "value": "other.example.net",
+                          "rfc4514_string": "CN=other.example.net"
+                        }
+                      ]
+                    },
+                    "issuer": {
+                      "rfc4514_string": "CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US",
+                      "attributes": [
+                        {
+                          "oid": {
+                            "name": "countryName",
+                            "dotted_string": "2.5.4.6"
+                          },
+                          "value": "US",
+                          "rfc4514_string": "C=US"
+                        },
+                        {
+                          "oid": {
+                            "name": "organizationName",
+                            "dotted_string": "2.5.4.10"
+                          },
+                          "value": "SSL Corporation",
+                          "rfc4514_string": "O=SSL Corporation"
+                        },
+                        {
+                          "oid": {
+                            "name": "commonName",
+                            "dotted_string": "2.5.4.3"
+                          },
+                          "value": "Cloudflare TLS Issuing ECC CA 3",
+                          "rfc4514_string": "CN=Cloudflare TLS Issuing ECC CA 3"
+                        }
+                      ]
+                    },
+                    "public_key": {
+                      "algorithm": "ECPublicKey",
+                      "key_size": 256,
+                      "rsa_e": null,
+                      "rsa_n": null,
+                      "ec_curve_name": "secp256r1",
+                      "ec_x": 48132124687260068174508869678829429091913181809627048102027143249289967733064,
+                      "ec_y": 27623335417547666160966481825700822827139637860637220934387108226981574854381
+                    }
+                  }
+                ],
+                "leaf_certificate_has_must_staple_extension": false,
+                "leaf_certificate_is_ev": false,
+                "leaf_certificate_signed_certificate_timestamps_count": 2,
+                "received_chain_contains_anchor_certificate": false,
+                "received_chain_has_valid_order": true,
+                "path_validation_results": [
+                  {
+                    "trust_store": {
+                      "path": "trust_stores/google_aosp.pem",
+                      "name": "Android",
+                      "version": "16.0.0_r4",
+                      "ev_oids": null
+                    },
+                    "verified_certificate_chain": null,
+                    "validation_error": "unable to get local issuer certificate",
+                    "was_validation_successful": false
+                  },
+                  {
+                    "trust_store": {
+                      "path": "trust_stores/apple.pem",
+                      "name": "Apple",
+                      "version": "iOS 26, iPadOS 26, macOS 26, tvOS 26, visionOS 26 and watchOS 26",
+                      "ev_oids": null
+                    },
+                    "verified_certificate_chain": null,
+                    "validation_error": "unable to get local issuer certificate",
+                    "was_validation_successful": false
+                  }
+                ],
+                "verified_chain_has_sha1_signature": false,
+                "verified_chain_has_legacy_symantec_anchor": false,
+                "ocsp_response": null,
+                "ocsp_response_is_trusted": true,
+                "verified_certificate_chain": null
+              }
+            ],
+            "certificate_deployment_with_sni_disabled": null
+          }
+        },
+        "ssl_2_0_cipher_suites": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "tls_version_used": "SSL_2_0",
+            "is_tls_version_supported": false,
+            "accepted_cipher_suites": [],
+            "rejected_cipher_suites": []
+          }
+        },
+        "ssl_3_0_cipher_suites": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "tls_version_used": "SSL_3_0",
+            "is_tls_version_supported": false,
+            "accepted_cipher_suites": [],
+            "rejected_cipher_suites": []
+          }
+        },
+        "tls_1_0_cipher_suites": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "tls_version_used": "TLS_1_0",
+            "is_tls_version_supported": true,
+            "accepted_cipher_suites": [
+              {
+                "cipher_suite": {
+                  "name": "TLS_RSA_WITH_AES_256_CBC_SHA",
+                  "is_anonymous": false,
+                  "key_size": 256,
+                  "openssl_name": "AES256-SHA"
+                },
+                "ephemeral_key": null
+              },
+              {
+                "cipher_suite": {
+                  "name": "TLS_RSA_WITH_AES_128_CBC_SHA",
+                  "is_anonymous": false,
+                  "key_size": 128,
+                  "openssl_name": "AES128-SHA"
+                },
+                "ephemeral_key": null
+              },
+              {
+                "cipher_suite": {
+                  "name": "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+                  "is_anonymous": false,
+                  "key_size": 168,
+                  "openssl_name": "DES-CBC3-SHA"
+                },
+                "ephemeral_key": null
+              }
+            ],
+            "rejected_cipher_suites": []
+          }
+        },
+        "tls_1_1_cipher_suites": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "tls_version_used": "TLS_1_1",
+            "is_tls_version_supported": false,
+            "accepted_cipher_suites": [],
+            "rejected_cipher_suites": []
+          }
+        },
+        "tls_1_2_cipher_suites": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "tls_version_used": "TLS_1_2",
+            "is_tls_version_supported": true,
+            "accepted_cipher_suites": [
+              {
+                "cipher_suite": {
+                  "name": "TLS_RSA_WITH_AES_256_GCM_SHA384",
+                  "is_anonymous": false,
+                  "key_size": 256,
+                  "openssl_name": "AES256-GCM-SHA384"
+                },
+                "ephemeral_key": null
+              },
+              {
+                "cipher_suite": {
+                  "name": "TLS_RSA_WITH_AES_256_CBC_SHA256",
+                  "is_anonymous": false,
+                  "key_size": 256,
+                  "openssl_name": "AES256-SHA256"
+                },
+                "ephemeral_key": null
+              },
+              {
+                "cipher_suite": {
+                  "name": "TLS_RSA_WITH_AES_256_CBC_SHA",
+                  "is_anonymous": false,
+                  "key_size": 256,
+                  "openssl_name": "AES256-SHA"
+                },
+                "ephemeral_key": null
+              },
+              {
+                "cipher_suite": {
+                  "name": "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+                  "is_anonymous": false,
+                  "key_size": 168,
+                  "openssl_name": "DES-CBC3-SHA"
+                },
+                "ephemeral_key": null
+              }
+            ],
+            "rejected_cipher_suites": []
+          }
+        },
+        "tls_1_3_cipher_suites": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "tls_compression": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "tls_1_3_early_data": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "openssl_ccs_injection": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "tls_fallback_scsv": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "heartbleed": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "is_vulnerable_to_heartbleed": true
+          }
+        },
+        "robot": {
+          "status": "COMPLETED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": {
+            "robot_result": "VULNERABLE_WEAK_ORACLE"
+          }
+        },
+        "session_renegotiation": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "session_resumption": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "elliptic_curves": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "http_headers": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        },
+        "tls_extended_master_secret": {
+          "status": "NOT_SCHEDULED",
+          "error_reason": null,
+          "error_trace": null,
+          "result": null
+        }
+      }
+    }
+  ],
+  "date_scans_started": "2026-11-08T16:54:47.857336Z",
+  "date_scans_completed": "2026-11-08T16:55:01.356323Z",
+  "sslyze_version": "6.3.1",
+  "sslyze_url": "https://github.com/nabla-c0d3/sslyze"
+}
