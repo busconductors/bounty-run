@@ -161,5 +161,42 @@ class TestTlsSkipPropagates(_EventsBase):
                                   ["example.com"])
 
 
+class TestDigMissingNotSkipped(_EventsBase):
+    def test_dig_missing_does_not_mark_skip(self):
+        with mock.patch.object(utils, "have", side_effect=lambda t: t != "dig"), \
+             mock.patch.object(utils, "run", return_value=""):
+            self.assertEqual(stages._mx_hosts("a.com"), [])
+        self.assertIsNone(events._skip_reason)
+
+    def test_origin_hunt_without_dig_keeps_running(self):
+        with mock.patch.object(utils, "have", side_effect=lambda t: t != "dig"), \
+             mock.patch.object(utils, "log"), \
+             mock.patch.object(stages, "_resolve", return_value=""), \
+             mock.patch.object(stages, "_cloudflare_ranges", return_value=["x"]):
+            stages.origin_hunt("a.com", Path(tempfile.mkdtemp()), {"ip": "1.1.1.1"})
+        self.assertIsNone(events._skip_reason)
+
+
+class TestLiveHostsSkipCancelsQueue(_EventsBase):
+    def test_skip_drops_queued_probes(self):
+        import time
+        events._set_current_stage("live")
+        (self.tmp / "control").write_text("skip live\n")
+        calls = []
+
+        def slow(sub, timeout):
+            calls.append(sub)
+            time.sleep(0.05)
+            return {"host": sub, "url": "", "status": 200, "server": "",
+                    "cloudflare": False}
+
+        hosts = [f"h{i}.example.com" for i in range(300)]
+        with mock.patch.object(stages, "_probe_host", side_effect=slow), \
+             mock.patch.object(utils, "log"):
+            with self.assertRaises(events.StageSkipped):
+                stages.live_hosts(hosts, Path(tempfile.mkdtemp()), threads=4)
+        self.assertLess(len(calls), 60)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

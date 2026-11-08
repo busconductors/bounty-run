@@ -115,12 +115,16 @@ def live_hosts(subdomains: list[str], outdir: Path, timeout: int = 8,
     total = len(targets)
     with ThreadPoolExecutor(max_workers=threads) as ex:
         futures = {ex.submit(_probe_host, s, timeout): s for s in targets}
-        for done, fut in enumerate(as_completed(futures), 1):
-            rows.append(fut.result())
-            if done % 500 == 0:
-                utils.log(f"  ... probed {done}/{len(targets)}")
-            if done % 10 == 0 or done == total:
-                events.progress(stage, done, total)
+        try:
+            for done, fut in enumerate(as_completed(futures), 1):
+                rows.append(fut.result())
+                if done % 500 == 0:
+                    utils.log(f"  ... probed {done}/{len(targets)}")
+                if done % 10 == 0 or done == total:
+                    events.progress(stage, done, total)
+        except (events.RunCancelled, events.StageSkipped):
+            ex.shutdown(wait=True, cancel_futures=True)
+            raise
 
     rows.sort(key=lambda r: (r["status"] == 0, r["host"]))
     outfile = outdir / "live_hosts.txt"
@@ -188,7 +192,6 @@ def _resolve(host: str) -> str:
 def _mx_hosts(domain: str) -> list[str]:
     """Return MX hostnames via dig."""
     if not utils.have("dig"):
-        events.mark_skipped("tool missing: dig")
         return []
     out = utils.run(f"dig +short MX {domain}", timeout=20)
     hosts = []

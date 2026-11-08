@@ -286,11 +286,15 @@ def tls_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = {pool.submit(_scan_host, h, jsondir, timeout, now): h for h in targets}
         done = 0
-        for fut in as_completed(futures):
-            host = futures[fut]
-            results[host] = fut.result()
-            done += 1
-            events.progress(stage, done, total)
+        try:
+            for fut in as_completed(futures):
+                host = futures[fut]
+                results[host] = fut.result()
+                done += 1
+                events.progress(stage, done, total)
+        except (events.RunCancelled, events.StageSkipped):
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
 
     findings: list[dict] = []
     for host in targets:
