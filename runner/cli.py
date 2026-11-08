@@ -31,12 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nmap", action="store_true", help="also run the nmap port scan (off by default; intrusive)")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
-    p.add_argument("--nuclei-severity", default="low,medium,high,critical",
-                   help="nuclei severity filter (default: low,medium,high,critical)")
+    p.add_argument("--nuclei-severity", default="info,low,medium,high,critical",
+                   help="nuclei severity filter (default: info,low,medium,high,critical — "
+                        "info carries tech-detection and missing-header output)")
     p.add_argument("--nuclei-c", type=_positive_int, default=25,
                    help="nuclei concurrency (default 25; auto-clamped by available RAM)")
-    p.add_argument("--nuclei-timeout", type=_positive_int, default=600,
-                   help="nuclei timeout in seconds (default 600)")
+    p.add_argument("--nuclei-timeout", type=_positive_int, default=1800,
+                   help="nuclei timeout in seconds (default 1800 — a full all-templates "
+                        "sweep across origin IPs can take 15-30+ minutes)")
     p.add_argument("--interactive", action="store_true",
                    help="prompt for output directory + engagement name (-o skips the prompts)")
     p.add_argument("--no-banner", action="store_true", help="suppress the startup banner")
@@ -240,7 +242,8 @@ def main(argv=None) -> int:
     findings = []
     if "vuln" not in skip:
         findings = stages.vuln_scan(target, outdir, rows, severity=args.nuclei_severity,
-                                    concurrency=args.nuclei_c, timeout=args.nuclei_timeout)
+                                    concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
+                                    origins=origins)
         report.write_findings_report(outdir, target, findings, [], origins=origins)
 
     content = []

@@ -284,19 +284,65 @@ def _clamp_concurrency(concurrency: int) -> int:
     return concurrency
 
 
-def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "low,medium,high,critical",
-              concurrency: int = 25, timeout: int = 600) -> list[dict]:
-    """Stage 5: run nuclei against live hosts, parse JSONL into findings."""
+def _patience_banner() -> None:
+    """Print a bold, highly-visible 'be patient' banner before the nuclei sweep.
+
+    ANSI bold/colour is gated by the same stdout-is-tty logic as the rest of the
+    CLI (utils._color_enabled), so piped/redirected output stays plain text.
+    """
+    bold = _color_enabled = getattr(utils, "_color_enabled", None)
+    on = bool(_color_enabled()) if callable(_color_enabled) else False
+
+    def b(text: str) -> str:
+        return f"\033[1m{text}\033[0m" if on else text
+
+    art = [
+        "    .-----.   ",
+        "    \\     /   ",
+        "     )   (    ",
+        "    (     )   ",
+        "    /     \\   ",
+        "    `-----'   ",
+    ]
+    print(b("=" * 60), flush=True)
+    for line in art:
+        print(b(line), flush=True)
+    print(b("nuclei is scanning ALL templates and origin IPs — "
+            "this can take 15-30+ minutes. Be patient."), flush=True)
+    print(b("=" * 60), flush=True)
+
+
+def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "info,low,medium,high,critical",
+              concurrency: int = 25, timeout: int = 1800, origins: list[dict] = None) -> list[dict]:
+    """Stage 5: run nuclei against live hosts, parse JSONL into findings.
+
+    `origins` is an optional list of dicts (each with an 'ip' key) for origin
+    servers discovered behind Cloudflare.  Each origin IP is appended to the
+    nuclei target list as both https://<ip> and http://<ip> so nuclei reaches
+    the real origin instead of the 403-blocked Cloudflare edge.
+    """
     utils.log("Stage 5 — vulnerability scan (nuclei)")
     if not utils.have("nuclei"):
         utils.warn("nuclei not found — skipping")
         return []
+    _patience_banner()
     concurrency = _clamp_concurrency(concurrency)
     hosts = sorted({r["host"] for r in live_rows if r["status"]})
     # SSRF guard: drop hosts that resolve to non-public addresses.
     hosts = [h for h in hosts if _is_global(_resolve(h))]
     if not hosts:
         hosts = [target]
+    # Origin IPs are already public-verified upstream; append both schemes so
+    # nuclei hits the real origin server behind Cloudflare.  Dedupe only.
+    seen = set(hosts)
+    for o in (origins or []):
+        ip = (o or {}).get("ip")
+        if not ip:
+            continue
+        for url in (f"https://{ip}", f"http://{ip}"):
+            if url not in seen:
+                seen.add(url)
+                hosts.append(url)
     hosts_file = outdir / "nuclei_targets.txt"
     hosts_file.write_text("\n".join(hosts) + "\n")
     utils.log(f"  scanning {len(hosts)} host(s) [{severity}] — this can take a few minutes")

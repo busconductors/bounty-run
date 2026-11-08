@@ -144,6 +144,35 @@ class VulnScanTests(unittest.TestCase):
         self.assertIn(shlex.quote(str(self.outdir / "nuclei.jsonl")), cmd)
         self.assertIn(shlex.quote(str(self.outdir / "nuclei_targets.txt")), cmd)
 
+    def test_origin_ips_are_appended_as_both_schemes(self):
+        self._run_scan_with_origins(
+            [{"host": "example.com", "status": 200}],
+            origins=[{"ip": "5.6.7.8"}, {"ip": "9.10.11.12"}],
+        )
+        targets = (self.outdir / "nuclei_targets.txt").read_text().splitlines()
+        self.assertIn("example.com", targets)
+        self.assertIn("https://5.6.7.8", targets)
+        self.assertIn("http://5.6.7.8", targets)
+        self.assertIn("https://9.10.11.12", targets)
+        self.assertIn("http://9.10.11.12", targets)
+
+    def test_origin_ips_are_deduped(self):
+        self._run_scan_with_origins(
+            [{"host": "example.com", "status": 200}],
+            origins=[{"ip": "5.6.7.8"}, {"ip": "5.6.7.8"}, {"ip": None}, {}],
+        )
+        targets = (self.outdir / "nuclei_targets.txt").read_text().splitlines()
+        self.assertEqual(targets.count("https://5.6.7.8"), 1)
+        self.assertEqual(targets.count("http://5.6.7.8"), 1)
+
+    def _run_scan_with_origins(self, live_rows, origins):
+        with mock.patch.object(utils, "have", return_value=True), \
+             mock.patch.object(utils, "run", return_value=""), \
+             mock.patch.object(utils, "log"), \
+             mock.patch.object(stages, "_resolve",
+                               side_effect=lambda h: {"example.com": "8.8.8.8"}.get(h, "")):
+            stages.vuln_scan("example.com", self.outdir, live_rows, origins=origins)
+
     def test_non_global_hosts_are_excluded(self):
         self._run_scan([
             {"host": "example.com", "status": 200},

@@ -17,6 +17,15 @@ class TestCliParser(unittest.TestCase):
         args = cli.build_parser().parse_args(["example.com", "--headi"])
         self.assertTrue(args.headi)
 
+    def test_nuclei_severity_default_includes_info(self):
+        args = cli.build_parser().parse_args(["example.com"])
+        self.assertEqual(args.nuclei_severity, "info,low,medium,high,critical")
+        self.assertIn("info", args.nuclei_severity.split(","))
+
+    def test_nuclei_timeout_default_is_1800(self):
+        args = cli.build_parser().parse_args(["example.com"])
+        self.assertEqual(args.nuclei_timeout, 1800)
+
 
 class TestBuildMetrics(unittest.TestCase):
     def _metrics(self, findings):
