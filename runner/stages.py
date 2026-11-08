@@ -317,7 +317,7 @@ def _parse_nuclei_jsonl(path: Path) -> list[dict]:
     findings = []
     if not path.exists():
         return findings
-    for line in path.read_text().splitlines():
+    for line in path.read_text().split("\n"):
         line = line.strip()
         if not line:
             continue

@@ -226,6 +226,21 @@ class VulnScanTests(unittest.TestCase):
         names = sorted(f["name"] for f in findings if f["name"])
         self.assertEqual(names, ["n2", "n3", "n4"])
 
+    def test_jsonl_with_line_separator_parses(self):
+        # A nuclei finding whose embedded response body contains a Unicode line
+        # separator (U+2028) must still parse: str.splitlines() shatters the
+        # single JSONL line into fragments and silently drops the finding.
+        jl = self.outdir / "nuclei.jsonl"
+        jl.write_text(
+            '{"info": {"severity": "medium", "name": "Line-sep finding"}, '
+            '"template-id": "CVE-2021-24891", "matched-at": "https://x/a.js", '
+            '"host": "example.com", "response": "body\u2028with\u2029seps"}'
+        )
+        findings = stages._parse_nuclei_jsonl(jl)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "medium")
+        self.assertEqual(findings[0]["host"], "example.com")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
