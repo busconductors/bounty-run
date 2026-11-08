@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -234,5 +237,41 @@ func TestLaunchOptionsFromForm(t *testing.T) {
 	}
 	if posInt("") != nil || posInt("12") != nil {
 		t.Error("posInt rejected valid input")
+	}
+}
+
+// TestStageIDsMatchEngine guards against drift between the launch form's
+// skip list and runner/cli.py STAGE_IDS.
+func TestStageIDsMatchEngine(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(root, "bounty_run.py")); err == nil {
+			break
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatal("bounty_run.py not found walking up from cwd")
+		}
+		root = parent
+	}
+	cmd := exec.Command(py, "-c", "import json; from runner.cli import STAGE_IDS; print(json.dumps(STAGE_IDS))")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("python3: %v", err)
+	}
+	var want []string
+	if err := json.Unmarshal(out, &want); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if !slices.Equal(stageIDs, want) {
+		t.Fatalf("stageIDs = %v\nrunner/cli.py STAGE_IDS = %v", stageIDs, want)
 	}
 }
