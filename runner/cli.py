@@ -439,7 +439,7 @@ def _run(args, target: str, outdir: Path, skip: set[str]) -> int:
             events.run_end("cancelled", _totals(st.findings), report_path, summary_path)
             return 130
         rc = _finish(args, target, outdir, skip, st)
-    except Exception as e:
+    except BaseException as e:  # incl. Ctrl-C / SystemExit: no partial report
         events.run_end("failed", _totals(st.findings), report_path, summary_path, error=repr(e))
         raise
     events.run_end("ok", _totals(st.findings), report_path, summary_path)

@@ -88,7 +88,7 @@ def run_cli(extra=(), overrides=None):
         st.enter_context(redirect_stdout(buf))
         try:
             rc = cli.main(BASE_ARGV + ["-o", tmp] + list(extra))
-        except Exception as e:  # surfaced to the caller
+        except BaseException as e:  # surfaced to the caller
             exc = e
         finally:
             events.reset()
@@ -258,6 +258,17 @@ class TestEventSequence(unittest.TestCase):
         self.assertEqual(evs[-1]["type"], "run_end")
         self.assertEqual(evs[-1]["status"], "failed")
         self.assertIn("ValueError", evs[-1]["error"])
+
+    def test_keyboard_interrupt_emits_failed(self):
+        rc, _, tmp, exc = run_with_events({"dork_scan": KeyboardInterrupt()})
+        self.addCleanup(tmp.cleanup)
+        self.assertIsInstance(exc, KeyboardInterrupt)
+        evs = read_events(tmp.name)
+        self.assertEqual(stage_ends(evs)["dork"]["status"], "failed")
+        self.assertEqual(evs[-1]["type"], "run_end")
+        self.assertEqual(evs[-1]["status"], "failed")
+        self.assertIn("KeyboardInterrupt", evs[-1]["error"])
+        self.assertFalse((Path(tmp.name) / "FINDINGS.md").exists())
 
     def test_finish_error_emits_failed(self):
         with mock.patch.object(cli.dashboard, "write_run_summary",
