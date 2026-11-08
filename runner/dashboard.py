@@ -399,11 +399,14 @@ def _sev_class(sev) -> str:
     return "sev-unknown"
 
 
-def _summary_metric_cards(subdomains, live_hosts, cloudflare, total) -> str:
+def _summary_metric_cards(subdomains, live_hosts, cloudflare, total,
+                          technologies, api_endpoints) -> str:
     cards = [
         ("subdomains", subdomains),
         ("live hosts", live_hosts),
         ("cloudflare", "yes" if cloudflare else "no"),
+        ("technologies", ", ".join(technologies) if technologies else "none"),
+        ("api endpoints", str(api_endpoints)),
         ("total findings", total),
     ]
     return "".join(
@@ -541,12 +544,19 @@ def write_run_summary(outdir, target, findings, content, origins, *,
         )
     )
     sev_counts = Counter((f.get("severity") or "unknown").lower() for f in unique)
+    tech = sorted({
+        (f.get("name") or "").replace("Technology: ", "", 1)
+        for f in unique
+        if (f.get("template") or "").startswith("tech-detect:")
+    })
+    api_count = sum(1 for f in unique if (f.get("template") or "") == "api-endpoint")
 
     doc = _SUMMARY_TEMPLATE.format(
         stylesheet=STYLESHEET,
         target=esc(target),
         run_time=esc(run_time),
-        metrics=_summary_metric_cards(subdomains, live_hosts, cloudflare, len(unique)),
+        metrics=_summary_metric_cards(subdomains, live_hosts, cloudflare, len(unique),
+                                      tech, api_count),
         pills=_summary_severity_pills(sev_counts),
         findings=_summary_findings_html(unique),
         origins=_summary_origins_html(origins),
