@@ -2,6 +2,25 @@
 
 All notable changes to Bounty Runner.
 
+## Phase 13 — Interactive TUI
+
+### 13a — engine events
+
+- `--events PATH` writes a JSON-lines event stream (schema v1) plus `run.json`, `control` and `pids` in the run dir; plain CLI output is unchanged without it
+- Events cover every stage, including `finding` events
+- Control file: the TUI appends `skip <stage>` / `cancel` lines and the engine consumes them atomically; cancel writes a partial report and exits 130
+
+### 13b — Go TUI core
+
+- `tui/` bubbletea app (`make tui` → `bin/bounty-tui`) with Runs list and Monitor screens; event decoder and run-store
+- Contract test: Python emitter ↔ Go decoder
+
+### 13c — launch and control
+
+- Launch form, detached engine spawn (`engine.log`), cap of 3 active runs (TUI-enforced)
+- Skip / cancel with confirm, and hard kill via the recorded pgid when the engine stops responding
+- Docs: README "Interactive TUI" section, TESTPLAN entries
+
 ## [1.1.0] — Phase 12
 
 TLS depth, WAF fingerprinting, nikto, search-engine dorking, and admin-panel detection.

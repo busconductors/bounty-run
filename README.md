@@ -75,7 +75,67 @@ bounty-run track stats
 13. Param testing — Wayback CDX param discovery + `sqlmap` injection testing
 14. Report — dedupe by (template, host), severity-ordered `FINDINGS.md` + `findings.json`
 
-Phase 5 (next): interactive dashboard, SpyHunt automation.
+Phase 5 added the HTML dashboard; Phase 13 added the interactive TUI
+(below). SpyHunt automation is still planned.
+
+## Interactive TUI
+
+`bounty-tui` is a terminal UI (Go, bubbletea) to launch, monitor and control
+runs. It drives the Python engine through its `--events` mode.
+
+```
+make tui                          # builds bin/bounty-tui
+bin/bounty-tui                    # outputs root: $BOUNTY_OUTPUTS or ~/tools/bounty-run/outputs
+bin/bounty-tui --outputs results/ # explicit outputs root (overrides $BOUNTY_OUTPUTS)
+BOUNTY_RUN=/path/to/bounty-run bin/bounty-tui   # engine binary (default: bounty-run on PATH)
+```
+
+Screens: **Runs** (all runs under the outputs root, refreshed every tick),
+**Launch** (new-run form: target, opt-in stages, skipped stages, HTTP timeout,
+max param URLs), **Monitor** (stage list, live output, findings table).
+
+Runs are detached: quitting the TUI never stops a run, and you can re-attach
+from the Runs screen. The TUI refuses to start a 4th run while 3 are active;
+that cap is enforced only by the TUI, not by the engine. Cancel writes a
+partial report and exits 130. Without `--events` the CLI output is unchanged.
+
+| Screen  | Key | Action |
+|---------|-----|--------|
+| Runs    | up/k, down/j | move selection |
+| Runs    | enter | open run in Monitor |
+| Runs    | n | new run (Launch) |
+| Runs    | q, ctrl+c | quit |
+| Launch  | enter | next field / submit |
+| Launch  | shift+tab | previous field |
+| Launch  | space, x | toggle a stage |
+| Launch  | esc | back to Runs |
+| Launch  | ctrl+c | quit |
+| Monitor | tab | switch focus between output and findings |
+| Monitor | f | cycle severity filter |
+| Monitor | enter | finding detail (esc closes) |
+| Monitor | o | open report in pager (after the run ends) |
+| Monitor | s | skip current stage (y to confirm, any other key declines) |
+| Monitor | c | cancel run (y to confirm, any other key declines) |
+| Monitor | K | hard kill; only while the "engine not responding" banner shows |
+| Monitor | q, esc | detach (run keeps going) |
+| Monitor | ctrl+c | quit |
+
+### Run-directory files (`--events`)
+
+- `run.json` — engine pid, pgid, start time, target, flags, version
+- `events.jsonl` — schema v1 events (`run_start`, `stage_start`, `stage_end`,
+  `progress`, `log`, `output`, `finding`, `run_end`), one JSON object per line
+- `control` — the TUI appends `skip <stage>` / `cancel` lines; the engine
+  consumes the file atomically (rename, then read)
+- `pids` — process groups of running child tools (used for hard kill)
+- `engine.log` — engine stdout/stderr when started by the TUI
+
+For scripting, run the engine directly and follow the stream:
+
+```
+bounty-run example.com --events outputs/example.com/manual/events.jsonl
+tail -f outputs/example.com/manual/events.jsonl | jq -c .   # jq optional
+```
 
 ## Notes
 

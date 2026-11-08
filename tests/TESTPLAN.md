@@ -188,3 +188,16 @@ Run only against hosts you own or are authorized to test.
       (e.g. rate-limited IP, or route both through a proxy that returns 403),
       the dork stage prints `every search engine blocked — dork results NOT complete`
       and the run still exits `0`.
+
+---
+
+## Phase 13 — events and TUI
+
+Automated (no network, no external tools):
+
+- [ ] `python3 -m pytest -q tests/test_events.py tests/test_events_stages.py tests/test_events_cli.py`
+      — event emitter, per-stage events, and `--events` CLI/control behaviour.
+- [ ] `cd tui && go test ./...` — Go decoder, run-store, engine control and UI tests.
+- [ ] **Manual** — `make tui && bin/bounty-tui`: launch a run against an
+      authorized target, skip a stage (`s`, `y`), cancel (`c`, `y`; exit 130 and a
+      partial report), quit the TUI and confirm the run keeps going.
