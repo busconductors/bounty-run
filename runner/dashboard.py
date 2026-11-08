@@ -399,8 +399,18 @@ def _sev_class(sev) -> str:
     return "sev-unknown"
 
 
+def _waf_name(name: str) -> str:
+    """``"WAF detected: Cloudflare (Cloudflare Inc.)"`` → ``"Cloudflare"``."""
+    if name.startswith("WAF detected: "):
+        name = name[len("WAF detected: "):]
+    if name.endswith(")") and " (" in name:
+        name = name[:name.rindex(" (")]
+    return name.strip()
+
+
 def _summary_metric_cards(subdomains, live_hosts, cloudflare, total,
-                          technologies, api_endpoints, open_ports) -> str:
+                          technologies, api_endpoints, open_ports, *,
+                          waf=(), panels=0, dork_hits=0, tls_issues=0, nikto=0) -> str:
     cards = [
         ("subdomains", subdomains),
         ("live hosts", live_hosts),
@@ -408,6 +418,11 @@ def _summary_metric_cards(subdomains, live_hosts, cloudflare, total,
         ("technologies", ", ".join(technologies) if technologies else "none"),
         ("api endpoints", str(api_endpoints)),
         ("open ports (nmap)", str(open_ports)),
+        ("waf", ", ".join(waf) if waf else "none"),
+        ("panels", str(panels)),
+        ("dork hits", str(dork_hits)),
+        ("tls issues", str(tls_issues)),
+        ("nikto", str(nikto)),
         ("total findings", total),
     ]
     return "".join(
@@ -553,12 +568,24 @@ def write_run_summary(outdir, target, findings, content, origins, *,
     api_count = sum(1 for f in unique if (f.get("template") or "") == "api-endpoint")
     nmap_count = sum(1 for f in unique if (f.get("template") or "").startswith("nmap:"))
 
+    def _count(prefix):
+        return sum(1 for f in unique if (f.get("template") or "").startswith(prefix))
+
+    waf_names = sorted({
+        _waf_name(f.get("name") or "")
+        for f in unique
+        if (f.get("template") or "").startswith("waf:")
+    } - {""})
+
     doc = _SUMMARY_TEMPLATE.format(
         stylesheet=STYLESHEET,
         target=esc(target),
         run_time=esc(run_time),
         metrics=_summary_metric_cards(subdomains, live_hosts, cloudflare, len(unique),
-                                      tech, api_count, nmap_count),
+                                      tech, api_count, nmap_count,
+                                      waf=waf_names, panels=_count("panel:"),
+                                      dork_hits=_count("dork:"), tls_issues=_count("tls:"),
+                                      nikto=_count("nikto:")),
         pills=_summary_severity_pills(sev_counts),
         findings=_summary_findings_html(unique),
         origins=_summary_origins_html(origins),

@@ -58,8 +58,9 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
     """Build the ordered ``(label, value)`` pairs for the executive overview.
 
     Tallies run over ``report.dedupe(findings)`` so they match the report exactly.
-    Nuclei findings are everything that is not ``secret-exposure``, ``sqlmap-sqli``
-    or a ``metis:<path>`` template; their severity tally is lowercased and emitted
+    Nuclei findings are everything not claimed by a named bucket (``secret-exposure``,
+    ``sqlmap-sqli``, ``metis:``, headers/cors/headi/nmap/tech/api, and the Phase 12
+    ``panel:``/``waf:``/``dork:``/``tls:``/``nikto:`` prefixes); their severity tally is lowercased and emitted
     in ``SEVERITY_ORDER``.
     """
     findings = dedupe(findings)
@@ -68,6 +69,7 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
 
     secret = sqli = metis = headers_missing = headers_insecure = cors = headi = nmap_ports = 0
     tech = api = 0
+    panels = waf = dork = tls = nikto = 0
     sev: Counter = Counter()
     for f in findings:
         template = f.get("template") or ""
@@ -93,6 +95,16 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
             tech += 1
         elif template == "api-endpoint":
             api += 1
+        elif template.startswith("panel:"):
+            panels += 1
+        elif template.startswith("waf:"):
+            waf += 1
+        elif template.startswith("dork:"):
+            dork += 1
+        elif template.startswith("tls:"):
+            tls += 1
+        elif template.startswith("nikto:"):
+            nikto += 1
         else:
             sev[(f.get("severity") or "unknown").lower()] += 1
 
@@ -114,6 +126,11 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
         ("CORS misconfigurations", str(cors)),
         ("Header injection (headi)", str(headi)),
         ("Open ports (nmap)", str(nmap_ports)),
+        ("High-value panels (subdomains)", str(panels)),
+        ("WAF detections (wafw00f)", str(waf)),
+        ("Dork hits (OSINT)", str(dork)),
+        ("TLS/SSL issues (sslyze)", str(tls)),
+        ("Nikto findings", str(nikto)),
         ("Technologies (whatweb)", str(tech)),
         ("API endpoints (katana)", str(api)),
         ("Secret-exposure", str(secret)),
