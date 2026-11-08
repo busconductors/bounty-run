@@ -1,6 +1,7 @@
 """Shared helpers: subprocess running, logging, tool detection, colorization."""
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -49,16 +50,32 @@ def run(cmd: str, outfile: str = None, timeout: int = 180) -> str:
     """Run a shell command, return stdout only; surface stderr on failure."""
     log(f"  $ {cmd}")
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        warn(f"  timed out after {timeout}s")
-        return ""
+        proc = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group so grandchildren (the actual tool
+            # spawned by the shell) don't leak as orphans.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                proc.kill()
+            proc.communicate()
+            warn(f"  timed out after {timeout}s")
+            return ""
     except Exception as e:  # noqa: BLE001
         warn(f"  failed: {e}")
         return ""
-    if r.returncode != 0 and r.stderr:
-        warn(f"  exit {r.returncode}: {r.stderr.strip()[:200]}")
-    text = r.stdout or ""
+    if proc.returncode != 0 and stderr:
+        warn(f"  exit {proc.returncode}: {stderr.strip()[:200]}")
+    text = stdout or ""
     if outfile:
         p = Path(outfile)
         p.parent.mkdir(parents=True, exist_ok=True)
