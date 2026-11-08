@@ -38,7 +38,7 @@ def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
 
     # 1. Query crt.sh for every certificate whose SANs mention <target>.
     crt_url = f"https://crt.sh/?q=%25.{target}&output=json"
-    body = utils.run(f"curl -sS \"{crt_url}\"", timeout=30)
+    body = utils.run(f"curl -sS --connect-timeout 10 --max-time 30 \"{crt_url}\"", timeout=40)
 
     if not body.strip():
         utils.warn("  crt.sh returned no data — aborting deep origin discovery")
@@ -93,7 +93,7 @@ def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     rows = []
     for ip, sources in sorted(candidates.items()):
         out = utils.run(
-            f"curl -sS -k -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
+            f"curl -sS -k --connect-timeout 10 -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
             f"--resolve {target}:443:{ip} --max-time 12 https://{target}",
             timeout=20,
         )

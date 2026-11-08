@@ -3,6 +3,7 @@ import ipaddress
 import json
 import shlex
 import socket
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -15,6 +16,35 @@ try:
     HAVE_REQUESTS = True
 except ImportError:
     HAVE_REQUESTS = False
+
+# Hard ceiling on a single DNS lookup. socket.setdefaulttimeout() does NOT
+# apply to gethostbyname (it's a blocking libc call), so we run the lookup in
+# a daemon thread and stop waiting after this many seconds.
+DNS_TIMEOUT = 5
+
+
+def _gethostbyname_bounded(host: str, timeout: float = DNS_TIMEOUT) -> str:
+    """socket.gethostbyname with a wall-clock bound; raises on failure/timeout.
+
+    The worker is a daemon thread, so a lookup the resolver never answers can
+    neither stall the caller nor block interpreter exit.
+    """
+    box: dict = {}
+
+    def _worker():
+        try:
+            box["ip"] = socket.gethostbyname(host)
+        except BaseException as e:  # noqa: BLE001
+            box["err"] = e
+
+    t = threading.Thread(target=_worker, name=f"dns-{host}", daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError(f"DNS lookup for {host} timed out after {timeout}s")
+    if "err" in box:
+        raise box["err"]
+    return box["ip"]
 
 
 def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True) -> list[str]:
@@ -50,7 +80,7 @@ def _probe_host(sub: str, timeout: int) -> dict:
     """Probe one host over HTTPS then HTTP; return its status row."""
     # SSRF guard: only probe publicly-routable addresses.
     try:
-        resolved = socket.gethostbyname(sub)
+        resolved = _gethostbyname_bounded(sub)
         if not ipaddress.ip_address(resolved).is_global:
             return {"host": sub, "url": "", "status": 0, "server": "", "cloudflare": False}
     except Exception:  # noqa: BLE001
@@ -59,7 +89,7 @@ def _probe_host(sub: str, timeout: int) -> dict:
     for scheme in ("https", "http"):
         url = f"{scheme}://{sub}"
         try:
-            r = requests.get(url, timeout=timeout, verify=False,
+            r = requests.get(url, timeout=(timeout, timeout), verify=False,
                              allow_redirects=False, stream=True)
             server = r.headers.get("Server", "")
             is_cf = "cf-ray" in r.headers or "cloudflare" in server.lower()
@@ -102,14 +132,14 @@ def cloudflare_detect(target: str, outdir: Path) -> dict:
     utils.log(f"Cloudflare detection ({target})")
     result = {"target": target, "cloudflare": False, "evidence": []}
     try:
-        result["ip"] = socket.gethostbyname(target)
+        result["ip"] = _gethostbyname_bounded(target)
     except Exception as e:  # noqa: BLE001
         result["ip"] = ""
         result["evidence"].append(f"DNS resolution failed: {e}")
 
     if HAVE_REQUESTS:
         try:
-            r = requests.get(f"https://{target}", timeout=10, verify=False, allow_redirects=False)
+            r = requests.get(f"https://{target}", timeout=(10, 10), verify=False, allow_redirects=False)
             h = r.headers
             if "cf-ray" in h:
                 result["cloudflare"] = True
@@ -146,7 +176,7 @@ LEAK_SUBDOMAINS = [
 def _resolve(host: str) -> str:
     """Resolve a hostname to an IPv4; empty string on failure."""
     try:
-        return socket.gethostbyname(host)
+        return _gethostbyname_bounded(host)
     except Exception:  # noqa: BLE001
         return ""
 
@@ -170,7 +200,7 @@ def _cloudflare_ranges() -> list:
     """Fetch Cloudflare's published IP ranges (AS13335)."""
     ranges = []
     for url in ("https://www.cloudflare.com/ips-v4", "https://www.cloudflare.com/ips-v6"):
-        out = utils.run(f"curl -sS {url}", timeout=15)
+        out = utils.run(f"curl -sS --connect-timeout 10 --max-time 30 {url}", timeout=40)
         for line in out.splitlines():
             line = line.strip()
             if line:
@@ -201,7 +231,7 @@ def _is_global(ip: str) -> bool:
 def _verify_origin(target: str, ip: str) -> dict:
     """Force-connect to `ip` for `target` and check if it serves the site."""
     out = utils.run(
-        f"curl -sS -k -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
+        f"curl -sS -k --connect-timeout 10 -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
         f"--resolve {target}:443:{ip} --max-time 12 https://{target}",
         timeout=20,
     )

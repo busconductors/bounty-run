@@ -182,7 +182,7 @@ def _probe_cors(base_url: str, host: str) -> tuple[list[dict], list[str]]:
 def _send_origin(url: str, origin: str) -> tuple[str, str]:
     try:
         import requests as _requests
-        r = _requests.get(url, headers={"Origin": origin}, timeout=_CORS_TIMEOUT,
+        r = _requests.get(url, headers={"Origin": origin}, timeout=(_CORS_TIMEOUT, _CORS_TIMEOUT),
                           verify=False, allow_redirects=True)
     except Exception:  # noqa: BLE001
         return "", ""

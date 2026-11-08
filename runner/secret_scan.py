@@ -100,7 +100,7 @@ def _fetch(url: str, timeout=FETCH_TIMEOUT) -> str:
     """GET `url` and return the body text; "" on any failure or non-200."""
     try:
         import requests as _requests
-        r = _requests.get(url, timeout=timeout, verify=False, allow_redirects=True)
+        r = _requests.get(url, timeout=(timeout, timeout), verify=False, allow_redirects=True)
         return r.text if r.status_code == 200 else ""
     except Exception:  # noqa: BLE001
         return ""

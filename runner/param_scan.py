@@ -24,7 +24,7 @@ from runner import utils
 _CDX_UA = "Mozilla/5.0 (compatible; bounty-run/1.0)"
 CDX_URL = (
     'curl -sS -A "' + _CDX_UA + '" --compressed --fail '
-    '--retry 3 --retry-delay 2 --retry-all-errors --max-time 45 '
+    '--connect-timeout 10 --retry 3 --retry-delay 2 --retry-all-errors --max-time 45 '
     '"https://web.archive.org/cdx/search/cdx'
     '?url=*.{target}/*&output=json&fl=original&collapse=urlkey&limit=500"'
 )
