@@ -82,5 +82,78 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(d["flags"], {"tls": True})
 
 
+class TestControl(unittest.TestCase):
+    def setUp(self):
+        events.reset()
+        self.tmp = Path(tempfile.mkdtemp())
+        self.path = self.tmp / "events.jsonl"
+
+    def tearDown(self):
+        events.reset()
+
+    def _ctl(self, text):
+        (self.tmp / "control").write_text(text)
+
+    def test_cancel_raises(self):
+        events.init(self.path)
+        self._ctl("cancel\n")
+        with self.assertRaises(events.RunCancelled):
+            events.check_control()
+
+    def test_skip_only_matching_stage(self):
+        events.init(self.path)
+        events._set_current_stage("nikto")
+        self._ctl("skip vuln\n")
+        events.check_control()
+        events._set_current_stage("vuln")
+        with self.assertRaises(events.StageSkipped):
+            events.check_control()
+        self.assertEqual((self.tmp / "control").read_text(), "")
+
+    def test_skip_is_sticky_across_threads(self):
+        events.init(self.path)
+        events._set_current_stage("nikto")
+        self._ctl("skip nikto\n")
+        res = []
+
+        def work():
+            try:
+                events.check_control()
+                res.append("ok")
+            except events.StageSkipped:
+                res.append("skipped")
+
+        ts = [threading.Thread(target=work) for _ in range(4)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(res, ["skipped"] * 4)
+
+    def test_pids_file_tracks_children(self):
+        events.init(self.path)
+        events.register_child(101)
+        events.register_child(202)
+        events.unregister_child(101)
+        self.assertEqual((self.tmp / "pids").read_text(), "202\n")
+
+    def test_mark_skipped_and_reset(self):
+        events.init(self.path)
+        events.mark_skipped("because")
+        events.register_child(5)
+        events.reset()
+        self.assertIsNone(events._skip_reason)
+        self.assertEqual(events._children, set())
+
+    def test_check_control_disabled_noop(self):
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            self._ctl("cancel\n")
+            events.check_control()
+        finally:
+            os.chdir(cwd)
+
+
 if __name__ == "__main__":
     unittest.main()

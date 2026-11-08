@@ -12,6 +12,18 @@ _lock = threading.Lock()
 _fh = None
 _path: Path | None = None
 _current_stage: str | None = None
+_cancelled = False
+_skipped: set[str] = set()
+_skip_reason: str | None = None
+_children: set[int] = set()
+
+
+class RunCancelled(Exception):
+    pass
+
+
+class StageSkipped(Exception):
+    pass
 
 
 def init(path: Path) -> None:
@@ -22,7 +34,7 @@ def init(path: Path) -> None:
 
 
 def reset() -> None:
-    global _fh, _path, _current_stage
+    global _fh, _path, _current_stage, _cancelled, _skip_reason
     with _lock:
         if _fh is not None:
             try:
@@ -32,6 +44,10 @@ def reset() -> None:
         _fh = None
         _path = None
         _current_stage = None
+        _cancelled = False
+        _skipped.clear()
+        _skip_reason = None
+        _children.clear()
 
 
 def enabled() -> bool:
@@ -122,3 +138,61 @@ def write_run_json(target: str, flags: dict, version: str) -> None:
         "engine_version": version,
     }
     (d / "run.json").write_text(json.dumps(data, ensure_ascii=False))
+
+
+def check_control() -> None:
+    """Poll the control file; raise RunCancelled / StageSkipped (sticky)."""
+    global _cancelled
+    d = run_dir()
+    if d is None:
+        return
+    with _lock:
+        try:
+            text = (d / "control").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        consumed = False
+        for ln in text.splitlines():
+            parts = ln.split()
+            if parts == ["cancel"]:
+                _cancelled = True
+            elif len(parts) == 2 and parts[0] == "skip":
+                _skipped.add(parts[1])
+                consumed = True
+        if consumed:
+            try:
+                (d / "control").write_text("")
+            except OSError:
+                pass
+        cancelled = _cancelled
+        skipped = _current_stage in _skipped
+    if cancelled:
+        raise RunCancelled()
+    if skipped:
+        raise StageSkipped(_current_stage)
+
+
+def _write_pids_locked() -> None:
+    d = run_dir()
+    if d is None:
+        return
+    tmp = d / "pids.tmp"
+    tmp.write_text("".join("%d\n" % p for p in sorted(_children)))
+    os.replace(tmp, d / "pids")
+
+
+def register_child(pgid: int) -> None:
+    with _lock:
+        _children.add(pgid)
+        _write_pids_locked()
+
+
+def unregister_child(pgid: int) -> None:
+    with _lock:
+        _children.discard(pgid)
+        _write_pids_locked()
+
+
+def mark_skipped(reason: str) -> None:
+    global _skip_reason
+    _skip_reason = reason
