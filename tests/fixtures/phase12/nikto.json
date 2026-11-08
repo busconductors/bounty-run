@@ -1,0 +1,61 @@
+[
+   {
+      "end_time" : "2026-11-08 17:55:09 +0100",
+      "host" : "example.com",
+      "ip" : "198.51.100.10",
+      "port" : 443,
+      "server_banner" : "Apache/2.4.29 (Ubuntu)",
+      "ssl_info" : {
+         "altnames" : "example.com, *.example.com",
+         "ciphers" : "TLS_AES_256_GCM_SHA384",
+         "cn" : "example.com",
+         "issuer" : "/C=US/O=SSL Corporation/CN=Cloudflare TLS Issuing ECC CA 3",
+         "subject" : "/CN=example.com"
+      },
+      "start_time" : "2026-11-08 17:54:51 +0100",
+      "vulnerabilities" : [
+         {
+            "id" : "600050",
+            "method" : "HEAD",
+            "msg" : "Apache/2.4.29 appears to be outdated (current is at least 2.4.62).",
+            "references" : null,
+            "url" : "/"
+         },
+         {
+            "id" : "000390",
+            "method" : "OPTIONS",
+            "msg" : "HTTP method ('Allow' Header): 'PUT' method could allow clients to save files on the web server.",
+            "references" : null,
+            "url" : "/"
+         },
+         {
+            "id" : "000483",
+            "method" : "GET",
+            "msg" : "/icons/: Directory indexing found.",
+            "references" : null,
+            "url" : "/icons/"
+         },
+         {
+            "id" : "003233",
+            "method" : "GET",
+            "msg" : "/phpinfo.php: Output from the phpinfo() function was found.",
+            "references" : null,
+            "url" : "/phpinfo.php"
+         },
+         {
+            "id" : "999957",
+            "method" : "GET",
+            "msg" : "The anti-clickjacking X-Frame-Options header is not present.",
+            "references" : "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options",
+            "url" : "/"
+         },
+         {
+            "id" : "011799",
+            "method" : "GET",
+            "msg" : "An alt-svc header was found which is advertising HTTP/3. The endpoint is: ':443'. Nikto cannot test HTTP/3 over QUIC.",
+            "references" : "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/alt-svc",
+            "url" : "/"
+         }
+      ]
+   }
+]
