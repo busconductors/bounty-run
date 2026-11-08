@@ -48,7 +48,7 @@ func (m *MonitorModel) render() string {
 	if m.status != "" {
 		b.WriteString(badStyle.Render(m.status) + "\n")
 	}
-	b.WriteString(dimStyle.Render(m.footer()))
+	b.WriteString(m.footerLine())
 	return b.String()
 }
 
@@ -75,6 +75,20 @@ func (m *MonitorModel) header() string {
 	return h
 }
 
+// footerLine shows a pending y/n prompt or the hard-kill banner in place of
+// the key help.
+func (m *MonitorModel) footerLine() string {
+	switch {
+	case m.confirm == "skip":
+		return warnStyle.Render("skip " + m.confirmStage + "? y/n")
+	case m.confirm == "cancel":
+		return warnStyle.Render("cancel run? y/n")
+	case m.hardKill:
+		return badStyle.Render("engine not responding — K to hard kill")
+	}
+	return dimStyle.Render(m.footer())
+}
+
 func (m *MonitorModel) footer() string {
 	switch {
 	case m.incompatible:
@@ -83,6 +97,9 @@ func (m *MonitorModel) footer() string {
 		return "esc close · q back"
 	}
 	f := "tab focus · f filter · enter detail · esc back"
+	if !m.ended {
+		f += " · s skip · c cancel"
+	}
 	if m.ended && m.report != "" {
 		f += " · o report"
 	}

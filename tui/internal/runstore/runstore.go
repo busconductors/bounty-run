@@ -74,6 +74,9 @@ func readInfo(path string) (RunInfo, error) {
 	}, nil
 }
 
+// ReadInfo reads dir/run.json.
+func ReadInfo(dir string) (RunInfo, error) { return readInfo(filepath.Join(dir, "run.json")) }
+
 // Discover scans root/*/*/run.json and replays each events.jsonl once.
 func Discover(root string) ([]Run, error) {
 	paths, err := filepath.Glob(filepath.Join(root, "*", "*", "run.json"))

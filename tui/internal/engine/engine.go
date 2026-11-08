@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -172,8 +173,14 @@ func Skip(dir, stage string) error { return writeControl(dir, "skip "+stage+"\n"
 // Cancel asks the engine to cancel the run.
 func Cancel(dir string) error { return writeControl(dir, "cancel\n") }
 
+// controlMu serializes writeControl: two quick key presses run two tea.Cmd
+// goroutines, and an unserialized read-append-rename would drop a line.
+var controlMu sync.Mutex
+
 // writeControl writes via temp file + rename so the engine never sees a partial line.
 func writeControl(dir, line string) error {
+	controlMu.Lock()
+	defer controlMu.Unlock()
 	// Append semantics: keep any command the engine has not consumed yet.
 	// (Missing file counts as empty.)
 	old, err := os.ReadFile(filepath.Join(dir, "control"))

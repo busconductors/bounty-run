@@ -15,7 +15,7 @@ type ShowRunsMsg struct{}
 // AttachMsg switches to the Monitor screen for a run directory.
 type AttachMsg struct{ Dir string }
 
-// NewRunMsg requests the launch form (handled in a later task; ignored for now).
+// NewRunMsg opens the launch form.
 type NewRunMsg struct{}
 
 // Root is the top-level model that routes between screens.
@@ -23,6 +23,7 @@ type Root struct {
 	cfg           Config
 	runs          *runsModel
 	monitor       *MonitorModel
+	launch        *launchModel
 	screen        string
 	width, height int
 }
@@ -32,7 +33,7 @@ func NewRoot(cfg Config) tea.Model {
 	return &Root{cfg: cfg, runs: newRunsModel(cfg.OutputsRoot), screen: "runs"}
 }
 
-// Screen returns "runs" or "monitor".
+// Screen returns "runs", "launch" or "monitor".
 func (r *Root) Screen() string { return r.screen }
 
 func (r *Root) Init() tea.Cmd { return r.runs.Init() }
@@ -45,14 +46,19 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r.monitor != nil {
 			r.monitor.update(m)
 		}
+		if r.launch != nil {
+			return r, r.launch.Update(m)
+		}
 		return r, nil
 	case ShowRunsMsg:
 		r.closeMonitor()
+		r.launch = nil
 		r.screen = "runs"
 		return r, nil
 	case AttachMsg:
 		// A fresh model per attach; the previous Tail (if any) is cancelled.
 		r.closeMonitor()
+		r.launch = nil
 		mm := NewMonitor(m.Dir, r.cfg)
 		if r.width > 0 && r.height > 0 {
 			mm.update(tea.WindowSizeMsg{Width: r.width, Height: r.height})
@@ -60,7 +66,11 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		r.screen, r.monitor = "monitor", &mm
 		return r, r.monitor.Init()
 	case NewRunMsg:
-		return r, nil
+		r.closeMonitor()
+		r.launch = newLaunch(r.cfg)
+		r.launch.width, r.launch.height = r.width, r.height
+		r.screen = "launch"
+		return r, r.launch.Init()
 	}
 	switch msg.(type) {
 	case runsMsg, tickMsg: // refresh keeps running while attached
@@ -69,6 +79,9 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if r.screen == "monitor" && r.monitor != nil {
 		return r, r.monitor.update(msg)
 	}
+	if r.screen == "launch" && r.launch != nil {
+		return r, r.launch.Update(msg)
+	}
 	return r, r.runs.Update(msg)
 }
 
@@ -76,6 +89,8 @@ func (r *Root) View() tea.View {
 	var s string
 	if r.screen == "monitor" && r.monitor != nil {
 		s = r.monitor.render()
+	} else if r.screen == "launch" && r.launch != nil {
+		s = r.launch.View()
 	} else {
 		s = r.runs.View()
 	}

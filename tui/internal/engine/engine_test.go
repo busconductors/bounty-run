@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -249,5 +250,20 @@ func TestControlAppends(t *testing.T) {
 	b, _ = os.ReadFile(filepath.Join(d2, "control"))
 	if string(b) != "cancel\nskip nikto\n" {
 		t.Errorf("control = %q", b)
+	}
+}
+
+func TestControlConcurrentWritesKeepBoth(t *testing.T) {
+	for range 1000 {
+		dir := t.TempDir()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _ = Skip(dir, "vuln") }()
+		go func() { defer wg.Done(); _ = Cancel(dir) }()
+		wg.Wait()
+		b, _ := os.ReadFile(filepath.Join(dir, "control"))
+		if s := string(b); s != "skip vuln\ncancel\n" && s != "cancel\nskip vuln\n" {
+			t.Fatalf("control = %q", s)
+		}
 	}
 }

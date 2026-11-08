@@ -8,13 +8,16 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
+	"bountyrun/tui/internal/engine"
 	"bountyrun/tui/internal/events"
+	"bountyrun/tui/internal/runstore"
 )
 
 // tailBatchMax caps how many queued tail messages one Update applies, so a
@@ -31,6 +34,30 @@ type tailMsg struct {
 }
 
 type pagerDoneMsg struct{ err error }
+
+// defaultControlTimeout is how long a skip/cancel may go unacknowledged before
+// the Monitor offers a hard kill.
+const defaultControlTimeout = 10 * time.Second
+
+// pendingAck is the newest skip/cancel still waiting for its matching event:
+// stage_end for the skipped stage, or run_end for a cancel.
+type pendingAck struct {
+	kind, stage string // kind is "skip" or "cancel"
+	seq         int
+}
+
+// ackTimeoutMsg fires controlTimeout after command seq was sent.
+type ackTimeoutMsg struct {
+	gen uint64
+	seq int
+}
+
+// controlDoneMsg reports the result of a control write (seq > 0) or hard kill (seq 0).
+type controlDoneMsg struct {
+	gen uint64
+	seq int
+	err error
+}
 
 type pane int
 
@@ -83,6 +110,13 @@ type MonitorModel struct {
 	incompatible   bool
 	status         string // transient note (pager errors)
 
+	controlTimeout time.Duration // ack deadline; tests shorten it
+	confirm        string        // "skip" or "cancel" while a y/n prompt is shown
+	confirmStage   string
+	pending        *pendingAck
+	ctlSeq         int
+	hardKill       bool // "engine not responding" banner shown; K accepted
+
 	focus         pane
 	detail        bool
 	width, height int
@@ -96,8 +130,9 @@ type MonitorModel struct {
 func NewMonitor(dir string, cfg Config) MonitorModel {
 	m := MonitorModel{
 		dir: dir, path: filepath.Join(dir, "events.jsonl"), cfg: cfg,
-		gen:   attachGen.Add(1),
-		width: 100, height: 30,
+		gen:            attachGen.Add(1),
+		controlTimeout: defaultControlTimeout,
+		width:          100, height: 30,
 		vp:  viewport.New(),
 		tbl: table.New(),
 		bar: progress.New(progress.WithoutPercentage(), progress.WithWidth(10)),
@@ -178,6 +213,22 @@ func (m *MonitorModel) update(msg tea.Msg) tea.Cmd {
 		if msg.err != nil {
 			m.status = "pager: " + sanitize(msg.err.Error())
 		}
+	case ackTimeoutMsg:
+		if msg.gen == m.gen && m.pending != nil && m.pending.seq == msg.seq && !m.ended {
+			m.hardKill = true
+		}
+	case controlDoneMsg:
+		if msg.gen != m.gen || msg.err == nil {
+			return nil
+		}
+		if msg.seq == 0 {
+			m.status = "hard kill: " + sanitize(msg.err.Error())
+		} else {
+			m.status = "control: " + sanitize(msg.err.Error())
+			if m.pending != nil && m.pending.seq == msg.seq {
+				m.pending, m.hardKill = nil, false
+			}
+		}
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -189,6 +240,22 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+c":
 		m.Close()
 		return tea.Quit
+	}
+	if m.confirm != "" {
+		if k.String() == "y" {
+			return m.sendControl()
+		}
+		m.confirm = "" // any other key declines
+		return nil
+	}
+	if k.String() == "K" {
+		if m.hardKill && !m.ended {
+			m.hardKill = false
+			return m.hardKillCmd()
+		}
+		return nil
+	}
+	switch k.String() {
 	case "esc":
 		if m.detail {
 			m.detail = false
@@ -223,6 +290,16 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "o":
 		return m.openReport()
+	case "s":
+		if st := m.currentStage(); st != "" && !m.ended {
+			m.confirm, m.confirmStage = "skip", st
+		}
+		return nil
+	case "c":
+		if !m.ended {
+			m.confirm = "cancel"
+		}
+		return nil
 	}
 	var cmd tea.Cmd
 	if m.focus == paneFindings {
@@ -231,6 +308,55 @@ func (m *MonitorModel) key(k tea.KeyPressMsg) tea.Cmd {
 		m.vp, cmd = m.vp.Update(k)
 	}
 	return cmd
+}
+
+// currentStage is the most recently listed stage that is running.
+func (m *MonitorModel) currentStage() string {
+	for i := len(m.stages) - 1; i >= 0; i-- {
+		if m.stages[i].status == "running" {
+			return m.stages[i].id
+		}
+	}
+	return ""
+}
+
+// sendControl writes the confirmed command and starts its ack timer. A newer
+// command replaces any pending one, so only its timer can raise the banner.
+func (m *MonitorModel) sendControl() tea.Cmd {
+	kind, stage := m.confirm, m.confirmStage
+	m.confirm = ""
+	m.ctlSeq++
+	seq, gen, dir := m.ctlSeq, m.gen, m.dir
+	m.pending = &pendingAck{kind: kind, stage: stage, seq: seq}
+	m.hardKill = false
+	write := func() tea.Msg {
+		var err error
+		if kind == "skip" {
+			err = engine.Skip(dir, stage)
+		} else {
+			err = engine.Cancel(dir)
+		}
+		return controlDoneMsg{gen: gen, seq: seq, err: err}
+	}
+	timer := tea.Tick(m.controlTimeout, func(time.Time) tea.Msg { return ackTimeoutMsg{gen: gen, seq: seq} })
+	return tea.Batch(write, timer)
+}
+
+// hardKillCmd reads run.json from disk and SIGKILLs the engine and tool groups.
+// If the recorded engine pid is no longer the same process (it died and the
+// pid may be reused), only the recorded tool groups are killed.
+func (m *MonitorModel) hardKillCmd() tea.Cmd {
+	dir, gen := m.dir, m.gen
+	return func() tea.Msg {
+		info, err := runstore.ReadInfo(dir)
+		if err != nil {
+			return controlDoneMsg{gen: gen, err: err}
+		}
+		if !runstore.Alive(info.PID, info.PIDStart) {
+			info.PGID = 0
+		}
+		return controlDoneMsg{gen: gen, err: engine.HardKill(info, dir)}
+	}
 }
 
 // detach stops tailing and returns to Runs; the run itself is untouched.
@@ -297,6 +423,12 @@ func (m *MonitorModel) applyEvent(ev events.Event) {
 	case "stage_end":
 		s := m.stage(sanitize(ev.Stage))
 		s.status, s.reason, s.counts = sanitize(ev.Status), sanitize(ev.Reason), ev.Counts
+		if m.pending != nil && m.pending.kind == "skip" && m.pending.stage == s.id {
+			m.pending, m.hardKill = nil, false
+		}
+		if m.confirm == "skip" && m.confirmStage == s.id {
+			m.confirm = "" // the stage ended before the user answered
+		}
 	case "output":
 		m.out.Push("[" + sanitize(ev.Tool) + "] " + expandTabs(sanitize(ev.Line)))
 	case "log":
@@ -311,6 +443,7 @@ func (m *MonitorModel) applyEvent(ev events.Event) {
 		})
 	case "run_end":
 		m.ended = true
+		m.pending, m.hardKill, m.confirm = nil, false, ""
 		m.endStatus, m.endErr, m.report = sanitize(ev.Status), sanitize(ev.Error), ev.Report
 	}
 }
