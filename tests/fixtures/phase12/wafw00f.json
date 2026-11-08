@@ -1,0 +1,29 @@
+[
+  {
+    "detected": false,
+    "firewall": "None",
+    "manufacturer": "None",
+    "trigger_url": null,
+    "url": "https://vercel.com"
+  },
+  {
+    "detected": true,
+    "firewall": "Cloudflare",
+    "manufacturer": "Cloudflare Inc.",
+    "trigger_url": "https://www.cloudflare.com/?uvfznvwg=%3Cscript%3Ealert%28%22XSS%22%29%3B%3C%2Fscript%3E",
+    "url": "https://www.cloudflare.com"
+  },
+  {
+    "detected": true,
+    "firewall": "Generic",
+    "manufacturer": "Unknown",
+    "trigger_url": "https://www.cloudflare.com/?jotsgiuj=%3Cscript%3Ealert%28%22XSS%22%29%3B%3C%2Fscript%3E",
+    "url": "https://www.cloudflare.com"
+  },
+  {
+    "url": "https://plain.example.com",
+    "detected": false,
+    "firewall": "None",
+    "manufacturer": "None"
+  }
+]
