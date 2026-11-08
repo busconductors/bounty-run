@@ -210,11 +210,25 @@ func writeControl(dir, line string) error {
 	return nil
 }
 
-// HardKill SIGKILLs the engine's process group and every group listed in
-// dir/pids (tools run in their own sessions). ESRCH is ignored; pgid <= 1 is
-// never signalled.
+// HardKill SIGKILLs the engine and the tool process groups listed in
+// dir/pids (tools run in their own sessions). Because a dead engine's numbers
+// may since have been reused, every signal is guarded:
+//   - the engine's group is signalled only when the engine leads it
+//     (PGID == PID, as for TUI-spawned engines); otherwise only the engine pid
+//     is killed, and only while it is still the recorded process;
+//   - a group is signalled only if it has a live member that started no
+//     earlier than the engine (info.PIDStart);
+//   - pgid <= 1 and the TUI's own group are never signalled. ESRCH is ignored.
 func HardKill(info runstore.RunInfo, dir string) error {
-	groups := []int{info.PGID}
+	var groups []int
+	var errs []error
+	if info.PGID == info.PID {
+		groups = append(groups, info.PGID)
+	} else if info.PID > 1 && info.PID != os.Getpid() && runstore.Alive(info.PID, info.PIDStart) {
+		if err := syscall.Kill(info.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			errs = append(errs, fmt.Errorf("kill pid %d: %w", info.PID, err))
+		}
+	}
 	if b, err := os.ReadFile(filepath.Join(dir, "pids")); err == nil {
 		for _, l := range strings.Fields(string(b)) {
 			if n, err := strconv.Atoi(l); err == nil {
@@ -223,9 +237,8 @@ func HardKill(info runstore.RunInfo, dir string) error {
 		}
 	}
 	self := syscall.Getpgrp() // never kill the TUI's own group
-	var errs []error
 	for _, g := range groups {
-		if g <= 1 || g == self {
+		if g <= 1 || g == self || !runstore.GroupHasMemberSince(g, info.PIDStart) {
 			continue
 		}
 		if err := syscall.Kill(-g, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {

@@ -197,30 +197,110 @@ func startGroup(t *testing.T) int {
 	return pid
 }
 
+func pidStart(t *testing.T, pid int) int64 {
+	t.Helper()
+	st, err := runstore.PIDStart(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func waitGone(t *testing.T, sig func() error, what string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for sig() == nil && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if sig() == nil {
+		t.Errorf("%s still alive", what)
+	}
+}
+
+func alive(sig func() error) bool { return sig() == nil }
+
 func TestHardKillKillsRecordedPgids(t *testing.T) {
 	dir := t.TempDir()
-	a, b := startGroup(t), startGroup(t)
+	a := startGroup(t)
+	time.Sleep(30 * time.Millisecond) // b starts at a later clock tick than a
+	b := startGroup(t)
 	if err := os.WriteFile(filepath.Join(dir, "pids"), []byte("garbage\n"+strconv.Itoa(b)+"\n\n12x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := HardKill(runstore.RunInfo{PGID: a}, dir); err != nil {
+	info := runstore.RunInfo{PID: a, PGID: a, PIDStart: pidStart(t, a)}
+	if err := HardKill(info, dir); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(time.Second)
 	for _, g := range []int{a, b} {
-		for syscall.Kill(-g, 0) == nil && time.Now().Before(deadline) {
-			time.Sleep(10 * time.Millisecond)
-		}
-		if syscall.Kill(-g, 0) == nil {
-			t.Errorf("pgid %d still alive", g)
-		}
+		waitGone(t, func() error { return syscall.Kill(-g, 0) }, "pgid "+strconv.Itoa(g))
 	}
 	// Already-dead groups are not an error; pgid <= 1 is never signalled.
-	if err := HardKill(runstore.RunInfo{PGID: a}, dir); err != nil {
+	if err := HardKill(info, dir); err != nil {
 		t.Errorf("second kill: %v", err)
 	}
-	if err := HardKill(runstore.RunInfo{PGID: 1}, t.TempDir()); err != nil {
+	if err := HardKill(runstore.RunInfo{PID: 1, PGID: 1}, t.TempDir()); err != nil {
 		t.Errorf("pgid 1: %v", err)
+	}
+}
+
+// A recorded pgid whose only member started before the engine is a reused
+// number belonging to some unrelated job: it must not be signalled.
+func TestHardKillSkipsGroupsOlderThanEngine(t *testing.T) {
+	dir := t.TempDir()
+	old := startGroup(t)
+	time.Sleep(30 * time.Millisecond)
+	fresh := startGroup(t)
+	if err := os.WriteFile(filepath.Join(dir, "pids"), []byte(strconv.Itoa(old)+"\n"+strconv.Itoa(fresh)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The (dead) engine started after old and no later than fresh.
+	info := runstore.RunInfo{PID: 999999999, PGID: 999999999, PIDStart: pidStart(t, old) + 1}
+	if err := HardKill(info, dir); err != nil {
+		t.Fatal(err)
+	}
+	waitGone(t, func() error { return syscall.Kill(-fresh, 0) }, "qualifying group")
+	if !alive(func() error { return syscall.Kill(-old, 0) }) {
+		t.Fatal("group whose only member predates the engine was killed")
+	}
+}
+
+// An engine that does not lead its process group is killed alone; the group
+// (e.g. the user's shell job) survives.
+func TestHardKillNonLeaderKillsOnlyPid(t *testing.T) {
+	leader := exec.Command("sleep", "60")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lp := leader.Process.Pid
+	killOnCleanup(t, lp)
+	go func() { _ = leader.Wait() }()
+	eng := exec.Command("sleep", "60")
+	eng.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: lp}
+	if err := eng.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ep := eng.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(ep, syscall.SIGKILL) })
+	waited := make(chan struct{})
+	go func() { _ = eng.Wait(); close(waited) }()
+
+	info := runstore.RunInfo{PID: ep, PGID: lp, PIDStart: pidStart(t, ep)}
+	if err := HardKill(info, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-waited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("engine pid not killed")
+	}
+	if syscall.Kill(lp, 0) != nil {
+		t.Fatal("group leader killed")
+	}
+	// A dead (or reused) engine pid is not signalled either.
+	info.PIDStart++
+	if err := HardKill(info, t.TempDir()); err != nil {
+		t.Fatal(err)
 	}
 }
 

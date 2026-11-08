@@ -3,7 +3,9 @@ package runstore
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -116,5 +118,35 @@ func TestIncompatible(t *testing.T) {
 	writeRun(t, root, "a.com", "1", 999999999, 1, 1000, `{"v":2,"t":1,"type":"run_start"}`)
 	if r := only(t, root); r.Status != Incompatible {
 		t.Fatalf("got %+v", r)
+	}
+}
+
+func startSleepGroup(t *testing.T) int {
+	t.Helper()
+	c := exec.Command("sleep", "60")
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := c.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+	go func() { _ = c.Wait() }()
+	return pid
+}
+
+func TestGroupHasMemberSince(t *testing.T) {
+	g := startSleepGroup(t)
+	st, err := PIDStart(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !GroupHasMemberSince(g, st) {
+		t.Error("member started at since not counted")
+	}
+	if GroupHasMemberSince(g, st+1) {
+		t.Error("member started before since counted")
+	}
+	if GroupHasMemberSince(999999999, 0) {
+		t.Error("nonexistent group has members")
 	}
 }
