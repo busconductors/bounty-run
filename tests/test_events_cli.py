@@ -281,6 +281,64 @@ class TestEventSequence(unittest.TestCase):
         self.assertIn("disk full", evs[-1]["error"])
 
 
+class TestFindingEvents(unittest.TestCase):
+    def _run(self, overrides=None):
+        rc, _, tmp, exc = run_with_events(overrides)
+        self.addCleanup(tmp.cleanup)
+        self.assertIsNone(exc)
+        return read_events(tmp.name)
+
+    @staticmethod
+    def _inside(evs, stage):
+        a = next(i for i, e in enumerate(evs) if e["type"] == "stage_start" and e["stage"] == stage)
+        b = next(i for i, e in enumerate(evs) if e["type"] == "stage_end" and e["stage"] == stage)
+        return [e for e in evs[a:b] if e["type"] == "finding"]
+
+    def test_non_streaming_stage_findings_emitted(self):
+        evs = self._run()
+        fs = self._inside(evs, "waf")
+        self.assertEqual(len(fs), 1)
+        f = fs[0]
+        self.assertEqual(f["severity"], "info")
+        self.assertEqual(f["template"], "waf:cloudflare")
+        self.assertEqual(f["summary"], "waf:cloudflare")
+        self.assertEqual(f["host"], "a.com")
+        self.assertEqual(f["url"], "https://a.com/")
+
+    def test_summary_prefers_name_and_severity_lowercased(self):
+        item = {"severity": "Info", "template": "waf:cloudflare",
+                "name": "WAF: Cloudflare", "url": "https://a.com", "host": "a.com"}
+        evs = self._run({"waf_scan": lambda *a, **k: [item]})
+        f = self._inside(evs, "waf")[0]
+        self.assertEqual(f["summary"], "WAF: Cloudflare")
+        self.assertEqual(f["severity"], "info")
+
+    def test_panel_findings_emitted(self):
+        evs = self._run()
+        fs = self._inside(evs, "panel")
+        self.assertEqual([f["template"] for f in fs], ["panel:grafana"])
+
+    def test_vuln_findings_not_duplicated(self):
+        evs = self._run()
+        self.assertEqual(self._inside(evs, "vuln"), [])
+        self.assertEqual(self._inside(evs, "content"), [])
+
+    def test_finding_count_matches_totals(self):
+        evs = self._run({"vuln_scan": lambda *a, **k: []})
+        n = len([e for e in evs if e["type"] == "finding"])
+        self.assertGreater(n, 0)
+        self.assertEqual(n, sum(evs[-1]["totals"].values()))
+
+    def test_no_findings_when_stage_raises(self):
+        def boom(*a, **k):
+            raise RuntimeError("x")
+        _, _, tmp, _ = run_with_events({"waf_scan": boom})
+        self.addCleanup(tmp.cleanup)
+        evs = read_events(tmp.name)
+        self.assertEqual([e for e in evs if e["type"] == "finding"
+                          and e["template"] == "waf:cloudflare"], [])
+
+
 class TestStageContextManager(unittest.TestCase):
     def tearDown(self):
         events.reset()

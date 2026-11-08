@@ -242,6 +242,15 @@ class RunState:
         self.cf = self.cf or {"target": self.target, "cloudflare": False, "evidence": []}
 
 
+def _emit_findings(findings: list[dict]) -> None:
+    """Emit one `finding` event per finding dict (no-op when events are off)."""
+    for f in findings:
+        events.finding(str(f.get("severity") or "unknown").lower(),
+                       f.get("template") or "", f.get("host") or "",
+                       f.get("url") or "",
+                       f.get("name") or f.get("template") or "")
+
+
 def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> None:
     if "subs" not in skip:
         with events.stage("subs") as sc:
@@ -253,6 +262,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             utils.stage_header(2, TOTAL_STAGES, "PANEL DETECTION")
             new = panel_detect.panel_detect(target, outdir, st.subs)
             st.findings += new
+            _emit_findings(new)
             sc.counts["findings"] = len(new)
     if "live" not in skip:
         with events.stage("live") as sc:
@@ -285,6 +295,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             utils.stage_header(num, TOTAL_STAGES, title)
             new = fn(*a, **kw)
             st.findings += new
+            _emit_findings(new)
             sc.counts["findings"] = len(new)
 
     if "nmap" not in skip and args.nmap:
