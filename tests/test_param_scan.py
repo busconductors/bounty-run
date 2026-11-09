@@ -164,6 +164,25 @@ class ParamScanTest(unittest.TestCase):
         ])
         self.assertEqual(len(self.sqlmap_calls), 2)
 
+    def test_static_asset_urls_are_filtered(self):
+        # Wayback CDX floods discovery with static assets (WordPress ?ver=
+        # cache-busters). Those have no SQL backend, so they must not reach sqlmap.
+        self._patch(cdx_urls=[
+            "http://example.com/wp-content/theme/style.css?ver=1",
+            "http://example.com/wp-content/theme/app.js?ver=2",
+            "http://example.com/wp-content/img/logo.png?ver=3",
+            "http://example.com/font.woff2?ver=4",
+            "http://example.com/page.php?id=1",          # dynamic -> kept
+            "http://example.com/admin/ajax.php?action=x",  # dynamic -> kept
+        ])
+        param_scan("example.com", self.outdir)
+        urls = (self.outdir / "param_urls.txt").read_text().splitlines()
+        self.assertEqual(urls, [
+            "http://example.com/page.php?id=",
+            "http://example.com/admin/ajax.php?action=",
+        ])
+        self.assertEqual(len(self.sqlmap_calls), 2)
+
     def test_empty_cdx_returns_empty_without_writing(self):
         self._patch(cdx_urls=[], sqlmap_out="is vulnerable")
         findings = param_scan("example.com", self.outdir)

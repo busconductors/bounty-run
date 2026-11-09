@@ -46,6 +46,21 @@ VULN_MARKERS = (
 # those contain ":", ".", "/", "," or "!" and are rejected here.
 _VALID_PARAM = re.compile(r"^[A-Za-z0-9_\-]+(?:\[[A-Za-z0-9_\-]*\])?$")
 
+# Static asset extensions. Wayback CDX floods discovery with WordPress-style
+# cache-busters (?ver=) on files the web server serves directly — .css/.js/.png…
+# — which have no SQL backend behind them. sqlmap probing these wastes the whole
+# pass, so they're dropped before injection testing.
+_STATIC_EXT = (
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+    ".ico", ".woff", ".woff2", ".ttf", ".eot", ".otf", ".map",
+)
+
+
+def _is_static_asset(url: str) -> bool:
+    """True when the URL path ends in a static-asset extension (no SQL backend)."""
+    path = (urlsplit(url).path or "").lower()
+    return any(path.endswith(ext) for ext in _STATIC_EXT)
+
 
 def _strip_param_values(url: str) -> str:
     """Blank query-string values while keeping (unique, ordered, sane) param names.
@@ -140,6 +155,8 @@ def discover_endpoints(target: str, outdir: Path, max_urls: int = 50) -> list[st
     seen = set()
     for url in _discover_urls(raw):
         if not _in_scope(url, target):
+            continue
+        if _is_static_asset(url):
             continue
         norm = _strip_param_values(url)
         if not norm:  # no sane parameter names survived the filter
