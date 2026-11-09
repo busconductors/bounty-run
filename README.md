@@ -356,7 +356,8 @@ python3 -m pytest              # Python engine tests
 cd tui && go test ./...        # TUI tests
 ```
 
-Issues and pull requests are welcome. Please keep changes covered by tests.
+Issues and pull requests are welcome. Please read
+[CONTRIBUTING.md](CONTRIBUTING.md) first, and keep changes covered by tests.
 
 ## Security
 
@@ -364,7 +365,7 @@ To report a vulnerability in Bounty Runner itself, see [SECURITY.md](SECURITY.md
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Copyright busconductors.
 
 ## Reminder
 

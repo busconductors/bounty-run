@@ -1,32 +1,48 @@
-# Python
+# Commit policy: everything below must never be committed (see CONTRIBUTING.md)
+
+# Python / build artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
+bin/
+.pytest_cache/
 
-# Bounty Runner runtime artifacts
+# Bounty Runner runtime artifacts: scan output and findings databases
 results/
 outputs/
 .bounty-run/
 *.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Specs, plans, brainstorm notes (kept locally, never published)
+SPEC-*.md
+plans/
+docs/superpowers/
+
+# Local tool state
+.claude/
+.superpowers/
+
+# Credentials and secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+secrets.*
+*secret*.json
+*secret*.yaml
+*secret*.yml
+credentials*
+.netrc
 
 # OS / editor
 .DS_Store
 *.swp
-
-bin/
-
-# Internal working docs (kept locally, never published)
-SPEC-PHASE*.md
-plans/
-docs/superpowers/
-
-# Misc
-.pytest_cache/
-*.db
-*.sqlite
-*.sqlite3
-.env
-.env.*
-.superpowers/
