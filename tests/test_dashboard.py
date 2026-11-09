@@ -138,7 +138,7 @@ class TestWriteRunSummary(DashboardTestCase):
         doc = path.read_text()
         self.assertIn('class="verdict"', doc)
         self.assertIn("No candidates", doc)
-        self.assertNotIn('<article class="finding">', doc)
+        self.assertNotIn('<article class="f">', doc)
 
     def test_verdict_line_rendered_for_candidate(self):
         finding = {"severity": "high", "template": "sqli", "name": "SQLi",
@@ -153,9 +153,9 @@ class TestWriteRunSummary(DashboardTestCase):
                    "url": "https://example.com/x", "host": "example.com",
                    "evidence": ""}
         doc = self._summary(findings=[finding]).read_text()
-        self.assertIn('class="candidates"', doc)
-        self.assertIn('tier-divider', doc)
-        self.assertIn('class="surface"', doc)
+        self.assertIn('<article class="f">', doc)
+        self.assertIn('class="panel"', doc)
+        self.assertIn('class="drops"', doc)
 
     def test_candidate_rendered_noise_demoted(self):
         candidate = {"severity": "high", "template": "sqli", "name": "RealVuln",
@@ -163,23 +163,22 @@ class TestWriteRunSummary(DashboardTestCase):
                      "evidence": ""}
         noise = {"severity": "low", "template": "tls:weak", "name": "WeakCipher",
                  "url": "", "host": "example.com", "evidence": ""}
-        body = self._summary(findings=[candidate, noise]).read_text().split("</style>")[1]
-        self.assertIn('class="candidates"', body)
-        self.assertIn("RealVuln", body)
-        self.assertIn('class="noise"', body)
-        self.assertIn("WeakCipher", body)
-        # Candidate sits in the act-now tier; noise is demoted below the divider.
-        candidates_block = body.split('tier-divider')[0]
-        self.assertIn("RealVuln", candidates_block)
-        self.assertNotIn("WeakCipher", candidates_block)
+        doc = self._summary(findings=[candidate, noise]).read_text()
+        self.assertIn('<article class="f">', doc)
+        self.assertIn("RealVuln", doc)
+        self.assertIn("WeakCipher", doc)
+        self.assertIn("Low &amp; recon", doc)
+        # Candidate is a visible top-finding card; noise is demoted to the
+        # collapsed "Low & recon" drop-down further down the page.
+        self.assertLess(doc.index("RealVuln"), doc.index("WeakCipher"))
 
     def test_info_nuclei_in_collapsed_details(self):
         info = {"severity": "info", "template": "some-cve", "name": "InfoOnly",
                 "url": "", "host": "example.com", "evidence": ""}
-        body = self._summary(findings=[info]).read_text().split("</style>")[1]
-        self.assertIn('info-findings', body)
-        details_block = body.split('info-findings')[1]
-        self.assertIn("InfoOnly", details_block)
+        doc = self._summary(findings=[info]).read_text()
+        self.assertIn("Info findings", doc)
+        self.assertIn("InfoOnly", doc)
+        self.assertIn('<details class="drop">', doc)
 
     def test_origins_and_content_sections(self):
         origins = [{"ip": "1.2.3.4", "status": 200,
@@ -187,7 +186,7 @@ class TestWriteRunSummary(DashboardTestCase):
         content = ["/admin", "/login"]
         path = self._summary(origins=origins, content=content)
         doc = path.read_text()
-        self.assertIn("Origin candidates", doc)
+        self.assertIn("Origin IPs exposed behind Cloudflare", doc)
         self.assertIn("1.2.3.4", doc)
         self.assertIn("Discovered content", doc)
         self.assertIn("/admin", doc)
@@ -196,7 +195,7 @@ class TestWriteRunSummary(DashboardTestCase):
         # Sections omitted when empty.
         path2 = self._summary(origins=[], content=[])
         doc2 = path2.read_text()
-        self.assertNotIn("Origin candidates", doc2)
+        self.assertNotIn("Origin IPs exposed", doc2)
         self.assertNotIn("Discovered content", doc2)
 
     def test_open_ports_shown_in_surface(self):
@@ -209,7 +208,7 @@ class TestWriteRunSummary(DashboardTestCase):
              "url": "https://example.com/x", "host": "example.com", "evidence": ""},
         ]
         doc = self._summary(findings=findings).read_text()
-        surface = doc.split('class="surface"')[1]
+        surface = doc.split('class="panel"')[1]
         self.assertIn("open ports", surface.lower())
         self.assertIn("2", surface)
 
@@ -225,12 +224,10 @@ class TestWriteRunSummary(DashboardTestCase):
              "url": "https://example.com/y", "host": "example.com",
              "evidence": ""},
         ]
-        body = self._summary(findings=findings).read_text().split("</style>")[1]
+        doc = self._summary(findings=findings).read_text()
         unique = report.dedupe(findings)
         want = sum(1 for f in unique if dashboard_mod._is_candidate(f))
-        candidates_block = body.split('tier-divider')[0]
-        self.assertEqual(
-            candidates_block.count('<article class="finding">'), want)
+        self.assertEqual(doc.count('<article class="f">'), want)
 
 
 class TestIsCandidate(unittest.TestCase):

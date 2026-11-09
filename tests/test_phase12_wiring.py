@@ -94,7 +94,8 @@ class TestRunSummary(unittest.TestCase):
 
     def test_waf_none_in_edge_row(self):
         doc = self._doc([_f("panel:cpanel", "low")])
-        self.assertIn("WAF: none", doc)
+        self.assertIn("Cloudflare no", doc)
+        self.assertNotIn("WAF:", doc)
 
     def test_waf_dedupes_and_sorts(self):
         findings = [
@@ -108,19 +109,20 @@ class TestRunSummary(unittest.TestCase):
         doc = self._doc(findings)
         self.assertIn("WAF: AWS Elastic Load Balancer, Cloudflare", doc)
 
-    def test_scanner_counts_in_surface_row(self):
+    def test_scanner_counts_in_surface(self):
         findings = _phase12_findings() + [
             _f("nikto:missing-header:999", "info", url="https://example.com/x"),
         ]
         doc = self._doc(findings)
-        # Scanners row: "<tls> tls · <nikto> nikto · <dork> dork · <panels> panels"
-        self.assertIn("1 tls · 2 nikto · 1 dork · 1 panels", doc)
+        self.assertIn("<span>tls</span><b>1</b>", doc)
+        self.assertIn("<span>nikto</span><b>2</b>", doc)
+        self.assertIn("<span>dork hits</span><b>1</b>", doc)
+        self.assertIn("<span>panels</span><b>1</b>", doc)
 
     def test_surface_groups_in_order(self):
         doc = self._doc(_phase12_findings())
-        order = ["Reachability", "Edge", "Stack", "Scanners"]
-        idx = [doc.index('<span class="surface-label">{}</span>'.format(lbl))
-               for lbl in order]
+        order = ["Edge &amp; stack", "Scanner coverage"]
+        idx = [doc.index(lbl) for lbl in order]
         self.assertEqual(idx, sorted(idx))
 
     def test_surface_rows_positional_callers_still_valid(self):

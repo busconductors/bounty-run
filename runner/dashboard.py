@@ -609,89 +609,264 @@ def _summary_content_html(content) -> str:
     )
 
 
+_SUMMARY_FACE = (
+    "⠀⠀⣀⡀⡀⡀⡀⣀\n"
+    "⠀⡇⠀⠙⠒⠒⠉⠀⢸\n"
+    "⠸⠁⠀⠀⠀⠀⠀⠀⠀⠏\n"
+    "⠀⠙⠒⠒⠒⠒⠒⠒⠒⠁"
+)
+
+_SEV_COLORS = {
+    "critical": "#ff5c57",
+    "high": "#ff9f45",
+    "medium": "#e3b341",
+    "low": "#9aa4ad",
+    "info": "#58a6ff",
+    "unknown": "#9aa4ad",
+}
+
+
+def _sev_color(sev) -> str:
+    return _SEV_COLORS.get((sev or "unknown").lower(), "#9aa4ad")
+
+
+def _top_finding_card(f) -> str:
+    """One top-finding card: severity pill + title + host + url + next action."""
+    sev = (f.get("severity") or "unknown").lower()
+    color = _sev_color(sev)
+    title = f.get("name") or f.get("template") or "(untitled)"
+    host = f.get("host") or ""
+    url = f.get("url") or ""
+    action = "verify & report" if sev in ("critical", "high") else "review"
+    host_html = '<div class="det">{}</div>'.format(esc(host)) if host else ""
+    url_html = '<div class="url"><b>{}</b></div>'.format(esc(url)) if url else ""
+    return (
+        '<article class="f"><div class="sv">'
+        '<div class="n" style="color:{color}">{sev}</div>'
+        '<div class="bar" style="background:{color}"></div></div>'
+        '<div><div class="ttl">{title}</div>{host}{url}</div>'
+        '<div class="act">→ {action}</div></article>'
+    ).format(color=color, sev=esc(sev), title=esc(title),
+             host=host_html, url=url_html, action=esc(action))
+
+
+def _top_findings_html(candidates) -> str:
+    if not candidates:
+        return '<p class="empty">No candidates.</p>'
+    return "".join(_top_finding_card(f) for f in _order_candidates(candidates))
+
+
+def _metric_grid(subdomains, live_hosts, sev_counts, n_origins, cloudflare) -> str:
+    tiles = [
+        (subdomains, "subdomains", "#e6edf3"),
+        (live_hosts, "live hosts", "#e6edf3"),
+        (sev_counts.get("critical", 0), "critical", "#ff5c57"),
+        (sev_counts.get("high", 0), "high", "#ff9f45"),
+        (n_origins, "origin IPs", "#f85149"),
+        ("ON" if cloudflare else "off", "cloudflare", "#58a6ff"),
+    ]
+    return "".join(
+        '<div class="big" style="--b:{c}"><div class="v">{v}</div>'
+        '<div class="k">{k}</div></div>'.format(c=color, v=esc(value), k=esc(label))
+        for value, label, color in tiles
+    )
+
+
+def _heat_bar(sev_counts) -> str:
+    segs = []
+    for s, color in (("critical", "#ff5c57"), ("high", "#ff9f45"),
+                     ("medium", "#e3b341"), ("low", "#9aa4ad"), ("info", "#58a6ff")):
+        n = sev_counts.get(s, 0)
+        if n:
+            segs.append(
+                '<span class="seg" style="flex:{n};background:{c}" '
+                'title="{s}: {n}"></span>'.format(n=n, c=color, s=s))
+    return '<div class="heat">{}</div>'.format("".join(segs))
+
+
+def _origins_alert_html(origins) -> str:
+    if not origins:
+        return ""
+    rows = []
+    for o in origins:
+        ip = o.get("ip") or "?"
+        status = o.get("status") or ""
+        sources = ", ".join(o.get("sources") or [])
+        rows.append(
+            '<div class="orow"><div><div class="ip">{ip}</div>'
+            '<div class="via">{src}</div></div>'
+            '<div class="st">{status}</div></div>'.format(
+                ip=esc(ip), src=esc(sources), status=esc(status)))
+    return (
+        '<div class="alert"><h3><span class="dot"></span>'
+        'Origin IPs exposed behind Cloudflare</h3>{}</div>'.format("".join(rows))
+    )
+
+
+def _surface_panels_html(cloudflare, waf, tech, api_count, nmap_count,
+                         panels, tls_issues, nikto, dork_hits) -> str:
+    edge = "Cloudflare yes" if cloudflare else "Cloudflare no"
+    if waf:
+        edge += " · WAF: " + ", ".join(waf)
+    chips = ("".join('<span class="chip">{}</span>'.format(esc(t)) for t in tech)
+             if tech else '<span class="chip">no tech detected</span>')
+    return (
+        '<div class="panel"><h3>Edge &amp; stack</h3>'
+        '<div class="kv"><span>edge</span><b>{edge}</b></div>'
+        '<div class="kv"><span>api endpoints</span><b>{api}</b></div>'
+        '<div class="kv"><span>open ports</span><b>{ports}</b></div>'
+        '<div class="chips">{chips}</div></div>'
+        '<div class="panel"><h3>Scanner coverage</h3>'
+        '<div class="kv"><span>tls</span><b>{tls}</b></div>'
+        '<div class="kv"><span>nikto</span><b>{nikto}</b></div>'
+        '<div class="kv"><span>dork hits</span><b>{dork}</b></div>'
+        '<div class="kv"><span>panels</span><b>{panels}</b></div></div>'
+    ).format(edge=esc(edge), api=esc(api_count), ports=esc(nmap_count),
+             chips=chips, tls=esc(tls_issues), nikto=esc(nikto),
+             dork=esc(dork_hits), panels=esc(panels))
+
+
+def _detail_line(f) -> str:
+    sev = (f.get("severity") or "unknown").lower()
+    color = _sev_color(sev)
+    title = f.get("name") or f.get("template") or "(untitled)"
+    host = f.get("host") or ""
+    url = f.get("url") or ""
+    evidence = f.get("evidence") or ""
+    ev = '<pre>{}</pre>'.format(esc(evidence)) if evidence else ""
+    return (
+        '<div class="drow"><div class="dhead">'
+        '<span class="dsev" style="color:{c}">{s}</span> · {t}'
+        '<span class="dhost">{h}</span></div>'
+        '<div class="durl">{u}</div>{ev}</div>'
+    ).format(c=color, s=esc(sev), t=esc(title), h=esc(host), u=esc(url), ev=ev)
+
+
+def _details_section(title, items) -> str:
+    if not items:
+        return ""
+    body = "".join(_detail_line(f) for f in items)
+    return (
+        '<details class="drop"><summary>{t} <b>({n})</b></summary>'
+        '<div class="dropinner">{b}</div></details>'
+    ).format(t=esc(title), n=len(items), b=body)
+
+
+def _details_html(candidates, noise, info, content) -> str:
+    parts = []
+    if candidates:
+        parts.append(_details_section("Full findings", candidates))
+    if noise:
+        parts.append(_details_section("Low & recon", noise))
+    if info:
+        parts.append(_details_section("Info findings", info))
+    if content:
+        body = '<pre>{}</pre>'.format(esc("\n".join(sorted(content))))
+        parts.append(
+            '<details class="drop"><summary>Discovered content <b>({n})</b></summary>'
+            '<div class="dropinner">{b}</div></details>'.format(
+                n=len(content), b=body))
+    if not parts:
+        return ""
+    return '<div class="drops">{}</div>'.format("".join(parts))
+
+
 SUMMARY_STYLESHEET = """<style>
 :root {
-  --bg: #0d1117;
-  --panel: #161b22;
-  --border: #30363d;
-  --text: #e6edf3;
-  --muted: #8b949e;
-  --accent: #f85149;
+  --bg:#0a0e14; --panel:#141a22; --panel2:#0f141b; --border:#262d38;
+  --text:#e6edf3; --muted:#8b949e; --accent:#f85149; --accent-dim:#b4332e;
+  --crit:#ff5c57; --high:#ff9f45; --med:#e3b341; --low:#9aa4ad; --info:#58a6ff;
 }
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-}
-header {
-  padding: 24px 32px; border-bottom: 1px solid var(--border);
-  background: var(--panel);
-}
-header h1 { margin: 0; font-size: 22px; }
-header h1 span { color: var(--accent); }
-.summary-meta { color: var(--muted); margin: 6px 0 0; font-size: 13px; }
-main { max-width: 1080px; margin: 0 auto; padding: 24px 32px 64px; }
-section { margin-bottom: 32px; }
-h2 { font-size: 16px; text-transform: uppercase; letter-spacing: .06em;
-     color: var(--muted); border-bottom: 1px solid var(--border);
-     padding-bottom: 8px; }
-.verdict {
-  font-size: 19px; line-height: 1.45; font-weight: 600;
-  background: rgba(248, 81, 73, .08);
-  border: 1px solid var(--accent); border-left: 4px solid var(--accent);
-  border-radius: 8px; padding: 18px 20px; margin: 4px 0 28px;
-}
-.tier-divider {
-  border: none; border-top: 2px dashed var(--border); margin: 8px 0 28px;
-}
-.metrics { display: flex; flex-wrap: wrap; gap: 12px; }
-.card {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 8px; padding: 14px 18px; min-width: 120px;
-}
-.card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
-.card-value { font-size: 26px; font-weight: 600; margin-top: 2px; }
-.surface-rows { margin-top: 14px; }
-.surface-row { display: flex; gap: 14px; padding: 6px 0;
-  border-bottom: 1px solid var(--border); font-size: 14px; }
-.surface-label { color: var(--accent); font-weight: 600; min-width: 110px;
-  text-transform: uppercase; font-size: 12px; letter-spacing: .04em;
-  padding-top: 2px; }
-.surface-value { word-break: break-word; }
-.badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
-.pill {
-  display: inline-block; padding: 2px 10px; border-radius: 999px;
-  border: 1px solid var(--border); font-size: 12px; color: var(--muted);
-}
-.finding {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 8px; padding: 14px 16px; margin-bottom: 12px;
-}
-.finding-title { font-weight: 600; font-size: 15px; }
-.finding-meta { display: grid; grid-template-columns: 90px 1fr; gap: 2px 12px;
-  margin: 10px 0 0; font-size: 13px; }
-.finding-meta dt { color: var(--muted); }
-.finding-meta dd { margin: 0; word-break: break-all; }
-dl { margin: 0; }
-dt { color: var(--muted); }
-dd { margin: 0; word-break: break-all; }
-.url { color: var(--muted); }
-.sev-critical { color: #ff7b72; }
-.sev-high { color: var(--accent); }
-.sev-medium { color: #e3b341; }
-.sev-low { color: #8b949e; }
-.sev-info { color: #58a6ff; }
-.sev-unknown { color: #8b949e; }
-.info-findings { margin-top: 16px; }
-.info-findings > summary { cursor: pointer; color: var(--muted);
-  font-size: 13px; padding: 6px 0; }
-pre {
-  background: #10151c; border: 1px solid var(--border);
-  border-radius: 8px; padding: 16px; overflow-x: auto; margin: 10px 0 0;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap; word-break: break-word;
-}
-.empty { color: var(--muted); font-style: italic; }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+ font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+ -webkit-font-smoothing:antialiased}
+body{background:radial-gradient(1200px 600px at 70% -10%,rgba(248,81,73,.10),transparent),var(--bg)}
+a{color:inherit}
+details summary{cursor:pointer;list-style:none}
+details summary::-webkit-details-marker{display:none}
+.wrap{max-width:1340px;margin:0 auto;padding:30px 40px 56px}
+.top{display:flex;align-items:center;gap:16px;margin-bottom:26px}
+.face{font-family:ui-monospace,monospace;white-space:pre;line-height:1.05;
+ color:var(--accent);font-size:11px;text-shadow:0 0 14px rgba(248,81,73,.5)}
+.top h1{margin:0;font-size:17px;letter-spacing:3px;text-transform:uppercase;font-weight:800}
+.top h1 b{color:var(--accent)}
+.top .meta{margin-left:auto;text-align:right;color:var(--muted);font-size:12px}
+.top .meta b{color:var(--text)}
+.hero{display:grid;grid-template-columns:auto 1fr;gap:28px;align-items:center;
+ background:linear-gradient(135deg,rgba(248,81,73,.14),rgba(20,26,34,.6));
+ border:1px solid var(--accent-dim);border-radius:16px;padding:26px 30px;margin-bottom:22px;
+ box-shadow:0 0 60px rgba(248,81,73,.10) inset}
+.threat{text-align:center;padding-right:28px;border-right:1px solid var(--accent-dim)}
+.threat .ring{font-size:62px;font-weight:900;line-height:1;color:var(--accent);
+ text-shadow:0 0 24px rgba(248,81,73,.6)}
+.threat .lab{font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+ color:var(--muted);margin-top:8px}
+.hero .story .lbl{color:var(--accent);font-weight:800;font-size:12px;letter-spacing:.14em;
+ text-transform:uppercase;margin-bottom:8px}
+.verdict{margin:0;font-size:17px;line-height:1.5;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:22px}
+.big{background:var(--panel);border:1px solid var(--border);border-radius:13px;
+ padding:16px 18px;position:relative;overflow:hidden}
+.big::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--b)}
+.big .v{font-size:38px;font-weight:900;line-height:1;color:var(--b)}
+.big .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+ margin-top:8px}
+.heat{display:flex;height:14px;border-radius:999px;overflow:hidden;margin-bottom:28px;
+ box-shadow:0 0 24px rgba(248,81,73,.2)}
+.heat .seg{display:block}
+.cols{display:grid;grid-template-columns:1.6fr 1fr;gap:22px;align-items:start}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--accent);
+ margin:0 0 16px;font-weight:800}
+.f{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;
+ background:var(--panel);border:1px solid var(--border);border-radius:12px;
+ padding:14px 18px;margin-bottom:11px}
+.f .sv{width:52px;text-align:center}
+.f .sv .n{font-size:11px;font-weight:800;letter-spacing:.05em}
+.f .sv .bar{height:4px;border-radius:2px;margin-top:6px}
+.f .ttl{font-weight:700;font-size:15px}
+.f .det{color:var(--muted);font-size:12.5px;margin-top:3px}
+.f .url{color:var(--muted);font-size:11px;margin-top:4px;word-break:break-all}
+.f .url b{color:var(--text)}
+.f .act{color:var(--accent);font-size:11px;font-weight:700;white-space:nowrap;text-align:right}
+.alert{background:linear-gradient(135deg,rgba(255,159,69,.12),var(--panel));
+ border:1px solid #6b4a1f;border-radius:13px;padding:18px 20px;margin-bottom:14px;
+ box-shadow:0 0 36px rgba(255,159,69,.08)}
+.alert h3{margin:0 0 12px;font-size:12px;text-transform:uppercase;color:var(--high);
+ letter-spacing:.08em;display:flex;align-items:center;gap:8px}
+.alert h3 .dot{width:8px;height:8px;border-radius:50%;background:var(--high);
+ box-shadow:0 0 10px var(--high)}
+.orow{display:flex;justify-content:space-between;align-items:center;padding:9px 0;
+ border-bottom:1px solid rgba(107,74,31,.5)}
+.orow:last-child{border-bottom:none}
+.orow .ip{font-weight:700;font-size:14px}
+.orow .via{color:var(--muted);font-size:11px;margin-top:2px}
+.orow .st{color:var(--high);font-size:12px;font-weight:700}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:13px;
+ padding:16px 20px;margin-bottom:14px}
+.panel h3{margin:0 0 12px;font-size:12px;text-transform:uppercase;color:var(--accent);
+ letter-spacing:.07em}
+.kv{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;color:var(--muted)}
+.kv b{color:var(--text)}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
+.chip{background:var(--panel2);border:1px solid var(--border);border-radius:7px;
+ padding:4px 10px;font-size:11.5px;color:var(--muted)}
+.drops{margin-top:26px;display:grid;gap:10px}
+.drop{background:var(--panel2);border:1px solid var(--border);border-radius:13px}
+.drop summary{padding:16px 22px;color:var(--muted);font-weight:700;font-size:13px;
+ letter-spacing:.04em;text-transform:uppercase;display:flex;justify-content:space-between}
+.drop summary b{color:var(--text)}
+.drop .dropinner{padding:0 22px 18px}
+.drow{padding:9px 0;border-top:1px solid var(--border);font-size:13px}
+.drow:first-child{border-top:none}
+.dhead{color:var(--text)}
+.dsev{font-weight:800;text-transform:uppercase;font-size:11px;letter-spacing:.04em}
+.dhost{color:var(--muted);font-size:11px;margin-left:8px}
+.durl{color:var(--muted);font-size:11.5px;word-break:break-all;margin-top:2px}
+pre{background:#0c1118;border:1px solid var(--border);border-radius:8px;padding:12px;
+ overflow-x:auto;margin:8px 0 0;font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+ white-space:pre-wrap;word-break:break-word;color:var(--muted)}
+.empty{color:var(--muted);font-style:italic}
 </style>"""
 
 
@@ -700,31 +875,28 @@ _SUMMARY_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bounty Runner — Executive Summary</title>
+<title>Bounty Runner — {target} command center</title>
 {stylesheet}
 </head>
 <body>
-<header>
-  <h1>Bounty Runner <span>— Executive Summary</span></h1>
-  <p class="summary-meta">{target} · {run_time}</p>
-</header>
-<main>
-  <p class="verdict">{verdict}</p>
-  <section class="candidates">
-    <h2>Candidates</h2>
-    <div class="badges">{pills}</div>
-    {candidates}
-  </section>
-  <hr class="tier-divider">
-  <section class="surface">
-    <h2>Attack surface</h2>
-    <div class="metrics">{hero}</div>
-    <div class="surface-rows">{surface_rows}</div>
-  </section>
-  {origins}
-  {noise}
-  {content}
-</main>
+<div class="wrap">
+  <div class="top">
+    <div class="face">{face}</div>
+    <h1>Bounty <b>Runner</b></h1>
+    <div class="meta">THREAT COMMAND CENTER<br><b>{target}</b> · {run_time}</div>
+  </div>
+  <div class="hero">
+    <div class="threat"><div class="ring">{ring}</div><div class="lab">crit+high<br>candidates</div></div>
+    <div class="story"><div class="lbl">▶ Risk story</div><p class="verdict">{verdict}</p></div>
+  </div>
+  <div class="grid">{metrics}</div>
+  {heat}
+  <div class="cols">
+    <section><h2>■ Top findings</h2>{candidates}</section>
+    <section><h2>■ Attack surface</h2>{alert}{panels}</section>
+  </div>
+  {drops}
+</div>
 </body>
 </html>
 """
@@ -732,16 +904,11 @@ _SUMMARY_TEMPLATE = """<!DOCTYPE html>
 
 def write_run_summary(outdir, target, findings, content, origins, *,
                       run_time, subdomains, live_hosts, cloudflare) -> Path:
-    """Write a self-contained per-run executive summary to ``outdir/summary.html``.
-
-    Dedupes ``findings`` with ``report.dedupe`` so the HTML total matches
-    ``write_findings_report``'s return value.  Returns the written Path.
-    """
+    """Write a self-contained per-run command-center summary to ``outdir/summary.html``."""
     unique = report.dedupe(findings)
     unique.sort(
         key=lambda f: report.SEVERITY_ORDER.get(
-            (f.get("severity") or "unknown").lower(), 9
-        )
+            (f.get("severity") or "unknown").lower(), 9)
     )
     tech = sorted({
         (f.get("name") or "").replace("Technology: ", "", 1)
@@ -760,39 +927,30 @@ def write_run_summary(outdir, target, findings, content, origins, *,
         if (f.get("template") or "").startswith("waf:")
     } - {""})
 
-    # Triage split: candidates lead; info is collapsed; the rest is noise/recon.
     candidates = [f for f in unique if _is_candidate(f)]
     rest = [f for f in unique if not _is_candidate(f)]
     info = [f for f in rest if (f.get("severity") or "").lower() == "info"]
     noise = [f for f in rest if (f.get("severity") or "").lower() != "info"]
 
-    origin_leaked = bool(origins)
-    if origins and cloudflare:
-        origin_status = "leaked"
-    elif origins:
-        origin_status = "found"
-    else:
-        origin_status = "none"
-
-    cand_counts = Counter(
-        (f.get("severity") or "unknown").lower() for f in candidates)
+    sev_counts = Counter((f.get("severity") or "unknown").lower() for f in unique)
+    crit_high = sev_counts.get("critical", 0) + sev_counts.get("high", 0)
 
     doc = _SUMMARY_TEMPLATE.format(
         stylesheet=SUMMARY_STYLESHEET,
         target=esc(target),
         run_time=esc(run_time),
+        face=esc(_SUMMARY_FACE),
+        ring=esc(crit_high),
         verdict=esc(_verdict_line(candidates, origins, cloudflare, subdomains)),
-        pills=_summary_severity_pills(cand_counts),
-        candidates=_summary_candidates_html(candidates),
-        hero=_summary_hero_cards(live_hosts, nmap_count, origin_status),
-        surface_rows=_summary_surface_rows(
-            subdomains, live_hosts, cloudflare, tech, api_count, nmap_count,
-            waf=waf_names, panels=_count("panel:"), dork_hits=_count("dork:"),
-            tls_issues=_count("tls:"), nikto=_count("nikto:"),
-            origin_leaked=origin_leaked),
-        origins=_summary_origins_html(origins),
-        noise=_summary_noise_html(noise, info),
-        content=_summary_content_html(content),
+        metrics=_metric_grid(subdomains, live_hosts, sev_counts,
+                             len(origins), cloudflare),
+        heat=_heat_bar(sev_counts),
+        candidates=_top_findings_html(candidates),
+        alert=_origins_alert_html(origins),
+        panels=_surface_panels_html(
+            cloudflare, waf_names, tech, api_count, nmap_count,
+            _count("panel:"), _count("tls:"), _count("nikto:"), _count("dork:")),
+        drops=_details_html(candidates, noise, info, content),
     )
 
     outdir = Path(outdir)
