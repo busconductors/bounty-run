@@ -80,16 +80,22 @@ func TestArgv(t *testing.T) {
 			t.Errorf("missing %s", f)
 		}
 	}
-	for _, f := range []string{"--timeout", "--max-param-urls", "--amass"} {
+	for _, f := range []string{"--timeout", "--max-param-urls", "--amass", "--nmap-full"} {
 		if slices.Contains(a, f) {
 			t.Errorf("unexpected %s in %v", f, a)
 		}
 	}
-	b := Argv(Options{Target: "a.com", Timeout: 30, MaxParamURLs: 5, Amass: true, Nikto: true, Nmap: true, Metis: true, Headi: true}, "/d")
-	for _, f := range []string{"--timeout", "--max-param-urls", "--amass", "--nikto", "--nmap", "--metis", "--headi"} {
+	b := Argv(Options{Target: "a.com", Timeout: 30, MaxParamURLs: 5, Amass: true, Nikto: true, Nmap: true, Metis: true, Headi: true, NmapFull: true}, "/d")
+	for _, f := range []string{"--timeout", "--max-param-urls", "--amass", "--nikto", "--nmap", "--metis", "--headi", "--nmap-full"} {
 		if !slices.Contains(b, f) {
 			t.Errorf("missing %s in %v", f, b)
 		}
+	}
+}
+
+func TestArgvNmapFullNeedsNmap(t *testing.T) {
+	if a := Argv(Options{Target: "a.com", NmapFull: true}, "/d"); slices.Contains(a, "--nmap-full") {
+		t.Errorf("--nmap-full without --nmap: %v", a)
 	}
 }
 

@@ -27,6 +27,7 @@ var ErrNoStart = errors.New("engine did not start")
 type Options struct {
 	Target                                string
 	Amass, TLS, Nikto, Nmap, Metis, Headi bool
+	NmapFull                              bool // --nmap-full: all ports; only with Nmap
 	Skip                                  []string
 	Timeout, MaxParamURLs                 int
 }
@@ -78,7 +79,7 @@ func Argv(o Options, dir string) []string {
 	for _, f := range []struct {
 		on   bool
 		flag string
-	}{{o.Amass, "--amass"}, {o.TLS, "--tls"}, {o.Nikto, "--nikto"}, {o.Nmap, "--nmap"}, {o.Metis, "--metis"}, {o.Headi, "--headi"}} {
+	}{{o.Amass, "--amass"}, {o.TLS, "--tls"}, {o.Nikto, "--nikto"}, {o.Nmap, "--nmap"}, {o.Metis, "--metis"}, {o.Headi, "--headi"}, {o.Nmap && o.NmapFull, "--nmap-full"}} {
 		if f.on {
 			a = append(a, f.flag)
 		}

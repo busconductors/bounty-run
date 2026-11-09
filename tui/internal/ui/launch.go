@@ -22,11 +22,89 @@ const launchWait = 3 * time.Second
 
 const capError = "3 runs already active — wait or cancel one"
 
+// stageIDs mirrors runner/cli.py STAGE_IDS (pipeline order, same names as --skip).
+var stageIDs = []string{"subs", "panel", "live", "cf", "origin", "nmap", "waf", "dork", "tls", "nikto",
+	"vuln", "content", "api", "param", "secret", "metis", "headers", "cors", "tech", "headi"}
+
+// stageToggle is one row of the Custom list: an engine stage, a sub-step
+// (origin_deep, a --skip token) or a modifier flag (amass, nmap-full).
+type stageToggle struct{ id, hint string }
+
+// toggles is the Custom list, in pipeline order. Every id is a --skip token,
+// an opt-in flag of the same name, or both (cli.py OPT_IN_STAGES).
+var toggles = []stageToggle{
+	{"subs", "subdomain enum · passive"},
+	{"amass", "+ amass · needs API keys"},
+	{"panel", "admin/login panel detection"},
+	{"live", "live host probe"},
+	{"cf", "Cloudflare detection"},
+	{"origin", "origin IP hunt behind CF"},
+	{"origin_deep", "extended origin hunt"},
+	{"nmap", "nmap top-1000 · intrusive"},
+	{"nmap-full", "all 65535 ports · multi-hour"},
+	{"waf", "WAF fingerprint"},
+	{"dork", "search dorks · passive"},
+	{"tls", "sslyze · ~1 min/host"},
+	{"nikto", "~5 min/host · intrusive"},
+	{"vuln", "nuclei templates · active"},
+	{"content", "ffuf content discovery"},
+	{"api", "katana crawl · API endpoints"},
+	{"param", "sqlmap on params · intrusive"},
+	{"secret", "secret / JS leak scan"},
+	{"metis", "Metis CVE autocheck"},
+	{"headers", "security headers"},
+	{"cors", "CORS misconfig"},
+	{"tech", "tech fingerprint"},
+	{"headi", "169 req/URL · intrusive"},
+}
+
+// optInFlags are toggles that turn on an engine flag instead of being skipped
+// when off; the engine leaves them off by default.
+var optInFlags = map[string]bool{"amass": true, "nmap-full": true, "nmap": true, "tls": true,
+	"nikto": true, "metis": true, "headi": true}
+
+type preset struct {
+	id, label, desc string
+	on              []string // enabled toggles; nil for Custom
+}
+
 var (
-	optInIDs = []string{"amass", "tls", "nikto", "nmap", "metis", "headi"}
-	stageIDs = []string{"subs", "panel", "live", "cf", "origin", "nmap", "waf", "dork", "tls", "nikto",
-		"vuln", "content", "api", "param", "secret", "metis", "headers", "cors", "tech", "headi"}
+	quickOn    = []string{"subs", "panel", "live", "cf", "origin", "origin_deep", "waf", "dork", "secret", "headers", "cors", "tech"}
+	standardOn = append(slices.Clone(quickOn), "nmap", "vuln", "content", "api")
+	deepOn     = append(slices.Clone(standardOn), "param", "tls", "nikto", "metis", "headi", "amass", "nmap-full")
 )
+
+const presetDefault = "standard"
+
+var presets = []preset{
+	{"quick", "Quick     ~5 min", "~5 min · light/passive: subs, panels, live hosts, CF + origin, WAF, dorks, secrets, headers, CORS, tech", quickOn},
+	{"standard", "Standard  ~20-30 min", "~20-30 min · Quick + nmap top-1000, nuclei, ffuf, katana", standardOn},
+	{"deep", "Deep      hours", "hours · active/intrusive: Standard + sqlmap, sslyze, nikto, metis, headi, amass, nmap all ports", deepOn},
+	{"custom", "Custom", "pick stages one by one on the next page", nil},
+}
+
+func presetByID(id string) preset {
+	for _, p := range presets {
+		if p.id == id {
+			return p
+		}
+	}
+	return presets[1]
+}
+
+// applyToggles turns a set of enabled toggles into engine options: an enabled
+// opt-in sets its flag, a disabled stage becomes a --skip token.
+func applyToggles(o *engine.Options, on []string) {
+	enabled := func(id string) bool { return slices.Contains(on, id) }
+	o.Amass, o.Nmap, o.NmapFull = enabled("amass"), enabled("nmap"), enabled("nmap-full")
+	o.TLS, o.Nikto, o.Metis, o.Headi = enabled("tls"), enabled("nikto"), enabled("metis"), enabled("headi")
+	o.Skip = nil
+	for _, t := range toggles {
+		if !optInFlags[t.id] && !enabled(t.id) {
+			o.Skip = append(o.Skip, t.id)
+		}
+	}
+}
 
 type launchState int
 
@@ -51,8 +129,8 @@ type launchModel struct {
 	form *huh.Form
 
 	// Form values; the fields are bound by pointer so a rebuilt form keeps them.
-	target, timeout, maxParam string
-	optins, skips             []string
+	target, preset, timeout, maxParam string
+	custom                            []string // enabled toggles when preset is Custom
 
 	state         launchState
 	inlineErr     string
@@ -61,7 +139,7 @@ type launchModel struct {
 }
 
 func newLaunch(cfg Config) *launchModel {
-	l := &launchModel{cfg: cfg}
+	l := &launchModel{cfg: cfg, preset: presetDefault, custom: slices.Clone(standardOn)}
 	l.form = l.buildForm()
 	return l
 }
@@ -86,18 +164,30 @@ func posInt(s string) error {
 }
 
 func (l *launchModel) buildForm() *huh.Form {
-	f := huh.NewForm(huh.NewGroup(
-		huh.NewInput().Title("Target").Placeholder("example.com").
-			Value(&l.target).Validate(validTarget),
-		huh.NewMultiSelect[string]().Title("Opt-in stages").
-			Options(huh.NewOptions(optInIDs...)...).Value(&l.optins).Filterable(false),
-		huh.NewMultiSelect[string]().Title("Skip stages").
-			Options(huh.NewOptions(stageIDs...)...).Value(&l.skips).Filterable(false).Height(8),
-		huh.NewInput().Title("HTTP timeout (s)").Placeholder("default").
-			Value(&l.timeout).Validate(posInt),
-		huh.NewInput().Title("Max param URLs").Placeholder("default").
-			Value(&l.maxParam).Validate(posInt),
-	)).WithShowHelp(true).WithTheme(huh.ThemeFunc(formTheme))
+	presetOpts := make([]huh.Option[string], len(presets))
+	for i, p := range presets {
+		presetOpts[i] = huh.NewOption(p.label, p.id)
+	}
+	toggleOpts := make([]huh.Option[string], len(toggles))
+	for i, t := range toggles {
+		toggleOpts[i] = huh.NewOption(fmt.Sprintf("%-11s %s", t.id, dimStyle.Render(t.hint)), t.id)
+	}
+	f := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().Title("Target").Placeholder("example.com").
+				Value(&l.target).Validate(validTarget),
+			huh.NewSelect[string]().Title("Preset").Options(presetOpts...).Value(&l.preset).
+				DescriptionFunc(func() string { return presetByID(l.preset).desc }, &l.preset),
+			huh.NewInput().Title("HTTP timeout (s)").Placeholder("default").
+				Value(&l.timeout).Validate(posInt),
+			huh.NewInput().Title("Max param URLs").Placeholder("default").
+				Value(&l.maxParam).Validate(posInt),
+		),
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().Title("Custom stages").Description("[•] runs · [ ] skipped").
+				Options(toggleOpts...).Value(&l.custom).Filterable(false).Height(14),
+		).WithHideFunc(func() bool { return l.preset != "custom" }),
+	).WithShowHelp(true).WithTheme(huh.ThemeFunc(formTheme))
 	f.SubmitCmd = func() tea.Msg { return launchSubmitMsg{} }
 	f.CancelCmd = nil
 	return f
@@ -126,23 +216,12 @@ func (l *launchModel) options() (engine.Options, error) {
 	if err != nil {
 		return engine.Options{}, errors.New("not a valid domain")
 	}
-	o := engine.Options{Target: t, Skip: slices.Clone(l.skips)}
-	for _, id := range l.optins {
-		switch id {
-		case "amass":
-			o.Amass = true
-		case "tls":
-			o.TLS = true
-		case "nikto":
-			o.Nikto = true
-		case "nmap":
-			o.Nmap = true
-		case "metis":
-			o.Metis = true
-		case "headi":
-			o.Headi = true
-		}
+	o := engine.Options{Target: t}
+	on := presetByID(l.preset).on
+	if l.preset == "custom" {
+		on = l.custom
 	}
+	applyToggles(&o, on)
 	for _, f := range []struct {
 		s   string
 		dst *int

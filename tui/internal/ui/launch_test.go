@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
+	"bountyrun/tui/internal/engine"
 	"bountyrun/tui/internal/runstore"
 )
 
@@ -221,13 +223,15 @@ func TestLaunchEscReturnsToRuns(t *testing.T) {
 
 func TestLaunchOptionsFromForm(t *testing.T) {
 	l := newLaunch(Config{})
-	l.target, l.optins, l.skips, l.timeout, l.maxParam = " Example.com ", []string{"tls", "headi"}, []string{"vuln"}, "30", ""
+	if l.preset != "standard" {
+		t.Fatalf("default preset = %q", l.preset)
+	}
+	l.target, l.timeout, l.maxParam = " Example.com ", "30", ""
 	o, err := l.options()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.Target != "example.com" || !o.TLS || !o.Headi || o.Nikto || o.Timeout != 30 || o.MaxParamURLs != 0 ||
-		len(o.Skip) != 1 || o.Skip[0] != "vuln" {
+	if o.Target != "example.com" || o.Timeout != 30 || o.MaxParamURLs != 0 {
 		t.Fatalf("%+v", o)
 	}
 	for _, bad := range []string{"0", "-3", "x"} {
@@ -237,6 +241,95 @@ func TestLaunchOptionsFromForm(t *testing.T) {
 	}
 	if posInt("") != nil || posInt("12") != nil {
 		t.Error("posInt rejected valid input")
+	}
+}
+
+func TestLaunchPresetOptions(t *testing.T) {
+	cases := []struct {
+		preset string
+		custom []string
+		skip   []string
+		flags  engine.Options // only the bool flags are compared
+	}{
+		{"quick", nil, []string{"vuln", "content", "api", "param"}, engine.Options{}},
+		{"standard", nil, []string{"param"}, engine.Options{Nmap: true}},
+		{"deep", nil, nil, engine.Options{Amass: true, Nmap: true, NmapFull: true, TLS: true, Nikto: true, Metis: true, Headi: true}},
+		{"custom", []string{"subs", "live", "nikto", "headi"}, []string{"panel", "cf", "origin", "origin_deep", "waf", "dork",
+			"vuln", "content", "api", "param", "secret", "headers", "cors", "tech"}, engine.Options{Nikto: true, Headi: true}},
+	}
+	for _, c := range cases {
+		l := newLaunch(Config{})
+		l.target, l.preset = "a.com", c.preset
+		if c.custom != nil {
+			l.custom = c.custom
+		}
+		o, err := l.options()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(o.Skip, c.skip) {
+			t.Errorf("%s: skip = %v, want %v", c.preset, o.Skip, c.skip)
+		}
+		got := engine.Options{Amass: o.Amass, Nmap: o.Nmap, NmapFull: o.NmapFull, TLS: o.TLS, Nikto: o.Nikto, Metis: o.Metis, Headi: o.Headi}
+		if !reflect.DeepEqual(got, c.flags) {
+			t.Errorf("%s: flags = %+v, want %+v", c.preset, got, c.flags)
+		}
+	}
+}
+
+func TestLaunchCustomDefaultsToStandard(t *testing.T) {
+	l := newLaunch(Config{})
+	l.target, l.preset = "a.com", "custom"
+	o, _ := l.options()
+	l.preset = "standard"
+	s, _ := l.options()
+	if !reflect.DeepEqual(o, s) {
+		t.Fatalf("custom %+v != standard %+v", o, s)
+	}
+}
+
+// The default (Standard) preset's description is visible on the launch screen.
+// Asserted against the rendered view, not the output stream: teatest's buffer
+// is consuming and bubbletea diffs frames, so a frame startLaunch already read
+// (the description renders on the blurred Preset field too) is not re-emitted.
+func TestLaunchPresetDescriptionShown(t *testing.T) {
+	tm := startLaunch(t, Config{OutputsRoot: t.TempDir()})
+	r := finalRoot(t, tm)
+	if v := plain(r.launch.View()); !strings.Contains(v, "Quick + nmap top-1000") {
+		t.Fatalf("standard preset description not shown:\n%s", v)
+	}
+}
+
+// Choosing the Custom preset reveals the stage list with its inline hints.
+func TestLaunchCustomPageListsHints(t *testing.T) {
+	tm := startLaunch(t, Config{OutputsRoot: t.TempDir()})
+	// huh moves focus asynchronously (nextFieldMsg), so a key sent immediately
+	// after the previous one can be processed before focus settles. Pace the
+	// navigation so each keypress lands on the field it is meant for.
+	key := func(c rune) {
+		tm.Send(tea.KeyPressMsg{Code: c})
+		time.Sleep(150 * time.Millisecond)
+	}
+	tm.Type("example.com")
+	time.Sleep(150 * time.Millisecond)
+	key(tea.KeyEnter) // target → preset (standard)
+	key(tea.KeyDown)  // standard → deep
+	key(tea.KeyDown)  // deep → custom
+	key(tea.KeyEnter) // preset → timeout
+	key(tea.KeyEnter) // timeout → max param
+	key(tea.KeyEnter) // max param → custom page (group 2 appears)
+	// The Custom stages group has never rendered before, so this whole frame is
+	// fresh output — reliable to match even against teatest's diffed stream.
+	teatest.WaitFor(t, tm.Output(), contains("Custom stages"), teatest.WithDuration(5*time.Second))
+	r := finalRoot(t, tm)
+	if r.Screen() != "launch" || r.launch.state != launchEditing {
+		t.Fatalf("screen = %s state = %d", r.Screen(), r.launch.state)
+	}
+	v := plain(r.launch.View())
+	for _, w := range []string{"Custom stages", "subdomain enum"} {
+		if !strings.Contains(v, w) {
+			t.Fatalf("missing %q in custom page:\n%s", w, v)
+		}
 	}
 }
 
@@ -273,5 +366,45 @@ func TestStageIDsMatchEngine(t *testing.T) {
 	}
 	if !slices.Equal(stageIDs, want) {
 		t.Fatalf("stageIDs = %v\nrunner/cli.py STAGE_IDS = %v", stageIDs, want)
+	}
+	// Every preset's argv must parse and plan exactly the intended stages.
+	planned := map[string][]string{
+		"quick":    {"subs", "panel", "live", "cf", "origin", "waf", "dork", "secret", "headers", "cors", "tech"},
+		"standard": {"subs", "panel", "live", "cf", "origin", "nmap", "waf", "dork", "vuln", "content", "api", "secret", "headers", "cors", "tech"},
+		"deep":     stageIDs,
+	}
+	const script = `import json, sys
+from runner.cli import build_parser, PLANNED_STAGES, STAGE_IDS
+a = build_parser().parse_args(json.loads(sys.argv[1]))
+skip = set(x for x in (a.skip or "").split(",") if x)
+bad = skip - set(STAGE_IDS) - {"origin_deep"}
+print(json.dumps({"planned": PLANNED_STAGES(a, skip), "bad": sorted(bad), "amass": a.amass, "full": a.nmap_full}))`
+	for id, wantStages := range planned {
+		l := newLaunch(Config{})
+		l.target, l.preset = "a.com", id
+		o, err := l.options()
+		if err != nil {
+			t.Fatal(err)
+		}
+		argv, _ := json.Marshal(engine.Argv(o, "/tmp/x"))
+		cmd := exec.Command(py, "-c", script, string(argv))
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: python3: %v", id, err)
+		}
+		var got struct {
+			Planned, Bad []string
+			Amass, Full  bool
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		if len(got.Bad) > 0 || !slices.Equal(got.Planned, wantStages) {
+			t.Errorf("%s: planned %v (bad skip tokens %v), want %v", id, got.Planned, got.Bad, wantStages)
+		}
+		if deep := id == "deep"; got.Amass != deep || got.Full != deep {
+			t.Errorf("%s: amass=%v nmap-full=%v", id, got.Amass, got.Full)
+		}
 	}
 }
