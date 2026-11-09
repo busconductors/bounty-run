@@ -24,8 +24,10 @@ launching, monitoring and controlling runs.
 ## Requirements
 
 - Python 3.10 or newer (the code uses `list[str] | None` style annotations)
-- Go 1.27.3 or newer, only to build the TUI (version from `tui/go.mod`)
-- `pip install -r requirements.txt` (`requests`; everything else is stdlib)
+- Go 1.27.3 or newer, only to build the TUI (version from `tui/go.mod`). With
+  Go 1.21+ and the default `GOTOOLCHAIN=auto`, an older Go downloads the
+  toolchain pinned in `go.mod` automatically
+- `requests` (`requirements.txt`; everything else is stdlib), see [Install](#install)
 - External tools, below
 
 Missing tools are skipped with a warning (`runner/utils.py` `have()`), so you
@@ -37,30 +39,38 @@ can install only what you need.
 | nuclei | `vuln` | core | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | katana | `api` | core | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
 | ffuf | `content` | core | `go install github.com/ffuf/ffuf/v2@latest` |
-| sqlmap | `param` | core | `sudo apt install sqlmap` |
-| whatweb | `tech` | core | `sudo apt install whatweb` |
-| dig | `origin` (MX lookup) | core | `sudo apt install dnsutils` |
-| curl | origin verification | core | `sudo apt install curl` |
-| wafw00f | `waf` | core | `pip install wafw00f` |
+| sqlmap | `param` | core | Kali/Debian: `sudo apt install sqlmap` |
+| whatweb | `tech` | core | Kali/Debian: `sudo apt install whatweb` |
+| dig | `origin` (MX lookup) | core (Cloudflare origin stage) | Kali/Debian: `sudo apt install dnsutils` |
+| curl | `origin`, `origin_deep` (origin verification, crt.sh), `param` (Wayback CDX) | core | Kali/Debian: `sudo apt install curl` |
+| wafw00f | `waf` | core | Kali: `sudo apt install wafw00f`; elsewhere `pipx install wafw00f` |
 | shcheck | `headers` | core | vendored (`runner/vendor/shcheck.py`), nothing to install |
-| nmap | `nmap` | opt-in (`--nmap`) | `sudo apt install nmap` |
-| sslyze | `tls` | opt-in (`--tls`) | `pip install sslyze` |
-| nikto | `nikto` | opt-in (`--nikto`) | `sudo apt install nikto` |
+| nmap | `nmap` | opt-in (`--nmap`) | Kali/Debian: `sudo apt install nmap` |
+| sslyze | `tls` | opt-in (`--tls`) | Kali: `sudo apt install sslyze`; elsewhere `pipx install sslyze` |
+| nikto | `nikto` | opt-in (`--nikto`) | Kali/Debian: `sudo apt install nikto` (may not be in default Ubuntu repos) |
 | headi | `headi` | opt-in (`--headi`) | `go install github.com/mlcsec/headi@latest` |
 | amass | subdomain enum add-on | opt-in (`--amass`) | see the [amass](https://github.com/owasp-amass/amass) repo; needs API keys to be useful |
 | metis-autocheck | `metis` | opt-in (`--metis`) | `metis-autocheck` shim that runs inside a local Metis install (not bundled); must be on `PATH`. Skipped if absent |
 
-One-shot install of the common tools:
+One-shot install of the common tools (apt packages are Kali/Debian names; on
+Debian 12+ and Kali, `pip install` fails with `externally-managed-environment`,
+so use apt or `pipx` for the Python tools):
 
 ```
 sudo apt install nmap whatweb nikto sqlmap dnsutils curl
-pip install sslyze wafw00f
+sudo apt install wafw00f sslyze      # Kali; elsewhere: pipx install wafw00f sslyze
 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 go install github.com/projectdiscovery/katana/cmd/katana@latest
 go install github.com/ffuf/ffuf/v2@latest
 go install github.com/mlcsec/headi@latest
+export PATH="$PATH:$(go env GOPATH)/bin"   # add to your shell rc; Go tools are skipped silently if not on PATH
 ```
+
+The `content` stage uses `/usr/share/wordlists/dirb/common.txt` by default,
+which exists on Kali. Elsewhere run `sudo apt install dirb` and pass
+`--wordlist /usr/share/dirb/wordlists/common.txt`, or point `--wordlist` at a
+SecLists file. If the wordlist is missing, `content` warns and skips.
 
 The `dork` stage also needs outbound access to the Mojeek and DuckDuckGo HTML
 search endpoints. If every engine blocks the queries, a warning is printed and
@@ -69,33 +79,57 @@ dork results are incomplete.
 ## Install
 
 ```
-git clone <repo-url> bounty-run
+git clone https://github.com/busconductors/bounty-run.git bounty-run
 cd bounty-run
-pip install -r requirements.txt
 make tui                      # builds bin/bounty-tui (optional but recommended)
 ```
 
-Put `bounty-run` on your `PATH`. Either use a small wrapper in `~/.local/bin`
-(replace the path with wherever you cloned the repo):
+Python dependency (`requests`). On Kali/Debian 12+ plain `pip install` is
+refused (externally-managed-environment), so pick one:
 
 ```
+sudo apt install python3-requests
+```
+
+or a virtualenv:
+
+```
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```
+
+If you use the venv, the wrapper below must call `.venv/bin/python` instead of
+`python3`, and the symlink option does not apply (the shebang uses the system
+`python3`).
+
+Put `bounty-run` on your `PATH`. Either create a small wrapper in
+`~/.local/bin` (run from the repo root; it records the clone's path):
+
+```
+mkdir -p ~/.local/bin
+cat > ~/.local/bin/bounty-run <<EOF
 #!/bin/bash
-exec python3 "/path/to/bounty-run/bounty_run.py" "$@"
-```
-
-```
+exec python3 "$PWD/bounty_run.py" "\$@"
+EOF
 chmod +x ~/.local/bin/bounty-run
 ```
 
-or symlink the entry point (it has a `#!/usr/bin/env python3` shebang but is not
-executable by default, so `chmod` it first):
+or symlink the entry point (it is committed executable and has a
+`#!/usr/bin/env python3` shebang):
 
 ```
-chmod +x /path/to/bounty-run/bounty_run.py
-ln -s /path/to/bounty-run/bounty_run.py ~/.local/bin/bounty-run
+mkdir -p ~/.local/bin
+ln -s "$PWD/bounty_run.py" ~/.local/bin/bounty-run
 ```
 
 Make sure `~/.local/bin` is on your `PATH`.
+
+The CLI writes to `<repo>/outputs`, but the TUI looks in
+`~/tools/bounty-run/outputs` by default. If you cloned elsewhere, add this to
+your shell rc so CLI runs show up in the TUI Runs screen:
+
+```
+export BOUNTY_OUTPUTS=/path/to/bounty-run/outputs
+```
 
 ## Usage
 
@@ -126,6 +160,9 @@ Other flags: `--threads` (HTTP probe threads, default 30), `--max-hosts`
 `--interactive` (prompt for output dir and engagement name), `--no-banner`,
 `--events PATH` (see [Events and scripting](#events-and-scripting)). Run
 `bounty-run --help` for the full list.
+
+Large targets: only the first `--max-hosts` (default 1000) subdomains are
+probed. Raise it for big scopes.
 
 `--skip` takes a comma-separated list of these tokens:
 
