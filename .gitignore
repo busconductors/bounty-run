@@ -16,3 +16,8 @@ outputs/
 *.swp
 
 bin/
+
+# Internal working docs (kept locally, never published)
+SPEC-PHASE*.md
+plans/
+docs/superpowers/
