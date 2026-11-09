@@ -1,25 +1,154 @@
 # Bounty Runner
 
-A recon orchestrator that chains your arsenal into one sweep. Runs subdomain
-enum, live-host probing, and Cloudflare detection — then (Phase 2+) hunts the
-origin IP, scans for vulns, and produces a deduped report.
+A recon-to-report orchestrator for bug bounty hunters: one command chains your
+tooling into a scan, dedupes the results and tracks the findings.
 
-**Status:** Phase 4 — recon→scan→report + deep origin discovery (crt.sh), param injection testing (sqlmap), and a SQLite findings tracker.
+## What it is
+
+Bounty Runner runs a 20-stage pipeline (recon, scan, report, track) against a
+target domain. It chains tools you already use (subfinder, nuclei, ffuf,
+sqlmap, nmap and others), normalizes their output into one deduplicated,
+severity-ordered report, and records findings in a local SQLite tracker. It
+ships as a Python CLI plus an interactive terminal UI (Go, bubbletea) for
+launching, monitoring and controlling runs.
+
+## Legal: authorized use only
+
+> **Only run Bounty Runner against targets you own or have explicit, written
+> permission to test** (for example, an in-scope bug bounty program). Several
+> stages are active and intrusive (port scans, nuclei templates, sqlmap, nikto,
+> header injection) and can disrupt services or violate program rules and
+> computer-misuse law. You are responsible for staying within scope and rate
+> limits. The authors accept no liability for misuse.
+
+## Requirements
+
+- Python 3.10 or newer (the code uses `list[str] | None` style annotations)
+- Go 1.27.3 or newer, only to build the TUI (version from `tui/go.mod`)
+- `pip install -r requirements.txt` (`requests`; everything else is stdlib)
+- External tools, below
+
+Missing tools are skipped with a warning (`runner/utils.py` `have()`), so you
+can install only what you need.
+
+| Tool | Stage(s) | Required? | Install |
+|------|----------|-----------|---------|
+| subfinder | `subs` | core | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
+| nuclei | `vuln` | core | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
+| katana | `api` | core | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
+| ffuf | `content` | core | `go install github.com/ffuf/ffuf/v2@latest` |
+| sqlmap | `param` | core | `sudo apt install sqlmap` |
+| whatweb | `tech` | core | `sudo apt install whatweb` |
+| dig | `origin` (MX lookup) | core | `sudo apt install dnsutils` |
+| curl | origin verification | core | `sudo apt install curl` |
+| wafw00f | `waf` | core | `pip install wafw00f` |
+| shcheck | `headers` | core | vendored (`runner/vendor/shcheck.py`), nothing to install |
+| nmap | `nmap` | opt-in (`--nmap`) | `sudo apt install nmap` |
+| sslyze | `tls` | opt-in (`--tls`) | `pip install sslyze` |
+| nikto | `nikto` | opt-in (`--nikto`) | `sudo apt install nikto` |
+| headi | `headi` | opt-in (`--headi`) | `go install github.com/mlcsec/headi@latest` |
+| amass | subdomain enum add-on | opt-in (`--amass`) | see the [amass](https://github.com/owasp-amass/amass) repo; needs API keys to be useful |
+| metis-autocheck | `metis` | opt-in (`--metis`) | `metis-autocheck` shim that runs inside a local Metis install (not bundled); must be on `PATH`. Skipped if absent |
+
+One-shot install of the common tools:
+
+```
+sudo apt install nmap whatweb nikto sqlmap dnsutils curl
+pip install sslyze wafw00f
+go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+go install github.com/projectdiscovery/katana/cmd/katana@latest
+go install github.com/ffuf/ffuf/v2@latest
+go install github.com/mlcsec/headi@latest
+```
+
+The `dork` stage also needs outbound access to the Mojeek and DuckDuckGo HTML
+search endpoints. If every engine blocks the queries, a warning is printed and
+dork results are incomplete.
+
+## Install
+
+```
+git clone <repo-url> bounty-run
+cd bounty-run
+pip install -r requirements.txt
+make tui                      # builds bin/bounty-tui (optional but recommended)
+```
+
+Put `bounty-run` on your `PATH`. Either use a small wrapper in `~/.local/bin`
+(replace the path with wherever you cloned the repo):
+
+```
+#!/bin/bash
+exec python3 "/path/to/bounty-run/bounty_run.py" "$@"
+```
+
+```
+chmod +x ~/.local/bin/bounty-run
+```
+
+or symlink the entry point (it has a `#!/usr/bin/env python3` shebang but is not
+executable by default, so `chmod` it first):
+
+```
+chmod +x /path/to/bounty-run/bounty_run.py
+ln -s /path/to/bounty-run/bounty_run.py ~/.local/bin/bounty-run
+```
+
+Make sure `~/.local/bin` is on your `PATH`.
 
 ## Usage
 
-```
-bounty-run example.com                 # full sweep, output to <repo>/outputs/
-bounty-run example.com -o results/     # custom output dir
-bounty-run example.com --amass         # also run amass passive enum
-bounty-run example.com --timeout 5     # faster HTTP probe
-bounty-run example.com --skip param    # skip sqlmap (slow, active stage)
-bounty-run example.com --max-param-urls 10   # cap sqlmap targets
-bounty-run example.com --tls           # also run the sslyze TLS/SSL deep scan (opt-in, slow)
-bounty-run example.com --nikto         # also run nikto web-server scan (opt-in, intrusive)
-bounty-run example.com --skip dork     # skip passive search-engine dorking
+### CLI
 
-# Findings tracker
+```
+bounty-run example.com                 # default sweep, output to <repo>/outputs/<target>/<timestamp>/
+bounty-run example.com -o results/     # custom output dir
+bounty-run example.com --timeout 5     # faster HTTP probe (default 8s)
+bounty-run example.com --skip param    # skip sqlmap (slow, active stage)
+bounty-run example.com --skip dork,cors
+bounty-run example.com --max-param-urls 10   # cap sqlmap targets (default 50)
+bounty-run example.com --no-track      # do not ingest findings into the tracker DB
+
+# Opt-in stages (off by default; most are intrusive or slow)
+bounty-run example.com --amass         # also run amass passive enum
+bounty-run example.com --nmap          # nmap top-1000 ports (intrusive)
+bounty-run example.com --nmap --nmap-full   # all 65535 ports (can take hours)
+bounty-run example.com --tls           # sslyze TLS/SSL deep scan (slow)
+bounty-run example.com --nikto         # nikto web-server scan (intrusive, slow)
+bounty-run example.com --metis         # Metis autocheck CVE sweep
+bounty-run example.com --headi         # headi header-injection scan (intrusive)
+```
+
+Other flags: `--threads` (HTTP probe threads, default 30), `--max-hosts`
+(default 1000), `--wordlist` (ffuf wordlist), `--nuclei-severity`,
+`--nuclei-c` (concurrency), `--nuclei-timeout` (seconds, default 1800),
+`--interactive` (prompt for output dir and engagement name), `--no-banner`,
+`--events PATH` (see [Events and scripting](#events-and-scripting)). Run
+`bounty-run --help` for the full list.
+
+`--skip` takes a comma-separated list of these tokens:
+
+| Token | Stage | Token | Stage |
+|-------|-------|-------|-------|
+| `subs` | subdomain enumeration | `api` | API endpoint discovery (katana) |
+| `panel` | panel detection | `param` | param testing (Wayback + sqlmap) |
+| `live` | live host probing | `secret` | secret / JS leak scan |
+| `cf` | Cloudflare detection | `metis` | Metis CVE autocheck (opt-in) |
+| `origin` | origin hunt (CF only) | `headers` | security headers |
+| `origin_deep` | crt.sh deep origin (sub-step of `origin`) | `cors` | CORS misconfiguration |
+| `nmap` | port scan (opt-in) | `tech` | technology fingerprint |
+| `waf` | WAF fingerprint | `headi` | header injection (opt-in) |
+| `dork` | search-engine dorking | `vuln` | nuclei vulnerability scan |
+| `tls` | TLS/SSL analysis (opt-in) | `content` | content discovery (ffuf) |
+| `nikto` | nikto scan (opt-in) | | |
+
+### Findings tracker
+
+Findings are ingested into a SQLite database at `outputs/tracker.db` unless you
+pass `--no-track`. Manage them with `track`:
+
+```
 bounty-run track add-target example.com --program "Acme Bug Bounty"
 bounty-run track add-finding example.com --title "SQLi" --severity high --url "https://x/?id=1"
 bounty-run track list --status new
@@ -27,82 +156,42 @@ bounty-run track update 1 --status submitted --bounty 500
 bounty-run track stats
 ```
 
-## Output (per run)
+`bounty-run dashboard` renders a static cross-run `dashboard.html` under
+`outputs/`.
+
+### Interactive TUI
+
+`bounty-tui` is a terminal UI to launch, monitor and control runs. It drives the
+Python engine through its `--events` mode. Start it with:
 
 ```
-~/tools/bounty-run/outputs/<target>/<timestamp>/
-├── subfinder.txt           # raw subfinder output
-├── subdomains.txt          # deduped subdomain list
-├── panels.txt              # cPanel/webmail/phpMyAdmin-style subdomains (<sub>\t<kind>\t<severity>)
-├── live_hosts.txt          # host → status → server → CF flag
-├── cloudflare.json         # Cloudflare detection result + evidence
-├── origin_candidates.txt   # origin IPs behind Cloudflare (if any)
-├── origin_deep.txt         # crt.sh deep-origin candidates
-├── wafw00f.json            # raw wafw00f WAF fingerprint output
-├── dork_urls.txt           # in-scope URLs found by Mojeek/DDG dorking
-├── dork.txt                # per-request dork log (<query>\t<engine>\t<ok|blocked>\t<hits>)
-├── sslyze/<host>.json      # raw sslyze JSON per host (--tls)
-├── tls_scan.txt            # TLS issues (<host>\t<template>\t<severity>) (--tls)
-├── nikto/<host>.json       # raw nikto JSON per host (--nikto)
-├── nuclei.jsonl            # raw nuclei findings (JSONL)
-├── content_discovery.txt   # ffuf-discovered paths
-├── param_urls.txt          # parameterized URLs (Wayback CDX)
-├── sqlmap_report.txt       # raw sqlmap output
-├── findings.json           # deduped, structured findings
-├── FINDINGS.md             # human-readable, severity-ordered report
-├── SUMMARY.md              # run summary
-├── run.json                # engine pid/pgid/target/flags (only with --events or TUI launch)
-├── events.jsonl            # JSON-lines event stream (only with --events or TUI launch)
-├── control                 # pending skip/cancel commands (only with --events or TUI launch)
-├── pids                    # child-tool process groups (only with --events or TUI launch)
-└── engine.log              # TUI's capture of engine stdout/stderr (TUI launch only)
-```
-
-## Pipeline
-
-1. Subdomain enum — `subfinder` (+ `amass` with `--amass`)
-2. Panel detection — flag cPanel/webmail/phpMyAdmin-style subdomains (no network)
-3. Live hosts — HTTP/HTTPS probe (status, server, Cloudflare flag)
-4. Cloudflare detect — `cf-ray`/`server`/`cf-cache-status` headers + resolved IP
-5. Origin hunt (when CF detected) — leak-subdomain sweep + MX records, filtered
-   against Cloudflare's published AS13335 ranges, verified with `curl --resolve`
-6. Deep origin (when CF detected) — crt.sh cert-transparency SAN history, resolved
-   and CF-filtered (Shodan/Censys documented as manual follow-up)
-7. WAF fingerprint — `wafw00f` against live hosts (`waf:<name>` info findings)
-8. Search-engine dorking — passive Mojeek/DuckDuckGo queries for exposed files
-   and panels, results filtered to in-scope hosts
-9. TLS/SSL analysis (`--tls`) — `sslyze` protocols, weak ciphers, Heartbleed,
-   ROBOT, certificate checks per host (`tls:*` findings)
-10. Web-server scan (`--nikto`) — `nikto` per host, bounded by `-maxtime`
-    (`nikto:*` findings)
-11. Vuln scan — `nuclei` against live hosts (`-jsonl`), parsed into findings
-12. Content discovery — `ffuf` against the main target (auto-calibrated)
-13. Param testing — Wayback CDX param discovery + `sqlmap` injection testing
-14. Report — dedupe by (template, host), severity-ordered `FINDINGS.md` + `findings.json`
-
-Phase 5 added the HTML dashboard; Phase 13 added the interactive TUI
-(below). SpyHunt automation is still planned.
-
-## Interactive TUI
-
-`bounty-tui` is a terminal UI (Go, bubbletea) to launch, monitor and control
-runs. It drives the Python engine through its `--events` mode.
-
-```
-make tui                          # builds bin/bounty-tui
-bin/bounty-tui                    # outputs root: $BOUNTY_OUTPUTS or ~/tools/bounty-run/outputs
+bounty-run                        # bare invocation on a terminal opens the TUI
+bin/bounty-tui                    # or run the binary directly
 bin/bounty-tui --outputs results/ # explicit outputs root (overrides $BOUNTY_OUTPUTS)
 BOUNTY_RUN=/path/to/bounty-run bin/bounty-tui   # engine binary (default: bounty-run on PATH)
 ```
 
-Screens: **Runs** (all runs under the outputs root, refreshed every tick),
-**Launch** (new-run form: target, opt-in stages, skipped stages, HTTP timeout,
-max param URLs), **Monitor** (stage list, live output, findings table).
+The outputs root defaults to `$BOUNTY_OUTPUTS` or `~/tools/bounty-run/outputs`.
+A bare `bounty-run` without a terminal (pipes, cron) prints the normal usage
+error instead. If the binary is missing, run `make tui`; `$BOUNTY_TUI` points
+the launcher at a binary elsewhere.
+
+Screens: **Runs** (all runs under the outputs root), **Launch** (new-run form),
+**Monitor** (stage list, live output, findings table).
+
+The Launch screen offers presets:
+
+| Preset | Time | What runs |
+|--------|------|-----------|
+| Quick | ~5 min | Light and passive: subs, panels, live hosts, Cloudflare + origin hunt, WAF, dorks, secrets, headers, CORS, tech |
+| Standard (default) | ~20-30 min | Quick + nmap top-1000, nuclei, ffuf, katana |
+| Deep | hours | Standard + sqlmap, sslyze, nikto, Metis, headi, amass, nmap all ports (active/intrusive) |
+| Custom | varies | Pick stages individually |
 
 Runs are detached: quitting the TUI never stops a run, and you can re-attach
 from the Runs screen. The TUI refuses to start a 4th run while 3 are active;
 that cap is enforced only by the TUI, not by the engine. Cancel writes a
-partial report and exits 130. Without `--events` the CLI output is unchanged.
+partial report and exits 130.
 
 | Screen  | Key | Action |
 |---------|-----|--------|
@@ -125,15 +214,94 @@ partial report and exits 130. Without `--events` the CLI output is unchanged.
 | Monitor | q, esc | detach (run keeps going) |
 | Monitor | ctrl+c | quit |
 
-### Run-directory files (`--events`)
+## Pipeline
 
-- `run.json` — engine pid, pgid, start time, target, flags, version
-- `events.jsonl` — schema v1 events (`run_start`, `stage_start`, `stage_end`,
+The 20 stages run in this order (these are also the `--skip` ids). Stages marked
+opt-in only run when their flag is set.
+
+1. `subs` - subdomain enum: `subfinder` (plus `amass` with `--amass`)
+2. `panel` - flag cPanel/webmail/phpMyAdmin-style subdomains (no network)
+3. `live` - HTTP/HTTPS probe (status, server, Cloudflare flag)
+4. `cf` - Cloudflare detection from `cf-ray`/`server`/`cf-cache-status` headers and resolved IP
+5. `origin` - when Cloudflare is detected: leak-subdomain sweep and MX records, filtered against Cloudflare's published ranges and verified with `curl --resolve`; plus `origin_deep` (crt.sh certificate-transparency history)
+6. `nmap` - port scan (opt-in `--nmap`, `--nmap-full` for all ports)
+7. `waf` - `wafw00f` fingerprint against live hosts
+8. `dork` - passive Mojeek/DuckDuckGo queries for exposed files and panels, filtered to in-scope hosts
+9. `tls` - `sslyze` protocols, weak ciphers, Heartbleed, ROBOT, certificates (opt-in `--tls`)
+10. `nikto` - `nikto` per host, time-bounded (opt-in `--nikto`)
+11. `vuln` - `nuclei` against live hosts
+12. `content` - `ffuf` content discovery (auto-calibrated)
+13. `api` - `katana` crawl for API endpoints
+14. `param` - Wayback CDX parameter discovery and `sqlmap` injection testing
+15. `secret` - secret and JavaScript leak scan
+16. `metis` - Metis autocheck CVE sweep (opt-in `--metis`, via the `metis-autocheck` shim)
+17. `headers` - security header checks (vendored `shcheck`)
+18. `cors` - CORS misconfiguration checks
+19. `tech` - technology fingerprint (`whatweb`)
+20. `headi` - header-injection scan (opt-in `--headi`)
+
+After the stages, a report step dedupes findings by (template, host) and writes
+a severity-ordered `FINDINGS.md`, `findings.json`, `SUMMARY.md` and a
+triage-first `summary.html`.
+
+## Output files
+
+```
+outputs/<target>/<timestamp>/
+├── subfinder.txt           # raw subfinder output
+├── amass.txt               # amass output (--amass)
+├── subdomains.txt          # deduped subdomain list
+├── panels.txt              # panel-style subdomains (<sub>\t<kind>\t<severity>)
+├── live_hosts.txt          # host, status, server, CF flag
+├── cloudflare.json         # Cloudflare detection result + evidence
+├── origin_candidates.txt   # origin IPs behind Cloudflare (if any)
+├── origin_deep.txt         # crt.sh deep-origin candidates
+├── nmap.xml                # raw nmap XML (--nmap)
+├── nmap_open_ports.txt     # open ports per host (--nmap)
+├── wafw00f_targets.txt     # hosts fed to wafw00f
+├── wafw00f.json            # raw wafw00f fingerprint output
+├── dork_urls.txt           # in-scope URLs found by dorking
+├── dork.txt                # per-request dork log (<query>\t<engine>\t<ok|blocked>\t<hits>)
+├── sslyze/<host>.json      # raw sslyze JSON per host (--tls)
+├── tls_scan.txt            # TLS issues (<host>\t<template>\t<severity>) (--tls)
+├── nikto/<host>.json       # raw nikto JSON per host (--nikto)
+├── nuclei_targets.txt      # hosts/IPs fed to nuclei
+├── nuclei.jsonl            # raw nuclei findings (JSONL)
+├── content_discovery.txt   # ffuf-discovered paths
+├── api_endpoints.txt       # endpoints found by katana
+├── param_urls.txt          # parameterized URLs (Wayback CDX)
+├── sqlmap_report.txt       # raw sqlmap output
+├── metis_targets.txt       # hosts fed to Metis (--metis)
+├── headi_raw.txt           # raw headi output (--headi)
+├── whatweb.json            # raw whatweb output
+├── security_headers.json   # raw shcheck output
+├── cors_results.csv        # CORS check results
+├── findings.json           # deduped, structured findings
+├── FINDINGS.md             # human-readable, severity-ordered report
+├── SUMMARY.md              # run summary
+├── summary.html            # triage-first HTML summary
+├── run.json                # engine pid/pgid/target/flags (--events or TUI launch)
+├── events.jsonl            # JSON-lines event stream (--events or TUI launch)
+├── control                 # pending skip/cancel commands (--events or TUI launch)
+├── pids                    # child-tool process groups (--events or TUI launch)
+└── engine.log              # TUI's capture of engine stdout/stderr (TUI launch only)
+```
+
+Files for skipped or opt-out stages are not created. `outputs/tracker.db` holds
+the findings tracker and `outputs/dashboard.html` the cross-run dashboard.
+
+## Events and scripting
+
+With `--events`, the engine writes machine-readable progress that the TUI (or
+your own tooling) can follow. Without `--events` the CLI output is unchanged.
+
+- `run.json` - engine pid, pgid, start time, target, flags, version
+- `events.jsonl` - schema v1 events (`run_start`, `stage_start`, `stage_end`,
   `progress`, `log`, `output`, `finding`, `run_end`), one JSON object per line
-- `control` — the TUI appends `skip <stage>` / `cancel` lines; the engine
+- `control` - the TUI appends `skip <stage>` / `cancel` lines; the engine
   consumes the file atomically (rename, then read)
-- `pids` — process groups of running child tools (used for hard kill)
-- `engine.log` — engine stdout/stderr when started by the TUI
+- `pids` - process groups of running child tools (used for hard kill)
+- `engine.log` - engine stdout/stderr when started by the TUI
 
 For scripting, run the engine directly and follow the stream. The events file
 must sit inside the `-o` dir: `run.json`, `control` and `pids` are written to
@@ -144,12 +312,24 @@ bounty-run example.com -o outputs/example.com/manual --events outputs/example.co
 tail -f outputs/example.com/manual/events.jsonl | jq -c .   # jq optional
 ```
 
-## Notes
+## Contributing and tests
 
-- Run only against targets you own or have written permission to test.
-- `amass` passive enum needs API keys configured to return anything useful.
-- Phase 12 external dependencies: `wafw00f` (WAF stage), `sslyze` (`--tls`),
-  `nikto` (`--nikto`), and the Mojeek / DuckDuckGo HTML search endpoints
-  (dork stage). Missing tools are skipped with a warning; if every search
-  engine blocks the dork queries, a "blocked" warning is printed and dork
-  results are incomplete.
+```
+python3 -m pytest              # Python engine tests
+cd tui && go test ./...        # TUI tests
+```
+
+Issues and pull requests are welcome. Please keep changes covered by tests.
+
+## Security
+
+To report a vulnerability in Bounty Runner itself, see [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+## Reminder
+
+Use this tool only on systems you are authorized to test. Respect program
+scope, rate limits and applicable law.
