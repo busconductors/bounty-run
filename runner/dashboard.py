@@ -408,28 +408,132 @@ def _waf_name(name: str) -> str:
     return name.strip()
 
 
-def _summary_metric_cards(subdomains, live_hosts, cloudflare, total,
-                          technologies, api_endpoints, open_ports, *,
-                          waf=(), panels=0, dork_hits=0, tls_issues=0, nikto=0) -> str:
+_CANDIDATE_SEVERITIES = ("critical", "high", "medium")
+
+
+def _is_candidate(f) -> bool:
+    """Triage split rule: candidate = critical/high/medium OR ``panel:`` (any sev).
+
+    An exposed admin/login panel is a real lead at any severity; a plain
+    info-severity nuclei finding never is.
+    """
+    template = f.get("template") or ""
+    if template.startswith("panel:"):
+        return True
+    return (f.get("severity") or "unknown").lower() in _CANDIDATE_SEVERITIES
+
+
+def _order_candidates(findings):
+    """``panel:`` hits float to the top, then by severity (crit -> high -> medium)."""
+    def key(f):
+        template = f.get("template") or ""
+        is_panel = 0 if template.startswith("panel:") else 1
+        sev = report.SEVERITY_ORDER.get(
+            (f.get("severity") or "unknown").lower(), 9)
+        return (is_panel, sev)
+    return sorted(findings, key=key)
+
+
+def _verdict_line(candidates, origins, cloudflare, subdomains) -> str:
+    """One prose assertion summarising the run, highest-value facts first."""
+    clauses = []
+
+    if candidates:
+        sev_counts = Counter(
+            (f.get("severity") or "unknown").lower() for f in candidates)
+        bits = []
+        for sev in _SEVERITY_ORDER:
+            n = sev_counts.get(sev, 0)
+            if n:
+                bits.append("{} {}".format(n, sev))
+        n = len(candidates)
+        noun = "candidate" if n == 1 else "candidates"
+        if bits:
+            clauses.append("{} {} ({})".format(n, noun, ", ".join(bits)))
+        else:
+            clauses.append("{} {}".format(n, noun))
+
+        panels = sum(
+            1 for f in candidates if (f.get("template") or "").startswith("panel:"))
+        if panels:
+            clauses.append(
+                "exposed admin panel" if panels == 1
+                else "{} exposed panels".format(panels))
+
+    # Origin-behind-Cloudflare always surfaces when it occurs (WAF-bypass story).
+    if origins and cloudflare:
+        ip = next((o.get("ip") for o in origins if o.get("ip")), None)
+        if ip:
+            clauses.append(
+                "origin IP {} leaked behind Cloudflare — WAF bypass likely".format(ip))
+        else:
+            clauses.append("origin IP leaked behind Cloudflare — WAF bypass likely")
+
+    if not candidates and not clauses:
+        return "No candidates; {} subdomains mapped, nothing exposed.".format(
+            subdomains)
+    if not candidates:
+        # No real candidates but something worth surfacing (e.g. origin leak).
+        clauses.insert(0, "No candidates")
+
+    return ". ".join(clauses) + "."
+
+
+def _summary_hero_cards(live_hosts, open_ports, origin_status) -> str:
+    """Three high-signal numbers that lead the attack-surface tier."""
     cards = [
-        ("subdomains", subdomains),
         ("live hosts", live_hosts),
-        ("cloudflare", "yes" if cloudflare else "no"),
-        ("technologies", ", ".join(technologies) if technologies else "none"),
-        ("api endpoints", str(api_endpoints)),
-        ("open ports (nmap)", str(open_ports)),
-        ("waf", ", ".join(waf) if waf else "none"),
-        ("panels", str(panels)),
-        ("dork hits", str(dork_hits)),
-        ("tls issues", str(tls_issues)),
-        ("nikto", str(nikto)),
-        ("total findings", total),
+        ("open ports", open_ports),
+        ("origin status", origin_status),
     ]
     return "".join(
         '<div class="card"><div class="card-label">{}</div>'
         '<div class="card-value">{}</div></div>'.format(esc(label), esc(value))
         for label, value in cards
     )
+
+
+def _summary_surface_rows(subdomains, live_hosts, cloudflare, technologies,
+                          api_endpoints, open_ports, *, waf=(), panels=0,
+                          dork_hits=0, tls_issues=0, nikto=0,
+                          origin_leaked=False) -> str:
+    """Attack surface grouped by meaning, as compact key:value rows."""
+    groups = [
+        ("Reachability", "{} subdomains · {} live · {} ports".format(
+            subdomains, live_hosts, open_ports)),
+        ("Edge", "Cloudflare {} · WAF: {} · origin {}".format(
+            "yes" if cloudflare else "no",
+            ", ".join(waf) if waf else "none",
+            "leaked" if origin_leaked else "not found")),
+        ("Stack", "{} · {} API endpoints".format(
+            ", ".join(technologies) if technologies else "no tech detected",
+            api_endpoints)),
+        ("Scanners", "{} tls · {} nikto · {} dork · {} panels".format(
+            tls_issues, nikto, dork_hits, panels)),
+    ]
+    return "".join(
+        '<div class="surface-row"><span class="surface-label">{}</span>'
+        '<span class="surface-value">{}</span></div>'.format(esc(label), esc(value))
+        for label, value in groups
+    )
+
+
+def _summary_noise_html(noise, info) -> str:
+    """Low-severity + recon findings (expanded), info nuclei in a collapsed block."""
+    if not noise and not info:
+        return ""
+    parts = ['<section class="noise"><h2>Noise &amp; recon</h2>']
+    if noise:
+        parts.append("".join(_summary_finding(f) for f in noise))
+    else:
+        parts.append('<p class="empty">No low-severity or recon findings.</p>')
+    if info:
+        parts.append(
+            '<details class="info-findings"><summary>Info findings ({})</summary>'
+            '{}</details>'.format(
+                len(info), "".join(_summary_finding(f) for f in info)))
+    parts.append('</section>')
+    return "".join(parts)
 
 
 def _summary_severity_pills(sev_counts) -> str:
@@ -453,7 +557,7 @@ def _summary_finding(f) -> str:
 
     parts = [
         '<article class="finding">',
-        '<div class="finding-title sev-{}">{}</div>'.format(
+        '<div class="finding-title {}">{}</div>'.format(
             _sev_class(sev), esc(title)
         ),
     ]
@@ -472,21 +576,11 @@ def _summary_finding(f) -> str:
     return "".join(parts)
 
 
-def _summary_findings_html(findings) -> str:
-    if not findings:
-        return '<p class="empty">No vulnerabilities found.</p>'
-    groups = {}
-    for f in findings:
-        sev = (f.get("severity") or "unknown").lower()
-        groups.setdefault(sev, []).append(f)
-    ordered = sorted(groups, key=lambda s: report.SEVERITY_ORDER.get(s, 9))
-    parts = []
-    for sev in ordered:
-        parts.append(
-            '<h3 class="sev sev-{}">{}</h3>'.format(_sev_class(sev), esc(sev))
-        )
-        parts.append("".join(_summary_finding(f) for f in groups[sev]))
-    return "".join(parts)
+def _summary_candidates_html(candidates) -> str:
+    """Candidate cards in triage order (panel: first, then severity)."""
+    if not candidates:
+        return '<p class="empty">No candidates.</p>'
+    return "".join(_summary_finding(f) for f in _order_candidates(candidates))
 
 
 def _summary_origins_html(origins) -> str:
@@ -515,6 +609,92 @@ def _summary_content_html(content) -> str:
     )
 
 
+SUMMARY_STYLESHEET = """<style>
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #f85149;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+header {
+  padding: 24px 32px; border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+header h1 { margin: 0; font-size: 22px; }
+header h1 span { color: var(--accent); }
+.summary-meta { color: var(--muted); margin: 6px 0 0; font-size: 13px; }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 32px 64px; }
+section { margin-bottom: 32px; }
+h2 { font-size: 16px; text-transform: uppercase; letter-spacing: .06em;
+     color: var(--muted); border-bottom: 1px solid var(--border);
+     padding-bottom: 8px; }
+.verdict {
+  font-size: 19px; line-height: 1.45; font-weight: 600;
+  background: rgba(248, 81, 73, .08);
+  border: 1px solid var(--accent); border-left: 4px solid var(--accent);
+  border-radius: 8px; padding: 18px 20px; margin: 4px 0 28px;
+}
+.tier-divider {
+  border: none; border-top: 2px dashed var(--border); margin: 8px 0 28px;
+}
+.metrics { display: flex; flex-wrap: wrap; gap: 12px; }
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 18px; min-width: 120px;
+}
+.card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+.card-value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+.surface-rows { margin-top: 14px; }
+.surface-row { display: flex; gap: 14px; padding: 6px 0;
+  border-bottom: 1px solid var(--border); font-size: 14px; }
+.surface-label { color: var(--accent); font-weight: 600; min-width: 110px;
+  text-transform: uppercase; font-size: 12px; letter-spacing: .04em;
+  padding-top: 2px; }
+.surface-value { word-break: break-word; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.pill {
+  display: inline-block; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--border); font-size: 12px; color: var(--muted);
+}
+.finding {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 16px; margin-bottom: 12px;
+}
+.finding-title { font-weight: 600; font-size: 15px; }
+.finding-meta { display: grid; grid-template-columns: 90px 1fr; gap: 2px 12px;
+  margin: 10px 0 0; font-size: 13px; }
+.finding-meta dt { color: var(--muted); }
+.finding-meta dd { margin: 0; word-break: break-all; }
+dl { margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; word-break: break-all; }
+.url { color: var(--muted); }
+.sev-critical { color: #ff7b72; }
+.sev-high { color: var(--accent); }
+.sev-medium { color: #e3b341; }
+.sev-low { color: #8b949e; }
+.sev-info { color: #58a6ff; }
+.sev-unknown { color: #8b949e; }
+.info-findings { margin-top: 16px; }
+.info-findings > summary { cursor: pointer; color: var(--muted);
+  font-size: 13px; padding: 6px 0; }
+pre {
+  background: #10151c; border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; overflow-x: auto; margin: 10px 0 0;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+.empty { color: var(--muted); font-style: italic; }
+</style>"""
+
+
 _SUMMARY_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -529,16 +709,20 @@ _SUMMARY_TEMPLATE = """<!DOCTYPE html>
   <p class="summary-meta">{target} · {run_time}</p>
 </header>
 <main>
-  <section>
-    <h2>Overview</h2>
-    <div class="metrics">{metrics}</div>
+  <p class="verdict">{verdict}</p>
+  <section class="candidates">
+    <h2>Candidates</h2>
     <div class="badges">{pills}</div>
+    {candidates}
   </section>
-  <section>
-    <h2>Findings</h2>
-    {findings}
+  <hr class="tier-divider">
+  <section class="surface">
+    <h2>Attack surface</h2>
+    <div class="metrics">{hero}</div>
+    <div class="surface-rows">{surface_rows}</div>
   </section>
   {origins}
+  {noise}
   {content}
 </main>
 </body>
@@ -559,7 +743,6 @@ def write_run_summary(outdir, target, findings, content, origins, *,
             (f.get("severity") or "unknown").lower(), 9
         )
     )
-    sev_counts = Counter((f.get("severity") or "unknown").lower() for f in unique)
     tech = sorted({
         (f.get("name") or "").replace("Technology: ", "", 1)
         for f in unique
@@ -577,18 +760,38 @@ def write_run_summary(outdir, target, findings, content, origins, *,
         if (f.get("template") or "").startswith("waf:")
     } - {""})
 
+    # Triage split: candidates lead; info is collapsed; the rest is noise/recon.
+    candidates = [f for f in unique if _is_candidate(f)]
+    rest = [f for f in unique if not _is_candidate(f)]
+    info = [f for f in rest if (f.get("severity") or "").lower() == "info"]
+    noise = [f for f in rest if (f.get("severity") or "").lower() != "info"]
+
+    origin_leaked = bool(origins)
+    if origins and cloudflare:
+        origin_status = "leaked"
+    elif origins:
+        origin_status = "found"
+    else:
+        origin_status = "none"
+
+    cand_counts = Counter(
+        (f.get("severity") or "unknown").lower() for f in candidates)
+
     doc = _SUMMARY_TEMPLATE.format(
-        stylesheet=STYLESHEET,
+        stylesheet=SUMMARY_STYLESHEET,
         target=esc(target),
         run_time=esc(run_time),
-        metrics=_summary_metric_cards(subdomains, live_hosts, cloudflare, len(unique),
-                                      tech, api_count, nmap_count,
-                                      waf=waf_names, panels=_count("panel:"),
-                                      dork_hits=_count("dork:"), tls_issues=_count("tls:"),
-                                      nikto=_count("nikto:")),
-        pills=_summary_severity_pills(sev_counts),
-        findings=_summary_findings_html(unique),
+        verdict=esc(_verdict_line(candidates, origins, cloudflare, subdomains)),
+        pills=_summary_severity_pills(cand_counts),
+        candidates=_summary_candidates_html(candidates),
+        hero=_summary_hero_cards(live_hosts, nmap_count, origin_status),
+        surface_rows=_summary_surface_rows(
+            subdomains, live_hosts, cloudflare, tech, api_count, nmap_count,
+            waf=waf_names, panels=_count("panel:"), dork_hits=_count("dork:"),
+            tls_issues=_count("tls:"), nikto=_count("nikto:"),
+            origin_leaked=origin_leaked),
         origins=_summary_origins_html(origins),
+        noise=_summary_noise_html(noise, info),
         content=_summary_content_html(content),
     )
 

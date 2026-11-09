@@ -136,9 +136,50 @@ class TestWriteRunSummary(DashboardTestCase):
         path = self._summary(findings=[], subdomains=0, live_hosts=0,
                              cloudflare=False)
         doc = path.read_text()
-        self.assertIn("No vulnerabilities found.", doc)
-        self.assertIn("total findings", doc)
+        self.assertIn('class="verdict"', doc)
+        self.assertIn("No candidates", doc)
         self.assertNotIn('<article class="finding">', doc)
+
+    def test_verdict_line_rendered_for_candidate(self):
+        finding = {"severity": "high", "template": "sqli", "name": "SQLi",
+                   "url": "https://example.com/x", "host": "example.com",
+                   "evidence": ""}
+        doc = self._summary(findings=[finding]).read_text()
+        self.assertIn('class="verdict"', doc)
+        self.assertIn("1 candidate", doc)
+
+    def test_two_tier_structure_present(self):
+        finding = {"severity": "high", "template": "sqli", "name": "SQLi",
+                   "url": "https://example.com/x", "host": "example.com",
+                   "evidence": ""}
+        doc = self._summary(findings=[finding]).read_text()
+        self.assertIn('class="candidates"', doc)
+        self.assertIn('tier-divider', doc)
+        self.assertIn('class="surface"', doc)
+
+    def test_candidate_rendered_noise_demoted(self):
+        candidate = {"severity": "high", "template": "sqli", "name": "RealVuln",
+                     "url": "https://example.com/x", "host": "example.com",
+                     "evidence": ""}
+        noise = {"severity": "low", "template": "tls:weak", "name": "WeakCipher",
+                 "url": "", "host": "example.com", "evidence": ""}
+        body = self._summary(findings=[candidate, noise]).read_text().split("</style>")[1]
+        self.assertIn('class="candidates"', body)
+        self.assertIn("RealVuln", body)
+        self.assertIn('class="noise"', body)
+        self.assertIn("WeakCipher", body)
+        # Candidate sits in the act-now tier; noise is demoted below the divider.
+        candidates_block = body.split('tier-divider')[0]
+        self.assertIn("RealVuln", candidates_block)
+        self.assertNotIn("WeakCipher", candidates_block)
+
+    def test_info_nuclei_in_collapsed_details(self):
+        info = {"severity": "info", "template": "some-cve", "name": "InfoOnly",
+                "url": "", "host": "example.com", "evidence": ""}
+        body = self._summary(findings=[info]).read_text().split("</style>")[1]
+        self.assertIn('info-findings', body)
+        details_block = body.split('info-findings')[1]
+        self.assertIn("InfoOnly", details_block)
 
     def test_origins_and_content_sections(self):
         origins = [{"ip": "1.2.3.4", "status": 200,
@@ -158,7 +199,7 @@ class TestWriteRunSummary(DashboardTestCase):
         self.assertNotIn("Origin candidates", doc2)
         self.assertNotIn("Discovered content", doc2)
 
-    def test_open_ports_nmap_card(self):
+    def test_open_ports_shown_in_surface(self):
         findings = [
             {"severity": "info", "template": "nmap:80/tcp", "name": "Open port 80",
              "url": "", "host": "1.2.3.4", "evidence": "http"},
@@ -167,26 +208,12 @@ class TestWriteRunSummary(DashboardTestCase):
             {"severity": "high", "template": "sqli", "name": "SQLi",
              "url": "https://example.com/x", "host": "example.com", "evidence": ""},
         ]
-        path = self._summary(findings=findings)
-        doc = path.read_text()
-        self.assertIn("open ports (nmap)", doc)
-        # The card value is the count of nmap:* templated findings (2 here).
-        self.assertIn(
-            '<div class="card-label">open ports (nmap)</div>'
-            '<div class="card-value">2</div>',
-            doc,
-        )
+        doc = self._summary(findings=findings).read_text()
+        surface = doc.split('class="surface"')[1]
+        self.assertIn("open ports", surface.lower())
+        self.assertIn("2", surface)
 
-    def test_open_ports_nmap_card_zero_when_absent(self):
-        path = self._summary(findings=[])
-        doc = path.read_text()
-        self.assertIn(
-            '<div class="card-label">open ports (nmap)</div>'
-            '<div class="card-value">0</div>',
-            doc,
-        )
-
-    def test_finding_count_equals_dedupe(self):
+    def test_candidate_card_count_matches_candidates(self):
         findings = [
             {"severity": "high", "template": "sqli", "name": "A",
              "url": "https://example.com/x", "host": "example.com",
@@ -198,10 +225,93 @@ class TestWriteRunSummary(DashboardTestCase):
              "url": "https://example.com/y", "host": "example.com",
              "evidence": ""},
         ]
-        path = self._summary(findings=findings)
-        doc = path.read_text()
-        html_count = doc.count('<article class="finding">')
-        self.assertEqual(html_count, len(report.dedupe(findings)))
+        body = self._summary(findings=findings).read_text().split("</style>")[1]
+        unique = report.dedupe(findings)
+        want = sum(1 for f in unique if dashboard_mod._is_candidate(f))
+        candidates_block = body.split('tier-divider')[0]
+        self.assertEqual(
+            candidates_block.count('<article class="finding">'), want)
+
+
+class TestIsCandidate(unittest.TestCase):
+    """The triage split rule: candidate = crit/high/medium OR panel: (any sev)."""
+
+    def _f(self, severity, template):
+        return {"severity": severity, "template": template, "name": "x",
+                "url": "", "host": "", "evidence": ""}
+
+    def test_panel_at_info_is_candidate(self):
+        self.assertTrue(dashboard_mod._is_candidate(self._f("info", "panel:admin")))
+
+    def test_plain_info_nuclei_is_not_candidate(self):
+        self.assertFalse(dashboard_mod._is_candidate(self._f("info", "some-cve")))
+
+    def test_medium_high_critical_are_candidates(self):
+        for sev in ("critical", "high", "medium"):
+            self.assertTrue(dashboard_mod._is_candidate(self._f(sev, "some-cve")), sev)
+
+    def test_low_non_panel_is_not_candidate(self):
+        self.assertFalse(dashboard_mod._is_candidate(self._f("low", "xss")))
+
+    def test_recon_prefixes_are_not_candidates(self):
+        for tmpl in ("tls:weak", "nikto:1", "dork:gh", "api-endpoint",
+                     "tech-detect:nginx", "nmap:80/tcp", "waf:cf"):
+            self.assertFalse(
+                dashboard_mod._is_candidate(self._f("info", tmpl)), tmpl)
+
+
+class TestOrderCandidates(unittest.TestCase):
+    """panel: floats to the top, then critical -> high -> medium."""
+
+    def _f(self, severity, template, name):
+        return {"severity": severity, "template": template, "name": name,
+                "url": "", "host": "", "evidence": ""}
+
+    def test_panel_sorts_ahead_of_higher_severity_non_panel(self):
+        high = self._f("high", "sqli", "HIGH")
+        panel = self._f("info", "panel:admin", "PANEL")
+        ordered = dashboard_mod._order_candidates([high, panel])
+        self.assertEqual(ordered[0]["name"], "PANEL")
+
+    def test_non_panel_sorted_by_severity(self):
+        medium = self._f("medium", "a", "MED")
+        critical = self._f("critical", "b", "CRIT")
+        ordered = dashboard_mod._order_candidates([medium, critical])
+        self.assertEqual([f["name"] for f in ordered], ["CRIT", "MED"])
+
+
+class TestVerdictLine(unittest.TestCase):
+    """The prose assertion at the top of the report."""
+
+    def _f(self, severity, template="x"):
+        return {"severity": severity, "template": template, "name": "n",
+                "url": "", "host": "", "evidence": ""}
+
+    def test_counts_candidates_and_top_severity(self):
+        line = dashboard_mod._verdict_line(
+            [self._f("high"), self._f("medium")], origins=[],
+            cloudflare=False, subdomains=10)
+        self.assertIn("candidate", line.lower())
+        self.assertIn("high", line.lower())
+
+    def test_mentions_exposed_panel(self):
+        line = dashboard_mod._verdict_line(
+            [self._f("info", "panel:admin")], origins=[],
+            cloudflare=False, subdomains=10)
+        self.assertIn("panel", line.lower())
+
+    def test_origin_behind_cloudflare_always_surfaces_with_ip(self):
+        line = dashboard_mod._verdict_line(
+            [], origins=[{"ip": "1.2.3.4", "status": 200, "sources": []}],
+            cloudflare=True, subdomains=10)
+        self.assertIn("cloudflare", line.lower())
+        self.assertIn("1.2.3.4", line)
+
+    def test_quiet_run_fallback(self):
+        line = dashboard_mod._verdict_line(
+            [], origins=[], cloudflare=False, subdomains=48)
+        self.assertIn("no candidates", line.lower())
+        self.assertIn("48", line)
 
 
 if __name__ == "__main__":

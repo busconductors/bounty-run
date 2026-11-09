@@ -88,20 +88,15 @@ class TestRunSummary(unittest.TestCase):
         )
         return path.read_text()
 
-    @staticmethod
-    def _card(label, value):
-        return ('<div class="card"><div class="card-label">{}</div>'
-                '<div class="card-value">{}</div></div>').format(label, value)
-
-    def test_waf_card_lists_names(self):
+    def test_waf_listed_in_edge_row(self):
         doc = self._doc(_phase12_findings())
-        self.assertIn(self._card("waf", "Cloudflare"), doc)
+        self.assertIn("WAF: Cloudflare", doc)
 
-    def test_waf_card_none(self):
+    def test_waf_none_in_edge_row(self):
         doc = self._doc([_f("panel:cpanel", "low")])
-        self.assertIn(self._card("waf", "none"), doc)
+        self.assertIn("WAF: none", doc)
 
-    def test_waf_card_dedupes_and_sorts(self):
+    def test_waf_dedupes_and_sorts(self):
         findings = [
             _f("waf:cloudflare", name="WAF detected: Cloudflare (Cloudflare Inc.)",
                host="a.example.com"),
@@ -111,29 +106,27 @@ class TestRunSummary(unittest.TestCase):
                name="WAF detected: AWS Elastic Load Balancer (Amazon)"),
         ]
         doc = self._doc(findings)
-        self.assertIn(self._card("waf", "AWS Elastic Load Balancer, Cloudflare"), doc)
+        self.assertIn("WAF: AWS Elastic Load Balancer, Cloudflare", doc)
 
-    def test_count_cards(self):
+    def test_scanner_counts_in_surface_row(self):
         findings = _phase12_findings() + [
             _f("nikto:missing-header:999", "info", url="https://example.com/x"),
         ]
         doc = self._doc(findings)
-        self.assertIn(self._card("panels", "1"), doc)
-        self.assertIn(self._card("dork hits", "1"), doc)
-        self.assertIn(self._card("tls issues", "1"), doc)
-        self.assertIn(self._card("nikto", "2"), doc)
+        # Scanners row: "<tls> tls · <nikto> nikto · <dork> dork · <panels> panels"
+        self.assertIn("1 tls · 2 nikto · 1 dork · 1 panels", doc)
 
-    def test_cards_follow_open_ports(self):
+    def test_surface_groups_in_order(self):
         doc = self._doc(_phase12_findings())
-        order = ["open ports (nmap)", "waf", "panels", "dork hits", "tls issues", "nikto",
-                 "total findings"]
-        idx = [doc.index('<div class="card-label">{}</div>'.format(lbl)) for lbl in order]
+        order = ["Reachability", "Edge", "Stack", "Scanners"]
+        idx = [doc.index('<span class="surface-label">{}</span>'.format(lbl))
+               for lbl in order]
         self.assertEqual(idx, sorted(idx))
 
-    def test_metric_cards_positional_callers_still_valid(self):
-        html = dashboard._summary_metric_cards(1, 1, False, 0, [], 0, 0)
-        self.assertIn(self._card("waf", "none"), html)
-        self.assertIn(self._card("nikto", "0"), html)
+    def test_surface_rows_positional_callers_still_valid(self):
+        html = dashboard._summary_surface_rows(1, 1, False, [], 0, 0)
+        self.assertIn("WAF: none", html)
+        self.assertIn("0 nikto", html)
 
 
 
