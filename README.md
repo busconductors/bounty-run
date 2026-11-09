@@ -1,7 +1,13 @@
 # Bounty Runner
 
+![Bounty Runner pipeline](docs/pipeline.png)
+
 A recon-to-report orchestrator for bug bounty hunters: one command chains your
 tooling into a scan, dedupes the results and tracks the findings.
+
+> **📖 Playbook:** for a step-by-step operational guide — install, launch
+> presets, stage-by-stage reference, reading the results — see
+> [PLAYBOOK.md](PLAYBOOK.md), also rendered as [a PDF](docs/PLAYBOOK.pdf).
 
 ## What it is
 

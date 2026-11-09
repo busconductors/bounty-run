@@ -1,0 +1,74 @@
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 28, "rankSpacing": 46, "padding": 14}, "themeVariables": {"background": "#0d1117", "primaryColor": "#161b22", "primaryTextColor": "#e6edf3", "primaryBorderColor": "#30363d", "lineColor": "#8b949e", "secondaryColor": "#161b22", "tertiaryColor": "#0d1117", "clusterBkg": "#10151c", "clusterBorder": "#30363d", "titleColor": "#f85149", "edgeLabelBackground": "#21262d", "fontFamily": "Liberation Sans, Helvetica, Arial, sans-serif", "fontSize": "15px"}}}%%
+graph LR
+  T(["BOUNTY RUNNER<br/>target domain"])
+
+  subgraph RECON["1 . RECON"]
+    direction TB
+    S1["01 subs<br/>subfinder<br/>(+ amass --amass)"]
+    S2["02 panel<br/>panel-style subdomains"]
+    S3["03 live<br/>HTTP/S probe"]
+    S4["04 cf<br/>Cloudflare detect"]
+    S5["05 origin<br/>leak subs / dig MX / crt.sh<br/>curl --resolve verify"]
+    S1 --> S2 --> S3 --> S4 -->|CF only| S5
+  end
+
+  subgraph EDGE["2 . NETWORK + EDGE"]
+    direction TB
+    S6["06 nmap<br/>top-1000<br/>(--nmap-full: -p-)"]
+    S7["07 waf<br/>wafw00f"]
+    S8["08 dork<br/>Mojeek + DuckDuckGo"]
+    S9["09 tls<br/>sslyze"]
+    S10["10 nikto<br/>nikto -maxtime"]
+    S6 --> S7 --> S8 --> S9 --> S10
+  end
+
+  subgraph VULN["3 . VULN + CONTENT"]
+    direction TB
+    S11["11 vuln<br/>nuclei<br/>edge + origin SNI"]
+    S12["12 content<br/>ffuf"]
+    S13["13 api<br/>katana"]
+    S14["14 param<br/>Wayback CDX + sqlmap"]
+    S15["15 secret<br/>HTML + JS leaks"]
+    S16["16 metis<br/>metis-autocheck"]
+    S11 --> S12 --> S13 --> S14 --> S15 --> S16
+  end
+
+  subgraph WEB["4 . WEB HYGIENE"]
+    direction TB
+    S17["17 headers<br/>shcheck"]
+    S18["18 cors<br/>6-origin probe"]
+    S19["19 tech<br/>whatweb"]
+    S20["20 headi<br/>header injection"]
+    S17 --> S18 --> S19 --> S20
+  end
+
+  subgraph OUT["5 . REPORT + TRACK"]
+    direction TB
+    R["report<br/>dedupe + severity sort<br/>FINDINGS.md / findings.json"]
+    DB[("tracker<br/>SQLite tracker.db")]
+    H["summary.html<br/>command center"]
+    R --> DB
+    R --> H
+  end
+
+  subgraph KEY["LEGEND"]
+    direction TB
+    K1["default-on"]
+    K2["opt-in flag"]
+    K1 ~~~ K2
+  end
+
+  T --> RECON
+  RECON -->|live hosts + origin IPs| EDGE
+  EDGE --> VULN
+  VULN --> WEB
+  WEB -->|all findings| OUT
+
+  classDef on fill:#161b22,stroke:#3fb950,stroke-width:2px,color:#e6edf3
+  classDef opt fill:#1c1214,stroke:#f85149,stroke-width:2px,stroke-dasharray:6 4,color:#ffb3ad
+  classDef brand fill:#f85149,stroke:#f85149,color:#0d1117,font-weight:bold
+  classDef out fill:#161b22,stroke:#f85149,stroke-width:2px,color:#e6edf3
+  class S1,S2,S3,S4,S5,S7,S8,S11,S12,S13,S14,S15,S17,S18,S19,K1 on
+  class S6,S9,S10,S16,S20,K2 opt
+  class T brand
+  class R,DB,H out
