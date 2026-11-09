@@ -18,13 +18,111 @@ If Metis or the shim is absent, or the sweep errors, this warns and skips
     findings = metis_check("example.com", outdir, ["example.com", "www.example.com"])
 """
 import json
+import os
 import shutil
+import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 
-from runner import utils
+from runner import events, utils
 
 SHIM_NAME = "metis-autocheck"
+
+_POLL_S = 0.25        # control-file poll interval while the sweep runs
+_TERM_GRACE_S = 5.0   # SIGTERM -> SIGKILL grace on cancel/skip
+
+
+def _killpg(proc: subprocess.Popen, sig: int) -> None:
+    """Signal the sweep's whole process group (shim + its grandchildren)."""
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, OSError):
+        if proc.poll() is None:
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+
+
+def _run_managed(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run the shim under a managed bounty run, honoring skip/cancel.
+
+    Mirrors ``runner.utils.run``: the shim is its own process-group leader
+    (``start_new_session=True``); the control file is polled every 250 ms via
+    ``events.check_control()`` so a ``skip metis`` / ``cancel`` terminates the
+    metis subprocess (``killpg``) mid-sweep instead of waiting for it to finish.
+    A ``timeout``-second wall-clock deadline is kept as a hard fallback.
+
+    Returns a ``CompletedProcess`` on normal exit; raises
+    ``subprocess.TimeoutExpired`` on the wall-clock deadline and re-raises
+    ``events.RunCancelled`` / ``events.StageSkipped`` after killing the group.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
+    readers = [
+        threading.Thread(target=lambda: out_chunks.append(proc.stdout.read()),
+                         daemon=True),
+        threading.Thread(target=lambda: err_chunks.append(proc.stderr.read()),
+                         daemon=True),
+    ]
+    registered = False
+    try:
+        for t in readers:
+            t.start()
+        events.register_child(proc.pid)
+        registered = True
+        deadline = time.monotonic() + timeout
+        while True:
+            # Done only once the shim exited AND both pipes hit EOF.
+            if proc.poll() is not None and not any(t.is_alive() for t in readers):
+                break
+            events.check_control()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _killpg(proc, signal.SIGKILL)
+                proc.wait()
+                for t in readers:
+                    t.join(_TERM_GRACE_S)
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            slice_s = min(_POLL_S, remaining)
+            if proc.poll() is None:
+                try:
+                    proc.wait(timeout=slice_s)
+                except subprocess.TimeoutExpired:
+                    pass
+            else:
+                alive = [t for t in readers if t.is_alive()]
+                if alive:
+                    alive[0].join(slice_s)
+    except (events.RunCancelled, events.StageSkipped):
+        _killpg(proc, signal.SIGTERM)
+        try:
+            proc.wait(timeout=_TERM_GRACE_S)
+        except subprocess.TimeoutExpired:
+            pass
+        _killpg(proc, signal.SIGKILL)
+        proc.wait()
+        for t in readers:
+            t.join(_TERM_GRACE_S)
+        raise
+    finally:
+        if registered:
+            events.unregister_child(proc.pid)
+
+    stdout = "".join(c for c in out_chunks if c)
+    stderr = "".join(c for c in err_chunks if c)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 # Hand-curated AUX -> EXPLOIT bridge. Maps a detected auxiliary scanner path to
 # the corresponding exploit module *only* when a real 1:1 (same CVE) module
@@ -71,14 +169,24 @@ def metis_check(target: str, outdir: Path, hosts: list[str],
         utils.warn(f"metis: could not write target list: {e}")
         return findings
 
+    cmd = [shim, f"file:{hosts_file}"]
     try:
-        proc = subprocess.run(
-            [shim, f"file:{hosts_file}"],
-            capture_output=True, text=True, timeout=timeout,
-        )
+        if events.run_dir() is not None:
+            # Inside a managed run: poll the control file so a skip/cancel kills
+            # the sweep mid-run (killpg). 600s wall-clock kept as a fallback.
+            proc = _run_managed(cmd, timeout)
+        else:
+            # Standalone (and the unit tests, which patch subprocess.run): a
+            # plain blocking call with the same wall-clock timeout is enough.
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout,
+            )
     except subprocess.TimeoutExpired:
         utils.warn(f"metis: sweep timed out after {timeout}s — skipping")
         return findings
+    except (events.RunCancelled, events.StageSkipped):
+        # Let the stage wrapper (events.stage) record skipped/cancelled.
+        raise
     except OSError as e:  # noqa: BLE001
         utils.warn(f"metis: sweep failed to run: {e}")
         return findings
