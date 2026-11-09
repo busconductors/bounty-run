@@ -298,11 +298,11 @@ _TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BuntyRun — Dashboard</title>
+<title>Bounty Runner — Dashboard</title>
 {stylesheet}
 </head>
 <body>
-<header><h1>BuntyRun <span>— Dashboard</span></h1></header>
+<header><h1>Bounty Runner <span>— Dashboard</span></h1></header>
 <main>
   {empty_note}
   <section>
@@ -700,12 +700,12 @@ _SUMMARY_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BuntyRun — Executive Summary</title>
+<title>Bounty Runner — Executive Summary</title>
 {stylesheet}
 </head>
 <body>
 <header>
-  <h1>BuntyRun <span>— Executive Summary</span></h1>
+  <h1>Bounty Runner <span>— Executive Summary</span></h1>
   <p class="summary-meta">{target} · {run_time}</p>
 </header>
 <main>

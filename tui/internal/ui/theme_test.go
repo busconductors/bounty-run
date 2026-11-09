@@ -32,7 +32,7 @@ func TestBannerRendersArtUnmodifiedInRed(t *testing.T) {
 			t.Fatalf("banner line altered or missing: %q", l)
 		}
 	}
-	for _, w := range []string{"⣀⣀", "___", "Bunty Run by Strasser Lab"} {
+	for _, w := range []string{"⣀⣀", "___", "Bounty Runner by busconductors"} {
 		if !strings.Contains(p, w) {
 			t.Fatalf("missing %q", w)
 		}
@@ -48,7 +48,7 @@ func TestSplashDismissedByKeyOrTimer(t *testing.T) {
 		t.Fatalf("screen = %s", r.Screen())
 	}
 	r.Update(tea.WindowSizeMsg{Width: 120, Height: 45})
-	if v := plain(r.View().Content); !strings.Contains(v, "Bunty Run by Strasser Lab") || !strings.Contains(v, "⣀⣀") {
+	if v := plain(r.View().Content); !strings.Contains(v, "Bounty Runner by busconductors") || !strings.Contains(v, "⣀⣀") {
 		t.Fatalf("splash missing banner:\n%s", v)
 	}
 	r.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
@@ -70,7 +70,7 @@ func TestSplashDismissedByKeyOrTimer(t *testing.T) {
 
 func TestSplashCaptionOnSmallTerminal(t *testing.T) {
 	v := plain(splashView(40, 12))
-	if !strings.Contains(v, "Bunty Run by Strasser Lab") {
+	if !strings.Contains(v, "Bounty Runner by busconductors") {
 		t.Fatal(v)
 	}
 }
@@ -82,7 +82,7 @@ func TestLaunchScreenShowsBannerWhenWide(t *testing.T) {
 	teatest.WaitFor(t, tm.Output(), contains("Target"), teatest.WithDuration(5*time.Second))
 	r := finalRoot(t, tm)
 	v := r.launch.View()
-	if !strings.Contains(plain(v), "Bunty Run by Strasser Lab") || !strings.Contains(plain(v), "⠉⠛⠲⢤⡀") {
+	if !strings.Contains(plain(v), "Bounty Runner by busconductors") || !strings.Contains(plain(v), "⠉⠛⠲⢤⡀") {
 		t.Fatalf("launch screen missing banner:\n%s", plain(v))
 	}
 	for i, l := range strings.Split(v, "\n") {

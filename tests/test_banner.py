@@ -30,7 +30,7 @@ class TestBannerRender(unittest.TestCase):
 
         Path.read_text = _boom
         self.addCleanup(setattr, Path, "read_text", orig)
-        self.assertEqual(banner.render(), "BuntyRun by Strasser Lab")
+        self.assertEqual(banner.render(), "Bounty Runner by busconductors")
 
     def test_render_returns_non_empty_with_real_asset(self):
         out = banner.render()
@@ -59,8 +59,8 @@ class TestBannerRender(unittest.TestCase):
                    if any("\u2801" <= ch <= "\u28ff" for ch in ln)]
         self.assertGreaterEqual(len(braille), 10)
         self.assertNotIn("#", out)
-        self.assertIn("|___/\\_,_|_||_\\__|", out)  # "Bunty" in figlet small
-        self.assertIn("|____\\__,_|_.__/", out)      # "Lab" in figlet small
+        self.assertIn("|___/\\___/\\_,_|_||_\\__|", out)  # "Bounty" in figlet small
+        self.assertIn("by busconductors", out)
 
     def test_print_banner_renders_without_error(self):
         buf = io.StringIO()

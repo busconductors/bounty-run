@@ -9,14 +9,14 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// startupBanner is assets/startup_banner.txt (the Braille face, the "Bunty Run"
-// wordmark and "by Strasser Lab"), synced into this package by `make banner`.
+// startupBanner is assets/startup_banner.txt (the Braille face, the "Bounty Runner"
+// wordmark and "by busconductors"), synced into this package by `make banner`.
 //
 //go:embed assets/startup_banner.txt
 var startupBanner string
 
 // bannerCaption spells the wordmark out in plain text under the art.
-const bannerCaption = "Bunty Run by Strasser Lab"
+const bannerCaption = "Bounty Runner by busconductors"
 
 // bannerLines is the art without trailing blank lines; text is never altered.
 func bannerLines() []string {

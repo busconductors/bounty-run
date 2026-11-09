@@ -8,14 +8,14 @@ def render() -> str:
     """Return the colorized startup banner, or a literal fallback if missing.
 
     Everything renders bright red ("91"): the Braille face, the figlet-`small`
-    wordmark and the "by Strasser Lab" credit. The plain-prose tagline is
+    wordmark and the "by busconductors" credit. The plain-prose tagline is
     dimmed red ("2;91") so it sits behind the art. Blank lines stay blank.
     """
     asset = Path(__file__).resolve().parent.parent / "assets" / "startup_banner.txt"
     try:
         text = asset.read_text()
     except (OSError, FileNotFoundError):
-        return "BuntyRun by Strasser Lab"
+        return "Bounty Runner by busconductors"
 
     lines = []
     for line in text.splitlines():
