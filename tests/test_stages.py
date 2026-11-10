@@ -55,7 +55,7 @@ class IsGlobalTests(unittest.TestCase):
 class ProbeHostTests(unittest.TestCase):
     def test_non_global_ip_is_never_probed(self):
         with mock.patch.object(stages.socket, "gethostbyname", return_value="127.0.0.1"), \
-             mock.patch.object(stages, "requests", create=True) as req:
+             mock.patch.object(stages, "requests") as req:
             row = stages._probe_host("evil.internal", 5)
         self.assertEqual(row, {"host": "evil.internal", "url": "", "status": 0,
                                "server": "", "cloudflare": False})
@@ -64,7 +64,7 @@ class ProbeHostTests(unittest.TestCase):
     def test_dns_failure_returns_safe_row(self):
         with mock.patch.object(stages.socket, "gethostbyname",
                                side_effect=Exception("nope")), \
-             mock.patch.object(stages, "requests", create=True) as req:
+             mock.patch.object(stages, "requests") as req:
             row = stages._probe_host("does-not-resolve", 5)
         self.assertEqual(row["status"], 0)
         req.get.assert_not_called()
@@ -72,7 +72,7 @@ class ProbeHostTests(unittest.TestCase):
     def test_global_ip_probes_with_no_redirects_and_streams(self):
         resp = FakeResp({"Server": "cloudflare", "cf-ray": "abc"})
         with mock.patch.object(stages.socket, "gethostbyname", return_value="8.8.8.8"), \
-             mock.patch.object(stages, "requests", create=True) as req:
+             mock.patch.object(stages, "requests") as req:
             req.get.return_value = resp
             row = stages._probe_host("example.com", 5)
         _, kwargs = req.get.call_args
