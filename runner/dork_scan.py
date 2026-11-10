@@ -32,7 +32,7 @@ from urllib.parse import unquote, urlsplit
 from runner import events, scope, utils
 
 try:
-    import requests
+    from runner.httpclient import compat as requests
     HAVE_REQUESTS = True
 except ImportError:
     HAVE_REQUESTS = False
@@ -134,7 +134,8 @@ def _fetch(url: str, query: str) -> tuple[int | None, str]:
     """(status, body); (None, "") on any request error."""
     try:
         r = requests.get(url, params={"q": query},
-                         headers={"User-Agent": DORK_UA}, timeout=DORK_TIMEOUT)
+                         headers={"User-Agent": DORK_UA}, timeout=DORK_TIMEOUT,
+                         purpose="osint", scope_exempt=True)
     except requests.RequestException:
         return None, ""
     return r.status_code, r.text or ""

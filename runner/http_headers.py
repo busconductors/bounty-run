@@ -70,6 +70,10 @@ def security_headers_scan(target: str, outdir: Path, hosts: list[str] | None = N
     cmd = f"python3 {SHCHECK} -j -d -g {' '.join(urls)}"
     if include_deprecated:
         cmd += " -k"
+    from runner import httpclient
+    proxy_args = httpclient.tool_proxy_args("shcheck")
+    if proxy_args:
+        cmd += " " + " ".join(proxy_args)
     raw = utils.run(cmd, outfile=str(Path(outdir) / "security_headers.json"), timeout=120)
     data = _parse_shcheck_json(raw)
 
@@ -183,9 +187,9 @@ def _probe_cors(base_url: str, host: str) -> tuple[list[dict], list[str]]:
 
 def _send_origin(url: str, origin: str) -> tuple[str, str]:
     try:
-        import requests as _requests
-        r = _requests.get(url, headers={"Origin": origin}, timeout=(_CORS_TIMEOUT, _CORS_TIMEOUT),
-                          verify=False, allow_redirects=True)
+        from runner import httpclient
+        r = httpclient.get(url, headers={"Origin": origin},
+                           timeout=(_CORS_TIMEOUT, _CORS_TIMEOUT), allow_redirects=True)
     except Exception:  # noqa: BLE001
         return "", ""
     acao = (r.headers.get("Access-Control-Allow-Origin") or "").replace(",", ";")
