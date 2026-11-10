@@ -897,8 +897,16 @@ _SUMMARY_TEMPLATE = """<!DOCTYPE html>
 
 
 def write_run_summary(outdir, target, findings, content, origins, *,
-                      run_time, subdomains, live_hosts, cloudflare) -> Path:
-    """Write a self-contained per-run command-center summary to ``outdir/summary.html``."""
+                      run_time, subdomains, live_hosts, cloudflare,
+                      meta=None, stages=None, metrics=None, out_of_scope=None,
+                      provenance=None, evidence_index=None) -> Path:
+    """Write a self-contained per-run command-center summary to ``outdir/summary.html``.
+
+    The ``meta``/``stages``/``metrics``/``out_of_scope``/``provenance``/
+    ``evidence_index`` keyword arguments carry extra run context for the richer
+    layout (wired in C21); they default to ``None`` so existing callers and
+    tests keep working unchanged.
+    """
     unique = report.dedupe(findings)
     unique.sort(
         key=lambda f: report.SEVERITY_ORDER.get(

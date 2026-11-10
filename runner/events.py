@@ -20,6 +20,9 @@ _skipped: set[str] = set()
 _consume_seq = 0
 _skip_reason: str | None = None
 _children: set[int] = set()
+# In-memory stage timeline (one dict per stage_end), for the run summary. Never
+# re-read from events.jsonl, which can reach hundreds of MB.
+_stage_log: list[dict] = []
 
 
 class RunCancelled(Exception):
@@ -52,6 +55,7 @@ def reset() -> None:
         _skipped.clear()
         _skip_reason = None
         _children.clear()
+        _stage_log.clear()
 
 
 def enabled() -> bool:
@@ -94,8 +98,15 @@ def stage_start(stage: str) -> None:
 def stage_end(stage: str, status: str, duration_ms: int, counts: dict,
               reason: str | None = None) -> None:
     extra = {} if reason is None else {"reason": reason}
+    _stage_log.append({"stage": stage, "status": status, "duration_ms": duration_ms,
+                       "counts": dict(counts or {}), "reason": reason})
     emit("stage_end", stage=stage, status=status, duration_ms=duration_ms,
          counts=counts, **extra)
+
+
+def stage_log() -> list[dict]:
+    """The in-memory stage timeline accumulated this run."""
+    return list(_stage_log)
 
 
 def progress(stage: str, done: int, total: int) -> None:
