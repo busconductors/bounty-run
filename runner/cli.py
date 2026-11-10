@@ -252,37 +252,47 @@ def _emit_findings(findings: list[dict]) -> None:
 
 
 def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> None:
-    if "subs" not in skip:
+    SPEC = stage_registry.SPEC
+
+    def ok(sid: str) -> bool:
+        """Whether a stage runs under the current skip set, opt-in flags and gate."""
+        return stage_registry.stage_allowed(SPEC[sid], args, skip)[0]
+
+    def _hdr(sid: str) -> None:
+        spec = SPEC[sid]
+        utils.stage_header(spec.num, TOTAL_STAGES, spec.title)
+
+    if ok("subs"):
         with events.stage("subs") as sc:
-            utils.stage_header(1, TOTAL_STAGES, "SUBDOMAIN ENUMERATION")
+            _hdr("subs")
             st.subs = stages.subdomain_enum(target, outdir, skip_amass=not args.amass)
             sc.counts["subdomains"] = len(st.subs)
-    if "panel" not in skip:
+    if ok("panel"):
         with events.stage("panel") as sc:
-            utils.stage_header(2, TOTAL_STAGES, "PANEL DETECTION")
+            _hdr("panel")
             new = panel_detect.panel_detect(target, outdir, st.subs)
             st.findings += new
             _emit_findings(new)
             sc.counts["findings"] = len(new)
-    if "live" not in skip:
+    if ok("live"):
         with events.stage("live") as sc:
-            utils.stage_header(3, TOTAL_STAGES, "LIVE HOST PROBING")
+            _hdr("live")
             st.rows = stages.live_hosts(st.subs, outdir, timeout=args.timeout,
                                         threads=args.threads, max_hosts=args.max_hosts)
             sc.counts["live"] = len([r for r in st.rows if r["status"]])
     live = [r["host"] for r in st.rows if r["status"]] or [target]
-    if "cf" not in skip:
+    if ok("cf"):
         with events.stage("cf") as sc:
-            utils.stage_header(4, TOTAL_STAGES, "CLOUDFLARE DETECTION")
+            _hdr("cf")
             st.cf = stages.cloudflare_detect(target, outdir)
             sc.counts["cloudflare"] = int(bool(st.cf["cloudflare"]))
 
-    if "origin" not in skip:
+    if ok("origin"):
         if st.cf["cloudflare"]:
             with events.stage("origin") as sc:
-                utils.stage_header(5, TOTAL_STAGES, "ORIGIN HUNTING")
+                _hdr("origin")
                 st.origins = stages.origin_hunt(target, outdir, st.cf)
-                if "origin_deep" not in skip:
+                if ok("origin_deep"):
                     st.origins = st.origins + origin_deep.origin_deep(target, outdir, st.cf)
                 sc.counts["origins"] = len(_merge_origins_by_ip(st.origins))
         elif events.enabled():
@@ -290,37 +300,38 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
                 events.mark_skipped("no cloudflare")
     st.origins = _merge_origins_by_ip(st.origins)
 
-    def scan(stage_id, num, title, fn, *a, **kw):
+    def scan(stage_id, fn, *a, **kw):
+        spec = SPEC[stage_id]
         with events.stage(stage_id) as sc:
-            utils.stage_header(num, TOTAL_STAGES, title)
+            utils.stage_header(spec.num, TOTAL_STAGES, spec.title)
             new = fn(*a, **kw)
             st.findings += new
             _emit_findings(new)
             sc.counts["findings"] = len(new)
 
-    if "nmap" not in skip and args.nmap:
-        scan("nmap", 6, "PORT SCAN (NMAP)", nmap_scan.nmap_scan,
+    if ok("nmap"):
+        scan("nmap", nmap_scan.nmap_scan,
              target, outdir, st.rows, st.origins, full=args.nmap_full)
 
     host_cap = min(args.max_hosts, 20)
-    if "waf" not in skip:
-        scan("waf", 7, "WAF FINGERPRINT (WAFW00F)", waf_scan.waf_scan,
+    if ok("waf"):
+        scan("waf", waf_scan.waf_scan,
              target, outdir, hosts=live, max_hosts=host_cap)
-    if "dork" not in skip:
-        scan("dork", 8, "SEARCH-ENGINE DORKING (OSINT)", dork_scan.dork_scan, target, outdir)
-    if "tls" not in skip and args.tls:
-        scan("tls", 9, "TLS/SSL ANALYSIS (SSLYZE)", tls_scan.tls_scan,
+    if ok("dork"):
+        scan("dork", dork_scan.dork_scan, target, outdir)
+    if ok("tls"):
+        scan("tls", tls_scan.tls_scan,
              target, outdir, hosts=live, max_hosts=host_cap)
-    if "nikto" not in skip and args.nikto:
-        scan("nikto", 10, "WEB-SERVER SCAN (NIKTO)", nikto_scan.nikto_scan,
+    if ok("nikto"):
+        scan("nikto", nikto_scan.nikto_scan,
              target, outdir, hosts=live, max_hosts=host_cap)
 
     write_summary(outdir, target, st.subs, st.rows, st.cf, st.origins)
     st.summary_written = True
 
-    if "vuln" not in skip:
+    if ok("vuln"):
         with events.stage("vuln") as sc:
-            utils.stage_header(11, TOTAL_STAGES, "VULNERABILITY SCAN (NUCLEI)")
+            _hdr("vuln")
             new = stages.vuln_scan(target, outdir, st.rows, severity=args.nuclei_severity,
                                    concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
                                    origins=st.origins)
@@ -328,32 +339,32 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             sc.counts["findings"] = len(new)
             report.write_findings_report(outdir, target, st.findings, [], origins=st.origins)
 
-    if "content" not in skip:
+    if ok("content"):
         with events.stage("content") as sc:
-            utils.stage_header(12, TOTAL_STAGES, "CONTENT DISCOVERY")
+            _hdr("content")
             st.content = stages.content_discovery(target, outdir, args.wordlist)
             sc.counts["content"] = len(st.content)
 
-    if "api" not in skip:
-        scan("api", 13, "API ENDPOINT ENUMERATION", api_endpoints.api_endpoints_scan,
+    if ok("api"):
+        scan("api", api_endpoints.api_endpoints_scan,
              target, outdir, max_hosts=min(args.max_hosts, 20))
-    if "param" not in skip:
-        scan("param", 14, "PARAMETER / SQLi SCAN", param_scan.param_scan,
+    if ok("param"):
+        scan("param", param_scan.param_scan,
              target, outdir, args.max_param_urls)
-    if "secret" not in skip:
-        scan("secret", 15, "SECRET SCAN", secret_scan.secret_scan, target, outdir)
-    if "metis" not in skip and args.metis:
-        scan("metis", 16, "METIS CVE SWEEP", metis_check.metis_check, target, outdir, live)
+    if ok("secret"):
+        scan("secret", secret_scan.secret_scan, target, outdir)
+    if ok("metis"):
+        scan("metis", metis_check.metis_check, target, outdir, live)
 
-    if "headers" not in skip:
-        scan("headers", 17, "SECURITY HEADERS", http_headers.security_headers_scan,
+    if ok("headers"):
+        scan("headers", http_headers.security_headers_scan,
              target, outdir, live)
-    if "cors" not in skip:
-        scan("cors", 18, "CORS MISCONFIGURATION", http_headers.cors_scan, target, outdir, live)
-    if "tech" not in skip:
-        scan("tech", 19, "TECH DETECTION", tech_scan.tech_scan, target, outdir, live)
-    if "headi" not in skip and args.headi:
-        scan("headi", 20, "HEADER INJECTION (HEADI)", headi_scan.headi_scan,
+    if ok("cors"):
+        scan("cors", http_headers.cors_scan, target, outdir, live)
+    if ok("tech"):
+        scan("tech", tech_scan.tech_scan, target, outdir, live)
+    if ok("headi"):
+        scan("headi", headi_scan.headi_scan,
              target, outdir, st.rows)
 
 
