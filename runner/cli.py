@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import (__version__, api_endpoints, banner, categories, dashboard, dork_scan,
-               events, finding, headi_scan, http_headers, httpclient, metis_check,
-               nikto_scan, nmap_scan, origin_deep, panel_detect, param_scan, report,
-               scope, secret_scan, stage_registry, stages, tech_scan, tls_scan,
-               tracker, utils, waf_scan)
+               events, evidence, finding, headi_scan, http_headers, httpclient,
+               metis_check, nikto_scan, nmap_scan, origin_deep, panel_detect,
+               param_scan, report, scope, secret_scan, stage_registry, stages,
+               tech_scan, tls_scan, tracker, utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -61,6 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="retry transient HTTP failures N times (default 0)")
     p.add_argument("--verify-tls", action="store_true",
                    help="verify TLS certificates on in-process requests (off by default)")
+    p.add_argument("--no-evidence", action="store_true",
+                   help="do not capture request/response evidence under evidence/")
+    p.add_argument("--evidence-unredacted", action="store_true",
+                   help="store evidence without redacting secrets/auth headers (use with care)")
+    p.add_argument("--evidence-max-body", type=_positive_int, default=256_000, metavar="N",
+                   help="cap stored response bodies at N bytes (default 256000)")
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
@@ -488,6 +494,12 @@ def _finish(args, target: str, outdir: Path, skip: set[str], st: RunState) -> in
         write_summary(outdir, target, subs, rows, cf, origins)
         st.summary_written = True
 
+    store = evidence.active()
+    if store is not None:
+        evidence.ingest_nuclei(store, outdir)
+        evidence.link_tool_artifacts(store, report.dedupe(findings), outdir)
+        store.flush()
+
     duration_s = time.monotonic() - st.start
     m = report.build_metrics(target, subs, rows, cf, origins, findings, content, duration_s, skip)
     n_findings = report.write_findings_report(outdir, target, findings, content, origins=origins, metrics=m)
@@ -576,6 +588,7 @@ def main(argv=None) -> int:
         return _run(args, target, outdir, skip)
     finally:
         httpclient.client().close()
+        evidence.reset()
         scope.reset()
         if args.events:
             events.reset()
@@ -586,6 +599,9 @@ def _run(args, target: str, outdir: Path, skip: set[str]) -> int:
     utils.log(f"output dir: {outdir}")
 
     st = RunState(target, start=time.monotonic())
+    evidence.activate(evidence.EvidenceStore(
+        outdir, redact=not args.evidence_unredacted,
+        max_body=args.evidence_max_body, enabled=not args.no_evidence))
     report_path, summary_path = str(outdir / "FINDINGS.md"), str(outdir / "SUMMARY.md")
     try:
         try:

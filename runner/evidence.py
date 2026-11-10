@@ -313,6 +313,92 @@ def response_hook(resp, ctx) -> None:
         _stash_map()[finding.normalize_url(url)] = (resp.request, resp)
 
 
+def ingest_nuclei(store: EvidenceStore, outdir) -> int:
+    """Parse ``nuclei*.jsonl`` and store each finding's raw request/response.
+
+    Matches ``(template-id, host, matched-at)`` to the finding fingerprint and
+    records the line's ``request``/``response``/``curl-command``. When ``-omit-raw``
+    stripped those fields, the source jsonl is linked instead.
+    """
+    if store is None or not store.enabled:
+        return 0
+    outdir = Path(outdir)
+    n = 0
+    for jsonl in sorted(outdir.glob("nuclei*.jsonl")):
+        for line in jsonl.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                j = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(j, dict):
+                continue
+            info = j.get("info") if isinstance(j.get("info"), dict) else {}
+            f = {
+                "severity": str(info.get("severity") or "unknown").lower(),
+                "template": j.get("template-id", ""),
+                "name": info.get("name", ""),
+                "url": j.get("matched-at", ""),
+                "host": j.get("host", ""),
+            }
+            request_text = j.get("request")
+            response_text = j.get("response")
+            curl = j.get("curl-command")
+            if request_text or response_text:
+                store.record_raw(f, request_text or "", response_text or "",
+                                 curl=curl, source="nuclei")
+            else:
+                store.link(f, [jsonl], repro=curl, note="raw omitted (-omit-raw)")
+            n += 1
+    return n
+
+
+# category key -> (artifact path templates, repro command template). ``{host}``
+# is substituted per finding; ``{url}`` falls back to a plain curl.
+_ARTIFACTS = {
+    "nmap": (["nmap.xml", "nmap_open_ports.txt"], "nmap -sV {host}"),
+    "nikto": (["nikto/{host}.json"], "nikto -host {host}"),
+    "tls": (["sslyze/{host}.json"], "sslyze {host}"),
+    "waf": (["wafw00f.json"], "wafw00f {url}"),
+    "tech": (["whatweb.json"], "whatweb {url}"),
+    "sqli": (["sqlmap_report.txt"], "sqlmap -u {url} --batch"),
+    "headi": (["headi_raw.txt"], "headi -url {url}"),
+    "headers_missing": (["security_headers.json"], "curl -sSI {url}"),
+    "headers_insecure": (["security_headers.json"], "curl -sSI {url}"),
+}
+
+
+def link_tool_artifacts(store: EvidenceStore, findings, outdir) -> int:
+    """Link external-tool artifact files to their findings, by category."""
+    if store is None or not store.enabled:
+        return 0
+    from . import categories
+    outdir = Path(outdir)
+    linked = 0
+    seen: set[str] = set()
+    for f in findings:
+        key = categories.classify(f.get("template")).key
+        spec = _ARTIFACTS.get(key)
+        if not spec:
+            continue
+        fp = finding_fp(f)
+        if fp in seen:
+            continue
+        host = f.get("host") or ""
+        url = f.get("url") or ""
+        paths = [outdir / tmpl.format(host=host) for tmpl in spec[0]]
+        existing = [p for p in paths if p.exists()]
+        if not existing:
+            continue
+        repro = spec[1].format(host=host or url, url=url or host)
+        store.link(f, existing, repro=repro)
+        seen.add(fp)
+        linked += 1
+    return linked
+
+
 def attach(finding_dict: Mapping, url: str | None = None) -> str | None:
     """Bind the most recent stashed exchange for ``url`` to a finding.
 
