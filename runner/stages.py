@@ -396,7 +396,8 @@ def _emit_nuclei_finding_from_line(line: str) -> None:
 
 
 def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "info,low,medium,high,critical",
-              concurrency: int = 25, timeout: int = 1800, origins: list[dict] = None) -> list[dict]:
+              concurrency: int = 25, timeout: int = 1800, origins: list[dict] = None,
+              oast: bool = True) -> list[dict]:
     """Stage 5: run nuclei against live hosts, parse JSONL into findings.
 
     `origins` is an optional list of dicts (each with an 'ip' key) for origin
@@ -419,12 +420,14 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     hosts = [h for h in hosts if _is_global(_resolve(h))]
     if not hosts:
         hosts = [target]
+    # OAST (interactsh) is on by default; --no-oast degrades to -ni (no-interactsh).
+    ni = "" if oast else " -ni"
     hosts_file = outdir / "nuclei_targets.txt"
     hosts_file.write_text("\n".join(hosts) + "\n")
     utils.log(f"  scanning {len(hosts)} host(s) [{severity}] — this can take a few minutes")
     utils.run(
         f"nuclei -l {shlex.quote(str(hosts_file))} -severity {shlex.quote(severity)} "
-        f"-c {concurrency} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
+        f"-c {concurrency}{ni} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
         timeout=timeout,
         on_line=_emit_nuclei_finding_from_line,
     )
@@ -446,7 +449,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
         utils.run(
             f"nuclei -l {shlex.quote(str(origin_targets))} -severity {shlex.quote(severity)} "
             f"-sni {shlex.quote(target)} -H {shlex.quote('Host: ' + target)} "
-            f"-c {concurrency} -jsonl -silent -o {shlex.quote(str(origin_jsonl))}",
+            f"-c {concurrency}{ni} -jsonl -silent -o {shlex.quote(str(origin_jsonl))}",
             timeout=timeout,
             on_line=_emit_nuclei_finding_from_line,
         )

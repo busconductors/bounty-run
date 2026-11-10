@@ -36,6 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--amass", action="store_true", help="also run amass passive enum (needs API keys to be useful)")
     p.add_argument("--timeout", type=_positive_int, default=8, help="HTTP probe timeout in seconds (default 8)")
     p.add_argument("--threads", type=_positive_int, default=30, help="concurrent HTTP probe threads (default 30)")
+    p.add_argument("--intensity", choices=("passive", "active", "intrusive"), default="intrusive",
+                   help="capability ceiling: passive (OSINT only), active (normal probes), "
+                        "intrusive (fuzz/inject/portscan; default — reproduces today's run)")
+    p.add_argument("--no-oast", action="store_true",
+                   help="disable out-of-band (interactsh) interaction in nuclei (adds -ni)")
+    p.add_argument("--allow-auth", action="store_true",
+                   help="permit authenticated-request stages (reserved; none use it yet)")
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
@@ -262,6 +269,20 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
         spec = SPEC[sid]
         utils.stage_header(spec.num, TOTAL_STAGES, spec.title)
 
+    # An opt-in stage explicitly requested but blocked by the intensity ceiling
+    # is reported (never silently dropped). Only reachable below the default
+    # intrusive ceiling, so default stdout/events are unaffected.
+    for sid in STAGE_IDS:
+        spec = SPEC[sid]
+        if not (spec.opt_in_flag and getattr(args, spec.opt_in_flag, False)):
+            continue
+        allowed, reason = stage_registry.stage_allowed(spec, args, skip)
+        if not allowed and reason and reason.startswith("intensity:"):
+            utils.warn(f"{sid}: {reason} — skipping")
+            if events.enabled():
+                with events.stage(sid):
+                    events.mark_skipped(reason)
+
     if ok("subs"):
         with events.stage("subs") as sc:
             _hdr("subs")
@@ -334,7 +355,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             _hdr("vuln")
             new = stages.vuln_scan(target, outdir, st.rows, severity=args.nuclei_severity,
                                    concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
-                                   origins=st.origins)
+                                   origins=st.origins, oast=stage_registry.oast_enabled(args))
             st.findings += new
             sc.counts["findings"] = len(new)
             report.write_findings_report(outdir, target, st.findings, [], origins=st.origins)
