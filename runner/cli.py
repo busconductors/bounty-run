@@ -8,8 +8,8 @@ from pathlib import Path
 
 from . import (__version__, api_endpoints, banner, dashboard, dork_scan, events,
                finding, headi_scan, http_headers, metis_check, nikto_scan, nmap_scan,
-               origin_deep, panel_detect, param_scan, report, secret_scan, stage_registry,
-               stages, tech_scan, tls_scan, tracker, utils, waf_scan)
+               origin_deep, panel_detect, param_scan, report, scope, secret_scan,
+               stage_registry, stages, tech_scan, tls_scan, tracker, utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -43,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="disable out-of-band (interactsh) interaction in nuclei (adds -ni)")
     p.add_argument("--allow-auth", action="store_true",
                    help="permit authenticated-request stages (reserved; none use it yet)")
+    p.add_argument("--scope-allow", action="append", metavar="PATTERN", default=[],
+                   help="in-scope rule (repeatable): host, *.wildcard, CIDR, or re:<regex>")
+    p.add_argument("--scope-deny", action="append", metavar="PATTERN", default=[],
+                   help="out-of-scope rule (repeatable); deny wins over allow")
+    p.add_argument("--scope-file", metavar="PATH",
+                   help="scope rules file, one per line; a leading '!' marks a deny rule")
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
@@ -447,6 +453,22 @@ def main(argv=None) -> int:
               file=__import__("sys").stderr)
         return 2
 
+    try:
+        active_scope = scope.from_args(
+            target, getattr(args, "scope_allow", None),
+            getattr(args, "scope_deny", None), getattr(args, "scope_file", None))
+    except re.error as e:
+        print(f"error: invalid scope regex: {e}", file=__import__("sys").stderr)
+        return 2
+    except OSError as e:
+        print(f"error: cannot read scope file: {e}", file=__import__("sys").stderr)
+        return 2
+    if active_scope.denies_host(target):
+        print(f"error: target {target} is excluded by a --scope-deny rule",
+              file=__import__("sys").stderr)
+        return 2
+    scope.set_active(active_scope)
+
     if not args.no_banner:
         banner.print_banner()
 
@@ -465,6 +487,7 @@ def main(argv=None) -> int:
     try:
         return _run(args, target, outdir, skip)
     finally:
+        scope.reset()
         if args.events:
             events.reset()
 

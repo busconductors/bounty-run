@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from runner import events, utils
+from runner import events, scope, utils
 
 try:
     import requests
@@ -106,11 +106,16 @@ def _ddg_blocked(page: str) -> bool:
 
 
 def _in_scope(url: str, target: str) -> bool:
-    host = _hostname(url)
-    if not host:
-        return False
-    target = target.strip().lower().rstrip(".")
-    return host == target or host.endswith("." + target)
+    """True if ``url`` is in the active scope (defaults to target + subdomains).
+
+    Thin alias over :func:`runner.scope`; kept as a named attribute because
+    tests call it directly.
+    """
+    t = (target or "").strip().lower().rstrip(".")
+    s = scope.active()
+    if s.target != t:
+        s = scope.default(t)
+    return s.url_allowed(url)
 
 
 def _normalise(url: str) -> str:

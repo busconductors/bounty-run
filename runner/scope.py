@@ -83,6 +83,10 @@ class Scope:
                 return True
         return False
 
+    def denies_host(self, host) -> bool:
+        """True if an explicit deny rule matches ``host`` (used to refuse a run)."""
+        return self._denied(host=(host or "").lower().rstrip("."))
+
     def host_allowed(self, host) -> bool:
         host = (host or "").lower().rstrip(".")
         if not host:

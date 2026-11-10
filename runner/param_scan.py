@@ -17,7 +17,7 @@ import shlex
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
-from runner import events, utils
+from runner import events, scope, utils
 
 # A real UA + retries/backoff + --fail so throttled error bodies (429/503 HTML)
 # don't get fed to json.loads. --compressed keeps the 500-row payload small.
@@ -122,14 +122,15 @@ def _is_injectable(stdout: str) -> bool:
 def _in_scope(url: str, target: str) -> bool:
     """Return True if ``url`` is an http(s) URL on ``target`` or a subdomain.
 
-    ``http://sub.example.com/x`` -> True; ``http://evil.com/x`` -> False.
+    Thin alias over :func:`runner.scope`; kept as a named attribute because
+    tests call it directly. ``http://sub.example.com/x`` -> True;
+    ``http://evil.com/x`` -> False.
     """
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https"):
-        return False
-    host = (parts.hostname or "").lower()
-    target = target.lower()
-    return host == target or host.endswith("." + target)
+    t = (target or "").strip().lower().rstrip(".")
+    s = scope.active()
+    if s.target != t:
+        s = scope.default(t)
+    return s.url_allowed(url)
 
 
 def _read_cached_endpoints(outdir: Path, max_urls: int) -> list[str]:
