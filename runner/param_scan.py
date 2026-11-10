@@ -126,11 +126,7 @@ def _in_scope(url: str, target: str) -> bool:
     tests call it directly. ``http://sub.example.com/x`` -> True;
     ``http://evil.com/x`` -> False.
     """
-    t = (target or "").strip().lower().rstrip(".")
-    s = scope.active()
-    if s.target != t:
-        s = scope.default(t)
-    return s.url_allowed(url)
+    return scope.for_target(target).url_allowed(url)
 
 
 def _read_cached_endpoints(outdir: Path, max_urls: int) -> list[str]:

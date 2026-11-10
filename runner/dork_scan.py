@@ -111,11 +111,7 @@ def _in_scope(url: str, target: str) -> bool:
     Thin alias over :func:`runner.scope`; kept as a named attribute because
     tests call it directly.
     """
-    t = (target or "").strip().lower().rstrip(".")
-    s = scope.active()
-    if s.target != t:
-        s = scope.default(t)
-    return s.url_allowed(url)
+    return scope.for_target(target).url_allowed(url)
 
 
 def _normalise(url: str) -> str:

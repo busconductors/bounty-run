@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import events, utils
+from . import events, scope, utils
 
 try:
     import requests
@@ -70,10 +70,11 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True) -> list[s
             if line and not line.startswith(("#", "[", "-", "*")) and (line == target or line.endswith("." + target)):
                 subs.add(line)
 
+    in_scope = scope.for_target(target).filter_hosts(sorted(subs))
     outfile = outdir / "subdomains.txt"
-    outfile.write_text("\n".join(sorted(subs)) + "\n")
-    utils.log(f"  {len(subs)} subdomains -> {outfile.name}")
-    return sorted(subs)
+    outfile.write_text("\n".join(in_scope) + "\n")
+    utils.log(f"  {len(in_scope)} subdomains -> {outfile.name}")
+    return in_scope
 
 
 def _probe_host(sub: str, timeout: int) -> dict:
@@ -418,6 +419,8 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     hosts = sorted({r["host"] for r in live_rows if r["status"]})
     # SSRF guard: drop hosts that resolve to non-public addresses.
     hosts = [h for h in hosts if _is_global(_resolve(h))]
+    # Engagement scope: drop hosts outside the allow/deny rules.
+    hosts = scope.for_target(target).filter_hosts(hosts)
     if not hosts:
         hosts = [target]
     # OAST (interactsh) is on by default; --no-oast degrades to -ni (no-interactsh).

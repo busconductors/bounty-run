@@ -6,10 +6,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import (__version__, api_endpoints, banner, dashboard, dork_scan, events,
-               finding, headi_scan, http_headers, metis_check, nikto_scan, nmap_scan,
-               origin_deep, panel_detect, param_scan, report, scope, secret_scan,
-               stage_registry, stages, tech_scan, tls_scan, tracker, utils, waf_scan)
+from . import (__version__, api_endpoints, banner, categories, dashboard, dork_scan,
+               events, finding, headi_scan, http_headers, metis_check, nikto_scan,
+               nmap_scan, origin_deep, panel_detect, param_scan, report, scope,
+               secret_scan, stage_registry, stages, tech_scan, tls_scan, tracker,
+               utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -275,6 +276,32 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
         spec = SPEC[sid]
         utils.stage_header(spec.num, TOTAL_STAGES, spec.title)
 
+    def keep(new, stage_id):
+        """Drop findings outside the active scope; log the drops.
+
+        Only enforced when ``cli.main`` set an explicit scope, so direct-call
+        tests are unaffected. ``dork:`` findings are the target's own pages
+        found via search, so they are checked on URL only.
+        """
+        if not scope.is_active():
+            return new
+        s = scope.active()
+        kept = []
+        for f in new:
+            template = f.get("template")
+            if categories.classify(template).key == "dork":
+                allowed = s.url_allowed(f.get("url") or "")
+            else:
+                host, url = f.get("host"), f.get("url")
+                allowed = s.host_allowed(host) if host else True
+                if allowed and url and str(url).split("://", 1)[0] in ("http", "https"):
+                    allowed = s.url_allowed(url)
+            if allowed:
+                kept.append(f)
+            else:
+                scope.log().record("finding", f.get("url") or f.get("host") or "", stage_id)
+        return kept
+
     # An opt-in stage explicitly requested but blocked by the intensity ceiling
     # is reported (never silently dropped). Only reachable below the default
     # intrusive ceiling, so default stdout/events are unaffected.
@@ -297,7 +324,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     if ok("panel"):
         with events.stage("panel") as sc:
             _hdr("panel")
-            new = panel_detect.panel_detect(target, outdir, st.subs)
+            new = keep(panel_detect.panel_detect(target, outdir, st.subs), "panel")
             st.findings += new
             _emit_findings(new)
             sc.counts["findings"] = len(new)
@@ -326,12 +353,18 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             with events.stage("origin"):
                 events.mark_skipped("no cloudflare")
     st.origins = _merge_origins_by_ip(st.origins)
+    # Admit discovered origin IPs into scope so their nmap/nuclei findings
+    # (host = origin IP) are not dropped by the in-scope finding guard.
+    if scope.is_active():
+        origin_ips = [o.get("ip") for o in st.origins if isinstance(o, dict) and o.get("ip")]
+        if origin_ips:
+            scope.set_active(scope.active().with_hosts(origin_ips))
 
     def scan(stage_id, fn, *a, **kw):
         spec = SPEC[stage_id]
         with events.stage(stage_id) as sc:
             utils.stage_header(spec.num, TOTAL_STAGES, spec.title)
-            new = fn(*a, **kw)
+            new = keep(fn(*a, **kw), stage_id)
             st.findings += new
             _emit_findings(new)
             sc.counts["findings"] = len(new)
@@ -359,9 +392,10 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     if ok("vuln"):
         with events.stage("vuln") as sc:
             _hdr("vuln")
-            new = stages.vuln_scan(target, outdir, st.rows, severity=args.nuclei_severity,
-                                   concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
-                                   origins=st.origins, oast=stage_registry.oast_enabled(args))
+            new = keep(stages.vuln_scan(target, outdir, st.rows, severity=args.nuclei_severity,
+                                        concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
+                                        origins=st.origins, oast=stage_registry.oast_enabled(args)),
+                       "vuln")
             st.findings += new
             sc.counts["findings"] = len(new)
             report.write_findings_report(outdir, target, st.findings, [], origins=st.origins)

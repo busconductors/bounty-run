@@ -168,6 +168,17 @@ def default(target) -> Scope:
     return Scope(target=(target or "").strip().lower().rstrip("."))
 
 
+def for_target(target) -> Scope:
+    """The active scope if it is for ``target``, else a default scope.
+
+    Lets stage functions enforce scope whether or not ``cli.main`` set an
+    active scope (direct-call tests get the legacy target+subdomain rule).
+    """
+    t = (target or "").strip().lower().rstrip(".")
+    s = active()
+    return s if s.target == t else default(t)
+
+
 # --- module-global active scope (same pattern as events.current_stage) --------
 
 _active: Scope | None = None
@@ -180,6 +191,11 @@ def set_active(s: Scope) -> None:
 
 def active() -> Scope:
     return _active if _active is not None else default("")
+
+
+def is_active() -> bool:
+    """Whether an explicit scope has been set (by ``cli.main``)."""
+    return _active is not None
 
 
 def reset() -> None:

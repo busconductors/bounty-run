@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from runner import events, utils
+from runner import events, scope, utils
 from runner.stages import _is_global, _resolve
 
 # Path substrings that mark a URL as API-like.
@@ -108,12 +108,16 @@ def api_endpoints_scan(target: str, outdir: Path, hosts: list[str] | None = None
         utils.warn("no routable hosts — skipping API endpoint enumeration")
         return []
 
+    sc = scope.for_target(target)
     findings: list[dict] = []
     kept_urls: list[str] = []
     seen: set[str] = set()
     for host in live:
         for url in _crawl(f"https://{host}", depth, timeout):
             if url in seen or not _is_api_url(url):
+                continue
+            # Scope gap closure: katana can wander off-target; drop those URLs.
+            if not sc.url_allowed(url):
                 continue
             seen.add(url)
             kept_urls.append(url)
