@@ -13,7 +13,7 @@ import html
 from collections import Counter
 from pathlib import Path
 
-from . import finding, report, tracker
+from . import categories, finding, report, tracker
 
 # Canonical severity ordering for display / filter dropdowns. Derived from the
 # single source of truth in runner.finding (excludes the "unknown" sentinel).
@@ -411,29 +411,20 @@ def _waf_name(name: str) -> str:
     return name.strip()
 
 
-_CANDIDATE_SEVERITIES = ("critical", "high", "medium")
-
-
 def _is_candidate(f) -> bool:
     """Triage split rule: candidate = critical/high/medium OR ``panel:`` (any sev).
 
-    An exposed admin/login panel is a real lead at any severity; a plain
-    info-severity nuclei finding never is.
+    Thin wrapper over :func:`categories.is_candidate` (the single source of
+    truth); kept as a named module attribute because tests call it directly.
     """
-    template = f.get("template") or ""
-    if template.startswith("panel:"):
-        return True
-    return (f.get("severity") or "unknown").lower() in _CANDIDATE_SEVERITIES
+    return categories.is_candidate(f)
 
 
 def _order_candidates(findings):
     """``panel:`` hits float to the top, then by severity (crit -> high -> medium)."""
     def key(f):
-        template = f.get("template") or ""
-        is_panel = 0 if template.startswith("panel:") else 1
-        sev = report.SEVERITY_ORDER.get(
-            (f.get("severity") or "unknown").lower(), 9)
-        return (is_panel, sev)
+        is_panel = 0 if categories.classify(f.get("template")).key == "panel" else 1
+        return (is_panel, finding.severity_rank(f.get("severity")))
     return sorted(findings, key=key)
 
 
@@ -457,7 +448,7 @@ def _verdict_line(candidates, origins, cloudflare, subdomains) -> str:
             clauses.append("{} {}".format(n, noun))
 
         panels = sum(
-            1 for f in candidates if (f.get("template") or "").startswith("panel:"))
+            1 for f in candidates if categories.classify(f.get("template")).key == "panel")
         if panels:
             clauses.append(
                 "exposed admin panel" if panels == 1
@@ -913,21 +904,19 @@ def write_run_summary(outdir, target, findings, content, origins, *,
         key=lambda f: report.SEVERITY_ORDER.get(
             (f.get("severity") or "unknown").lower(), 9)
     )
+    cat_counts = categories.count_by_category(unique)
     tech = sorted({
         (f.get("name") or "").replace("Technology: ", "", 1)
         for f in unique
-        if (f.get("template") or "").startswith("tech-detect:")
+        if categories.classify(f.get("template")).key == "tech"
     })
-    api_count = sum(1 for f in unique if (f.get("template") or "") == "api-endpoint")
-    nmap_count = sum(1 for f in unique if (f.get("template") or "").startswith("nmap:"))
-
-    def _count(prefix):
-        return sum(1 for f in unique if (f.get("template") or "").startswith(prefix))
+    api_count = cat_counts.get("api", 0)
+    nmap_count = cat_counts.get("nmap", 0)
 
     waf_names = sorted({
         _waf_name(f.get("name") or "")
         for f in unique
-        if (f.get("template") or "").startswith("waf:")
+        if categories.classify(f.get("template")).key == "waf"
     } - {""})
 
     candidates = [f for f in unique if _is_candidate(f)]
@@ -952,7 +941,8 @@ def write_run_summary(outdir, target, findings, content, origins, *,
         alert=_origins_alert_html(origins),
         panels=_surface_panels_html(
             cloudflare, waf_names, tech, api_count, nmap_count,
-            _count("panel:"), _count("tls:"), _count("nikto:"), _count("dork:")),
+            cat_counts.get("panel", 0), cat_counts.get("tls", 0),
+            cat_counts.get("nikto", 0), cat_counts.get("dork", 0)),
         drops=_details_html(candidates, noise, info, content),
     )
 
