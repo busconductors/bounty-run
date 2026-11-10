@@ -305,6 +305,8 @@ class RunState:
     content: list = field(default_factory=list)
     start: float = field(default_factory=lambda: time.monotonic())
     summary_written: bool = False
+    # finding fingerprint -> the stage id that first produced it
+    provenance: dict = field(default_factory=dict)
 
     def __post_init__(self):
         self.subs = self.subs or [self.target]
@@ -357,6 +359,13 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
                 scope.log().record("finding", f.get("url") or f.get("host") or "", stage_id)
         return kept
 
+    def record_prov(new, stage_id):
+        """Stamp finding provenance (fingerprint -> stage) without mutating dicts."""
+        for f in new:
+            fp = finding.fingerprint_of(f.get("template"), f.get("host"), f.get("url"))
+            st.provenance.setdefault(fp, stage_id)
+        return new
+
     # An opt-in stage explicitly requested but blocked by the intensity ceiling
     # is reported (never silently dropped). Only reachable below the default
     # intrusive ceiling, so default stdout/events are unaffected.
@@ -379,7 +388,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     if ok("panel"):
         with events.stage("panel") as sc:
             _hdr("panel")
-            new = keep(panel_detect.panel_detect(target, outdir, st.subs), "panel")
+            new = record_prov(keep(panel_detect.panel_detect(target, outdir, st.subs), "panel"), "panel")
             st.findings += new
             _emit_findings(new)
             sc.counts["findings"] = len(new)
@@ -419,7 +428,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
         spec = SPEC[stage_id]
         with events.stage(stage_id) as sc:
             utils.stage_header(spec.num, TOTAL_STAGES, spec.title)
-            new = keep(fn(*a, **kw), stage_id)
+            new = record_prov(keep(fn(*a, **kw), stage_id), stage_id)
             st.findings += new
             _emit_findings(new)
             sc.counts["findings"] = len(new)
@@ -447,10 +456,10 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     if ok("vuln"):
         with events.stage("vuln") as sc:
             _hdr("vuln")
-            new = keep(stages.vuln_scan(target, outdir, st.rows, severity=args.nuclei_severity,
-                                        concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
-                                        origins=st.origins, oast=stage_registry.oast_enabled(args)),
-                       "vuln")
+            new = record_prov(keep(stages.vuln_scan(
+                target, outdir, st.rows, severity=args.nuclei_severity,
+                concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
+                origins=st.origins, oast=stage_registry.oast_enabled(args)), "vuln"), "vuln")
             st.findings += new
             sc.counts["findings"] = len(new)
             report.write_findings_report(outdir, target, st.findings, [], origins=st.origins)
