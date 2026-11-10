@@ -10,9 +10,8 @@ from pathlib import Path
 from . import events, scope, utils
 
 try:
-    import requests
-    import urllib3
-    urllib3.disable_warnings()
+    # Shared, pooled client stand-in; TLS warnings are silenced in Client.__init__.
+    from .httpclient import compat as requests
     HAVE_REQUESTS = True
 except ImportError:
     HAVE_REQUESTS = False
