@@ -552,8 +552,10 @@ def main(argv=None) -> int:
         return 2
     scope.set_active(active_scope)
 
-    # Configure the process-wide HTTP client (no network I/O here).
+    # Configure the process-wide HTTP client (no network I/O here) and enforce
+    # scope on every request hop (redirects included).
     httpclient.configure(httpclient.HttpConfig.from_args(args))
+    httpclient.client().add_request_hook(scope.request_hook)
 
     if not args.no_banner:
         banner.print_banner()
