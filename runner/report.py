@@ -3,7 +3,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from . import finding
+from . import categories, finding
 from .metis_check import AUX_EXPLOIT_MAP
 
 # Single source of truth lives in runner.finding; re-exported for callers.
@@ -60,55 +60,25 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
     """Build the ordered ``(label, value)`` pairs for the executive overview.
 
     Tallies run over ``report.dedupe(findings)`` so they match the report exactly.
-    Nuclei findings are everything not claimed by a named bucket (``secret-exposure``,
-    ``sqlmap-sqli``, ``metis:``, headers/cors/headi/nmap/tech/api, and the Phase 12
-    ``panel:``/``waf:``/``dork:``/``tls:``/``nikto:`` prefixes); their severity tally is lowercased and emitted
-    in ``SEVERITY_ORDER``.
+    Category routing is delegated to :mod:`runner.categories`; nuclei findings
+    are everything not claimed by a named category, and their severity tally is
+    lowercased and emitted in ``SEVERITY_ORDER``.
     """
     findings = dedupe(findings)
     live = [r for r in rows if r.get("status")]
     cf_hosts = [r for r in live if r.get("cloudflare")]
 
-    secret = sqli = metis = headers_missing = headers_insecure = cors = headi = nmap_ports = 0
-    tech = api = 0
-    panels = waf = dork = tls = nikto = 0
+    counts: Counter = Counter()
     sev: Counter = Counter()
     for f in findings:
-        template = f.get("template") or ""
-        if not isinstance(template, str):
-            template = ""
-        if template.startswith("metis:"):
-            metis += 1
-        elif template == "secret-exposure":
-            secret += 1
-        elif template == "sqlmap-sqli":
-            sqli += 1
-        elif template.startswith("missing-security-header:"):
-            headers_missing += 1
-        elif template.startswith("insecure-security-header:"):
-            headers_insecure += 1
-        elif template.startswith("cors-misconfiguration:"):
-            cors += 1
-        elif template.startswith("headi:"):
-            headi += 1
-        elif template.startswith("nmap:"):
-            nmap_ports += 1
-        elif template.startswith("tech-detect:"):
-            tech += 1
-        elif template == "api-endpoint":
-            api += 1
-        elif template.startswith("panel:"):
-            panels += 1
-        elif template.startswith("waf:"):
-            waf += 1
-        elif template.startswith("dork:"):
-            dork += 1
-        elif template.startswith("tls:"):
-            tls += 1
-        elif template.startswith("nikto:"):
-            nikto += 1
+        cat = categories.classify(f.get("template"))
+        if cat is categories.NUCLEI:
+            sev[finding.normalize_severity(f.get("severity"))] += 1
         else:
-            sev[(f.get("severity") or "unknown").lower()] += 1
+            counts[cat.key] += 1
+
+    def c(key: str) -> str:
+        return str(counts.get(key, 0))
 
     metrics: list[tuple[str, str]] = [
         ("Target", target),
@@ -123,21 +93,21 @@ def build_metrics(target: str, subs: list[str], rows: list[dict], cf: dict,
         if sev.get(severity):
             metrics.append((f"Nuclei findings — {severity}", str(sev[severity])))
     metrics += [
-        ("Missing security headers", str(headers_missing)),
-        ("Insecure security headers", str(headers_insecure)),
-        ("CORS misconfigurations", str(cors)),
-        ("Header injection (headi)", str(headi)),
-        ("Open ports (nmap)", str(nmap_ports)),
-        ("High-value panels (subdomains)", str(panels)),
-        ("WAF detections (wafw00f)", str(waf)),
-        ("Dork hits (OSINT)", str(dork)),
-        ("TLS/SSL issues (sslyze)", str(tls)),
-        ("Nikto findings", str(nikto)),
-        ("Technologies (whatweb)", str(tech)),
-        ("API endpoints (katana)", str(api)),
-        ("Secret-exposure", str(secret)),
-        ("sqlmap-sqli", str(sqli)),
-        ("Metis", str(metis)),
+        ("Missing security headers", c("headers_missing")),
+        ("Insecure security headers", c("headers_insecure")),
+        ("CORS misconfigurations", c("cors")),
+        ("Header injection (headi)", c("headi")),
+        ("Open ports (nmap)", c("nmap")),
+        ("High-value panels (subdomains)", c("panel")),
+        ("WAF detections (wafw00f)", c("waf")),
+        ("Dork hits (OSINT)", c("dork")),
+        ("TLS/SSL issues (sslyze)", c("tls")),
+        ("Nikto findings", c("nikto")),
+        ("Technologies (whatweb)", c("tech")),
+        ("API endpoints (katana)", c("api")),
+        ("Secret-exposure", c("secret")),
+        ("sqlmap-sqli", c("sqli")),
+        ("Metis", c("metis")),
         ("Content discovered", str(len(content or []))),
         ("Total unique findings", str(len(findings))),
         ("Skipped stages", ", ".join(sorted(skip)) if skip else "none"),
@@ -157,7 +127,7 @@ def write_findings_report(outdir: Path, target: str, findings: list[dict], conte
                           metrics: list[tuple[str, str]] | None = None) -> int:
     """Write deduped findings to findings.json + FINDINGS.md; return count."""
     findings = dedupe(findings)
-    findings.sort(key=lambda f: SEVERITY_ORDER.get(f.get("severity", "unknown"), 9))
+    findings.sort(key=lambda f: finding.severity_rank(f.get("severity", "unknown")))
     (outdir / "findings.json").write_text(json.dumps(findings, indent=2))
 
     sev = Counter(f.get("severity", "unknown") for f in findings)
