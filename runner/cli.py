@@ -602,6 +602,7 @@ def _run(args, target: str, outdir: Path, skip: set[str]) -> int:
     evidence.activate(evidence.EvidenceStore(
         outdir, redact=not args.evidence_unredacted,
         max_body=args.evidence_max_body, enabled=not args.no_evidence))
+    httpclient.client().add_response_hook(evidence.response_hook)
     report_path, summary_path = str(outdir / "FINDINGS.md"), str(outdir / "SUMMARY.md")
     try:
         try:

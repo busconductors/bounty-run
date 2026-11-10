@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
-from runner import events, utils
+from runner import events, evidence, utils
 from runner.stages import _is_global, _resolve
 
 try:
@@ -139,14 +139,16 @@ def _scan_host(host: str, max_js: int, timeout) -> list[dict]:
             if not m:
                 continue
             seen_classes.add(cls)
-            findings.append({
+            f = {
                 "severity": "low" if cls in _LOW_SEVERITY else "high",
                 "template": "secret-exposure",
                 "name": f"Exposed {_LABELS.get(cls, cls)}",
                 "url": url,
                 "host": host,
                 "evidence": "..." + m.group(0)[-4:],
-            })
+            }
+            findings.append(f)
+            evidence.attach(f, url)
 
     scan(html, homepage_url)
 

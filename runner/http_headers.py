@@ -9,7 +9,7 @@ import string
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from runner import events, utils
+from runner import events, evidence, utils
 from runner.stages import _is_global, _resolve
 
 try:
@@ -176,12 +176,16 @@ def _probe_cors(base_url: str, host: str) -> tuple[list[dict], list[str]]:
         csv_lines.append(f"{base_url},{origin},{acao},{acac}")
         if kind == "existing":
             if acao == "*" and acac.lower() == "true":
-                findings.append(_cors_finding("star-with-credentials", base_url, host,
-                                              origin, acao, acac, "info"))
+                f = _cors_finding("star-with-credentials", base_url, host,
+                                  origin, acao, acac, "info")
+                findings.append(f)
+                evidence.attach(f, base_url)
             continue
         sev = _classify(kind, acao, acac, origin)
         if sev:
-            findings.append(_cors_finding(kind, base_url, host, origin, acao, acac, sev))
+            f = _cors_finding(kind, base_url, host, origin, acao, acac, sev)
+            findings.append(f)
+            evidence.attach(f, base_url)
     return findings, csv_lines
 
 
