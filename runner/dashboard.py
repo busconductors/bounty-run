@@ -13,10 +13,13 @@ import html
 from collections import Counter
 from pathlib import Path
 
-from . import report, tracker
+from . import finding, report, tracker
 
-# Canonical severity ordering for display / filter dropdowns.
-_SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
+# Canonical severity ordering for display / filter dropdowns. Derived from the
+# single source of truth in runner.finding (excludes the "unknown" sentinel).
+_SEVERITY_ORDER = tuple(
+    s.value for s in finding.Severity if s is not finding.Severity.UNKNOWN
+)
 
 
 def _esc(value) -> str:

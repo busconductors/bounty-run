@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import (__version__, api_endpoints, banner, dashboard, dork_scan, events,
-               headi_scan, http_headers, metis_check, nikto_scan, nmap_scan,
+               finding, headi_scan, http_headers, metis_check, nikto_scan, nmap_scan,
                origin_deep, panel_detect, param_scan, report, secret_scan, stages,
                tech_scan, tls_scan, tracker, utils, waf_scan)
 
@@ -22,7 +22,10 @@ STAGE_IDS = ["subs", "panel", "live", "cf", "origin", "nmap", "waf", "dork", "tl
              "headers", "cors", "tech", "headi"]
 # Stages that only run when their opt-in flag (same name) is set.
 OPT_IN_STAGES = {"nmap", "tls", "nikto", "metis", "headi"}
-SEVERITIES = ("critical", "high", "medium", "low", "info")
+# argparse severity choices, derived from runner.finding (excludes "unknown").
+SEVERITIES = tuple(
+    s.value for s in finding.Severity if s is not finding.Severity.UNKNOWN
+)
 
 
 def build_parser() -> argparse.ArgumentParser:

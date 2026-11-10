@@ -3,9 +3,11 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from . import finding
 from .metis_check import AUX_EXPLOIT_MAP
 
-SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
+# Single source of truth lives in runner.finding; re-exported for callers.
+SEVERITY_ORDER = finding.SEVERITY_ORDER
 
 
 def dedupe(findings: list[dict]) -> list[dict]:
