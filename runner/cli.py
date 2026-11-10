@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import (__version__, api_endpoints, banner, categories, dashboard, dork_scan,
-               events, finding, headi_scan, http_headers, metis_check, nikto_scan,
-               nmap_scan, origin_deep, panel_detect, param_scan, report, scope,
-               secret_scan, stage_registry, stages, tech_scan, tls_scan, tracker,
-               utils, waf_scan)
+               events, finding, headi_scan, http_headers, httpclient, metis_check,
+               nikto_scan, nmap_scan, origin_deep, panel_detect, param_scan, report,
+               scope, secret_scan, stage_registry, stages, tech_scan, tls_scan,
+               tracker, utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -50,6 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="out-of-scope rule (repeatable); deny wins over allow")
     p.add_argument("--scope-file", metavar="PATH",
                    help="scope rules file, one per line; a leading '!' marks a deny rule")
+    p.add_argument("--proxy", metavar="URL",
+                   help="route in-process HTTP(S) through this proxy (e.g. http://127.0.0.1:8080)")
+    p.add_argument("--user-agent", metavar="STR", help="override the HTTP User-Agent header")
+    p.add_argument("--header", action="append", metavar="K: V", default=[],
+                   help="extra HTTP header to send on every in-process request (repeatable)")
+    p.add_argument("--rate-limit", type=float, metavar="RPS",
+                   help="max in-process requests per second per host")
+    p.add_argument("--retries", type=_nonneg_int, default=0, metavar="N",
+                   help="retry transient HTTP failures N times (default 0)")
+    p.add_argument("--verify-tls", action="store_true",
+                   help="verify TLS certificates on in-process requests (off by default)")
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
@@ -95,6 +106,44 @@ def _positive_int(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
     return n
+
+
+def _nonneg_int(value: str) -> int:
+    """argparse type: integer that must be >= 0."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be >= 0")
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return n
+
+
+def _redact_flags(flags: dict) -> dict:
+    """Strip credentials from flags before they reach run.json.
+
+    Removes ``user:pass@`` from a proxy URL and masks ``Authorization``/``Cookie``
+    header values.
+    """
+    out = dict(flags)
+    proxy = out.get("proxy")
+    if isinstance(proxy, str) and "@" in proxy:
+        scheme, _, rest = proxy.partition("://")
+        if "@" in rest:
+            rest = rest.split("@", 1)[1]
+        out["proxy"] = f"{scheme}://{rest}" if scheme else rest
+    headers = out.get("header")
+    if isinstance(headers, list):
+        masked = []
+        for h in headers:
+            if isinstance(h, str) and ":" in h:
+                k, _, _v = h.partition(":")
+                if k.strip().lower() in ("authorization", "cookie"):
+                    masked.append(f"{k}: ***")
+                    continue
+            masked.append(h)
+        out["header"] = masked
+    return out
 
 
 def write_summary(outdir: Path, target: str, subs: list[str], rows: list[dict], cf: dict, origins: list[dict]) -> None:
@@ -503,6 +552,9 @@ def main(argv=None) -> int:
         return 2
     scope.set_active(active_scope)
 
+    # Configure the process-wide HTTP client (no network I/O here).
+    httpclient.configure(httpclient.HttpConfig.from_args(args))
+
     if not args.no_banner:
         banner.print_banner()
 
@@ -514,13 +566,14 @@ def main(argv=None) -> int:
         events_path = Path(args.events)
         events_path.parent.mkdir(parents=True, exist_ok=True)
         events.init(events_path)
-        flags = {k: v for k, v in vars(args).items() if k != "events"}
+        flags = _redact_flags({k: v for k, v in vars(args).items() if k != "events"})
         events.write_run_json(target, flags, __version__)
         events.run_start(target, flags, PLANNED_STAGES(args, skip))
 
     try:
         return _run(args, target, outdir, skip)
     finally:
+        httpclient.client().close()
         scope.reset()
         if args.events:
             events.reset()
