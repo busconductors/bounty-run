@@ -8,20 +8,18 @@ from pathlib import Path
 
 from . import (__version__, api_endpoints, banner, dashboard, dork_scan, events,
                finding, headi_scan, http_headers, metis_check, nikto_scan, nmap_scan,
-               origin_deep, panel_detect, param_scan, report, secret_scan, stages,
-               tech_scan, tls_scan, tracker, utils, waf_scan)
+               origin_deep, panel_detect, param_scan, report, secret_scan, stage_registry,
+               stages, tech_scan, tls_scan, tracker, utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
-# Total number of pipeline stages, for the stage-transition headers.
-TOTAL_STAGES = 20
-
+# Pipeline stage metadata lives in runner.stage_registry; re-exported here so the
+# existing names (and the Go TUI parity test) keep working unchanged.
+TOTAL_STAGES = stage_registry.TOTAL_STAGES
 # Event stage ids, in pipeline order (same names as --skip).
-STAGE_IDS = ["subs", "panel", "live", "cf", "origin", "nmap", "waf", "dork", "tls",
-             "nikto", "vuln", "content", "api", "param", "secret", "metis",
-             "headers", "cors", "tech", "headi"]
+STAGE_IDS = stage_registry.STAGE_IDS
 # Stages that only run when their opt-in flag (same name) is set.
-OPT_IN_STAGES = {"nmap", "tls", "nikto", "metis", "headi"}
+OPT_IN_STAGES = stage_registry.OPT_IN_STAGES
 # argparse severity choices, derived from runner.finding (excludes "unknown").
 SEVERITIES = tuple(
     s.value for s in finding.Severity if s is not finding.Severity.UNKNOWN
@@ -71,8 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def PLANNED_STAGES(args, skip: set[str]) -> list[str]:
     """Ordered stage ids that will run (origin included provisionally)."""
-    return [s for s in STAGE_IDS
-            if s not in skip and (s not in OPT_IN_STAGES or getattr(args, s))]
+    return stage_registry.planned(args, skip)
 
 
 def _positive_int(value: str) -> int:
