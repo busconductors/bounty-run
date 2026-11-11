@@ -2,7 +2,9 @@
 
 Turns the IPs we already hold (live hosts + origin candidates + the target) into
 service/port intelligence. Default: `-T4 -sS -sV -sC --top-ports 1000 --open`
-(finishes in minutes); `full=True` opts into a full `-p-` scan.
+(finishes in minutes). `full=True` opts into a full `-p-` scan split into two
+phases — a fast SYN discovery pass, then `-sV -sC` only on the open ports — so a
+deep scan returns results instead of timing out on filtered hosts.
 
 Flow:
   1. Collect candidate IPs: resolve each live host in `rows`, each origin's `ip`,
@@ -66,12 +68,36 @@ def nmap_scan(target: str, outdir: Path, rows: list[dict] | None = None,
         return []
 
     xml_path = Path(outdir) / "nmap.xml"
-    port_spec = "-p-" if full else "--top-ports 1000"
-    utils.log(f"  scanning {len(ips)} IP(s) [-T4 -sS -sV -sC {port_spec}]")
-    utils.run(
-        f"nmap -T4 -sS -sV -sC {port_spec} --open -oX {xml_path} {' '.join(ips)}",
-        timeout=timeout,
-    )
+    if full:
+        # Two-phase: a single `-p- -sV -sC` shot is too slow on filtered hosts
+        # and gets SIGKILL'd by the runner timeout (0 findings). Do the full-port
+        # SYN discovery first (with a per-host timeout below the runner's so nmap
+        # finishes gracefully and writes complete XML), then -sV/-sC only on the
+        # ports that actually came back open.
+        host_timeout = max(timeout - 60, 60)
+        utils.log(f"  phase 1/2: full-port SYN scan of {len(ips)} IP(s) [-T4 -sS -p- --open]")
+        utils.run(
+            f"nmap -T4 -sS -p- --open --max-retries 2 --host-timeout {host_timeout}s "
+            f"-oX {xml_path} {' '.join(ips)}",
+            timeout=timeout,
+        )
+        open_ports = _open_ports_from_xml(xml_path)
+        if not open_ports:
+            utils.log("nmap: 0 open ports (full scan completed)")
+            (Path(outdir) / "nmap_open_ports.txt").write_text("")
+            return []
+        port_list = _sorted_port_list(open_ports)
+        utils.log(f"  phase 2/2: service/version scan of open ports [{port_list}]")
+        utils.run(
+            f"nmap -T4 -sV -sC -p {port_list} --open -oX {xml_path} {' '.join(ips)}",
+            timeout=timeout,
+        )
+    else:
+        utils.log(f"  scanning {len(ips)} IP(s) [-T4 -sS -sV -sC --top-ports 1000]")
+        utils.run(
+            f"nmap -T4 -sS -sV -sC --top-ports 1000 --open -oX {xml_path} {' '.join(ips)}",
+            timeout=timeout,
+        )
 
     if not xml_path.exists():
         utils.warn("nmap produced no XML — skipping port scan")
@@ -87,6 +113,38 @@ def nmap_scan(target: str, outdir: Path, rows: list[dict] | None = None,
     (Path(outdir) / "nmap_open_ports.txt").write_text("\n".join(raw_lines) + "\n")
     utils.log(f"nmap: {len(findings)} open port(s) across {len(ips)} IP(s)")
     return findings
+
+
+def _open_ports_from_xml(xml_path: Path) -> dict[str, set[str]]:
+    """Return ip -> set of open portids parsed from an nmap XML file."""
+    if not xml_path.exists():
+        return {}
+    try:
+        root = ET.fromstring(xml_path.read_text(errors="replace"))
+    except ET.ParseError:
+        return {}
+    open_ports: dict[str, set[str]] = {}
+    for host in root.findall("host"):
+        ip = _host_ip(host)
+        ports = host.find("ports")
+        if ports is None:
+            continue
+        for port in ports.findall("port"):
+            state = port.find("state")
+            if state is None or state.get("state") != "open":
+                continue
+            open_ports.setdefault(ip, set()).add(port.get("portid", ""))
+    return open_ports
+
+
+def _sorted_port_list(open_ports: dict[str, set[str]]) -> str:
+    """Comma-joined, numerically-sorted unique open port ids across all hosts."""
+    ids = {p for ports in open_ports.values() for p in ports}
+    try:
+        ids = sorted(ids, key=int)
+    except (TypeError, ValueError):
+        ids = sorted(ids)
+    return ",".join(ids)
 
 
 def _parse_hosts(root: ET.Element) -> tuple[list[dict], list[str]]:
