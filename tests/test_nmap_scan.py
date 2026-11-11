@@ -178,8 +178,10 @@ class TestNmapScan(unittest.TestCase):
         self.assertIn("-p-", discovery)
         self.assertIn("--open", discovery)
         self.assertNotIn("-sV", discovery)
+        self.assertIn("-sT", discovery)
         self.assertIn("--max-retries 2", discovery)
         self.assertIn("-sV", services)
+        self.assertIn("-sT", services)
         self.assertIn("-p 22,80,443", services)
 
     def test_full_zero_open_ports_returns_empty(self):
