@@ -4,9 +4,10 @@ Turns the IPs we already hold (live hosts + origin candidates + the target) into
 service/port intelligence. Default: `-T4 -sT -sV -sC --top-ports 1000 --open`
 (finishes in minutes). We use a connect scan (`-sT`) rather than SYN (`-sS`):
 raw SYN sockets are blocked behind VPN lockdown modes (e.g. Mullvad), which makes
-`-sS` fail with EPERM and return nothing. `full=True` opts into a full `-p-` scan
-split into two phases — a fast discovery pass, then `-sV -sC` only on the open
-ports — so a deep scan returns results instead of timing out on filtered hosts.
+`-sS` fail with EPERM and return nothing. `full=True` opts into a deeper
+`--top-ports 10000` scan split into two phases — a fast discovery pass, then
+`-sV -sC` only on the open ports — so a deep scan returns results instead of
+timing out on filtered hosts.
 
 Flow:
   1. Collect candidate IPs: resolve each live host in `rows`, each origin's `ip`,
@@ -77,9 +78,9 @@ def nmap_scan(target: str, outdir: Path, rows: list[dict] | None = None,
         # finishes gracefully and writes complete XML), then -sV/-sC only on the
         # ports that actually came back open.
         host_timeout = max(timeout - 60, 60)
-        utils.log(f"  phase 1/2: full-port scan of {len(ips)} IP(s) [-T4 -sT -p- --open]")
+        utils.log(f"  phase 1/2: deep scan of {len(ips)} IP(s) [-T4 -sT --top-ports 10000 --open]")
         utils.run(
-            f"nmap -T4 -sT -p- --open --max-retries 2 --host-timeout {host_timeout}s "
+            f"nmap -T4 -sT --top-ports 10000 --open --max-retries 2 --host-timeout {host_timeout}s "
             f"-oX {xml_path} {' '.join(ips)}",
             timeout=timeout,
         )

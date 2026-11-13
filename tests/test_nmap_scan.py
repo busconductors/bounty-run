@@ -175,7 +175,7 @@ class TestNmapScan(unittest.TestCase):
         # Two phases: SYN discovery over all ports, then service scan on open ports.
         self.assertEqual(len(captured["cmds"]), 2)
         discovery, services = captured["cmds"]
-        self.assertIn("-p-", discovery)
+        self.assertIn("--top-ports 10000", discovery)
         self.assertIn("--open", discovery)
         self.assertNotIn("-sV", discovery)
         self.assertIn("-sT", discovery)
