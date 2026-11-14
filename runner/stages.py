@@ -54,9 +54,7 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
                    resolvers: str | None = None,
                    dns_rate: int = 500,
                    cache_dir=None,
-                   proxy=None,
-                   brute: str | None = None,
-                   permute: bool = False) -> list[str]:
+                   proxy=None) -> list[str]:
     """Stage 1: passive subdomain discovery via subfinder (+ optional sources).
 
     With every keyword argument at its default this reproduces the legacy
@@ -71,11 +69,6 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
         itself keeps union semantics (Phase 2), so downstream stages are
         unchanged. ``active`` is gated by the caller on the intensity ceiling,
         keeping the stage zero-packet under ``--intensity passive``.
-      * ``brute`` — (needs ``active``) brute-force with a wordlist tier
-        (``fast``/``standard``/``deep``) or a wordlist path: puredns with a
-        dnsx fallback. Runs before resolution so hits are bucketed too.
-      * ``permute`` — (needs ``active`` and dnsx resolution) one capped alterx
-        pass over the resolved names; candidates that resolve join the union.
 
     Extra per-source stats land in ``subs_stats.json`` (never in the stage's
     event counts, which stay ``{"subdomains": N}``).
@@ -106,38 +99,8 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
         stats["sources"]["cache"] = len(cached)
         subs |= cached
 
-    # Brute force and permutation query the target's authoritative name
-    # servers, so they only ever run when the caller's intensity is >= active.
-    res_path = None
-    if active and (brute or permute or utils.have("dnsx")):
-        res_path = subdomains.resolvers_file(cache_dir, resolvers)
-
-    wildcard_roots: set[str] = set()
-    if brute and not active:
-        stats["skipped"]["brute"] = "intensity below active"
-    elif brute:
-        wl = subdomains.wordlist_for(brute)
-        if wl is None:
-            utils.warn(f"subs: brute wordlist not found for {brute!r} — skipping brute pass")
-            stats["skipped"]["brute"] = f"wordlist not found: {brute}"
-        else:
-            tb = time.monotonic()
-            hits, wildcard_roots, engine = subdomains.brute(t, outdir, wl, res_path, rate=dns_rate)
-            if engine:
-                stats["sources"]["brute"] = len(hits)
-                stats["brute"] = {"engine": engine, "wordlist": str(wl),
-                                  "wildcards": sorted(wildcard_roots),
-                                  "elapsed_s": round(time.monotonic() - tb, 2)}
-                utils.log(f"  brute ({engine}, {wl.name}): {len(hits)} hit(s)")
-                if not hits:
-                    utils.warn("  brute force found nothing — if on a VPN, UDP 53 to public "
-                               "resolvers may be filtered; try a lower --dns-rate")
-                subs |= hits
-            else:
-                stats["skipped"]["brute"] = "puredns/massdns and dnsx not found"
-
-    rr = None
     if active and utils.have("dnsx"):
+        res_path = subdomains.resolvers_file(cache_dir, resolvers)
         rr = subdomains.resolve(subs, outdir, t, res_path, rate=dns_rate)
         stats["resolved"] = len(rr.resolved)
         stats["internal"] = len(rr.internal)
@@ -146,23 +109,6 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
         stats["skipped"]["resolve"] = "intensity below active"
     else:
         stats["skipped"]["resolve"] = "dnsx not found"
-
-    if permute and not active:
-        stats["skipped"]["permute"] = "intensity below active"
-    elif permute and rr is None:
-        stats["skipped"]["permute"] = "needs dnsx resolution for seeds"
-        utils.warn("subs: --permute needs dnsx-resolved seeds — skipping permutation pass")
-    elif permute:
-        seeds = subdomains.select_seeds(
-            scope.for_target(t).filter_hosts(sorted(rr.resolved)), t, wildcard_roots)
-        tp = time.monotonic()
-        perm = subdomains.permute(seeds, outdir, t, known=subs, resolvers=res_path,
-                                  rate=dns_rate)
-        stats["sources"]["permute"] = len(perm)
-        stats["permute"] = {"seeds": len(seeds),
-                            "elapsed_s": round(time.monotonic() - tp, 2)}
-        utils.log(f"  permute (alterx, {len(seeds)} seed(s)): {len(perm)} new name(s)")
-        subs |= perm
 
     in_scope = scope.for_target(t).filter_hosts(sorted(subs))
 

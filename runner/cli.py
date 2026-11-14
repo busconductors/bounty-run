@@ -41,13 +41,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="resolver list for dnsx resolution (default: cached trickest list)")
     p.add_argument("--dns-rate", type=_positive_int, default=500, metavar="N",
                    help="DNS queries per second for resolution (default 500; try 300 on VPN)")
-    p.add_argument("--brute", nargs="?", const="fast", type=_brute_arg, metavar="TIER",
-                   help="subs: active DNS brute force (puredns, dnsx fallback); TIER is "
-                        "fast (default, 20k), standard (100k), deep (3M) or a wordlist path. "
-                        "Needs --intensity active or higher")
-    p.add_argument("--permute", action="store_true",
-                   help="subs: one capped alterx permutation pass over resolved names "
-                        "(<=300 seeds, <=50000 candidates). Needs --intensity active or higher")
     p.add_argument("--no-subs-cache", action="store_true",
                    help="disable the per-target union cache for the subs stage")
     p.add_argument("--timeout", type=_positive_int, default=8, help="HTTP probe timeout in seconds (default 8)")
@@ -130,13 +123,6 @@ def _positive_int(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
     return n
-
-
-def _brute_arg(value: str) -> str:
-    """argparse type: a brute tier name or an existing wordlist file."""
-    if value in ("fast", "standard", "deep") or Path(os.path.expanduser(value)).is_file():
-        return value if value in ("fast", "standard", "deep") else os.path.expanduser(value)
-    raise argparse.ArgumentTypeError("use fast, standard, deep or a wordlist file path")
 
 
 def _proxy_arg(value: str) -> str:
@@ -420,19 +406,6 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     pcfg = proxy.from_args(args)
     pkw = {"proxy": pcfg} if pcfg else {}
 
-    # Active subs passes (brute/permute) are opt-in AND gated on the ceiling;
-    # passed only when requested, so the legacy call kwargs are unchanged.
-    subs_active = stage_registry.ceiling(args) >= stage_registry.Tier.ACTIVE
-    subs_kw = {}
-    for flag, val in (("brute", getattr(args, "brute", None)),
-                      ("permute", getattr(args, "permute", False))):
-        if not val:
-            continue
-        if subs_active:
-            subs_kw[flag] = val
-        else:
-            utils.warn(f"subs: --{flag} needs --intensity active — skipping {flag} pass")
-
     if ok("subs"):
         with events.stage("subs") as sc:
             _hdr("subs")
@@ -444,7 +417,6 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
                 dns_rate=getattr(args, "dns_rate", 500),
                 cache_dir=(None if getattr(args, "no_subs_cache", False)
                            else REPO_OUTPUTS / target / ".cache"),
-                **subs_kw,
             )
             sc.counts["subdomains"] = len(st.subs)
     if ok("panel"):
