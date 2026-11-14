@@ -64,6 +64,89 @@ class TestEvents(unittest.TestCase):
             t.join()
         self.assertEqual(len(self._lines()), 4000)
 
+    def test_init_starts_fresh_and_rotates_previous(self):
+        self.path.write_text('{"v":1,"t":1,"type":"log","level":"info","msg":"old"}\n')
+        events.init(self.path)
+        events.stage_start("subs")
+        lines = self._lines()
+        self.assertEqual([o["type"] for o in lines], ["stage_start"])
+        rotated = self.path.with_name("events.jsonl.1")
+        self.assertIn('"old"', rotated.read_text())
+
+    def test_init_rotation_keeps_one_generation(self):
+        events.init(self.path)
+        events.log("info", "run1")
+        events.init(self.path)
+        events.log("info", "run2")
+        events.init(self.path)
+        events.log("info", "run3")
+        self.assertIn("run3", self.path.read_text())
+        self.assertIn("run2", self.path.with_name("events.jsonl.1").read_text())
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()),
+                         ["events.jsonl", "events.jsonl.1"])
+
+    def test_empty_previous_file_not_rotated(self):
+        self.path.write_text("")
+        events.init(self.path)
+        self.assertFalse(self.path.with_name("events.jsonl.1").exists())
+
+    def test_output_line_truncated(self):
+        events.init(self.path)
+        events.output("s", "tool", "stdout", "x" * (events.MAX_OUTPUT_LINE + 50))
+        (o,) = self._lines()
+        self.assertTrue(o["line"].startswith("x" * events.MAX_OUTPUT_LINE))
+        self.assertIn("[+50 chars]", o["line"])
+
+    def test_output_stage_budget_caps_and_warns_once(self):
+        old = events.OUTPUT_BUDGET_STAGE
+        events.OUTPUT_BUDGET_STAGE = 2000
+        try:
+            events.init(self.path)
+            for i in range(200):
+                events.output("vuln", "nuclei", "stdout", "line %d" % i)
+            events.stage_end("vuln", "ok", 1, {})
+            # another stage has its own budget
+            events.output("content", "ffuf", "stdout", "after")
+        finally:
+            events.OUTPUT_BUDGET_STAGE = old
+        lines = self._lines()
+        outs = [o for o in lines if o["type"] == "output" and o["stage"] == "vuln"]
+        self.assertLess(len(outs), 200)
+        self.assertLessEqual(sum(len(json.dumps(o)) for o in outs), 2000 + 200)
+        warns = [o for o in lines if o["type"] == "log" and "capped" in o["msg"]]
+        self.assertEqual(len(warns), 1)
+        # structural events still land after the cap
+        self.assertEqual(lines[-2]["type"], "stage_end")
+        self.assertEqual(lines[-1]["line"], "after")
+
+    def test_output_run_budget_caps_all_stages(self):
+        old = events.OUTPUT_BUDGET_RUN
+        events.OUTPUT_BUDGET_RUN = 1500
+        try:
+            events.init(self.path)
+            for st in ("a", "b", "c"):
+                for i in range(50):
+                    events.output(st, "t", "stdout", "l%d" % i)
+        finally:
+            events.OUTPUT_BUDGET_RUN = old
+        lines = self._lines()
+        self.assertLessEqual(self.path.stat().st_size, 1500 + 400)
+        warns = [o for o in lines if o["type"] == "log" and "run output" in o["msg"]]
+        self.assertEqual(len(warns), 1)
+
+    def test_reset_clears_output_budget(self):
+        old = events.OUTPUT_BUDGET_STAGE
+        events.OUTPUT_BUDGET_STAGE = 300
+        try:
+            events.init(self.path)
+            for i in range(20):
+                events.output("s", "t", "stdout", "l%d" % i)
+            events.init(self.path)  # new run -> fresh budget
+            events.output("s", "t", "stdout", "fresh")
+        finally:
+            events.OUTPUT_BUDGET_STAGE = old
+        self.assertEqual(self._lines()[0]["line"], "fresh")
+
     def test_current_stage_and_reset(self):
         events._set_current_stage("vuln")
         self.assertEqual(events.current_stage(), "vuln")

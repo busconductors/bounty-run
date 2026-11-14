@@ -1,6 +1,20 @@
 """JSON-lines event stream for monitoring runs (schema v1).
 
 Disabled until init() is called; every emit is then a locked, flushed append.
+
+The stream is bounded per run so it can never grow forever (a single run once
+reached 1.46 GB, which made the TUI's from-offset-0 replay lag badly):
+
+* ``init`` starts a fresh file. A non-empty file left by a previous run on the
+  same path is rotated to ``<name>.1`` (one generation kept, older dropped).
+* ``output`` events (one per tool stdout/stderr line — the only unbounded
+  producer) are capped: each line is truncated to ``MAX_OUTPUT_LINE`` chars,
+  and once a stage has emitted ``OUTPUT_BUDGET_STAGE`` bytes of output events
+  (or the run ``OUTPUT_BUDGET_RUN`` bytes) further output events are dropped
+  with a single ``log`` warning. Full tool output still lands in engine.log
+  (stdout) and each tool's own artifact files.
+* Structural events (run/stage lifecycle, progress, findings, logs) are never
+  dropped, so the TUI's stage state stays exact.
 """
 import json
 import os
@@ -24,6 +38,15 @@ _children: set[int] = set()
 # re-read from events.jsonl, which can reach hundreds of MB.
 _stage_log: list[dict] = []
 
+# Output-event bounds (see module docstring). Module attributes so tests can
+# shrink them.
+MAX_OUTPUT_LINE = 4096                    # chars kept per output line
+OUTPUT_BUDGET_STAGE = 16 * 1024 * 1024    # bytes of output events per stage
+OUTPUT_BUDGET_RUN = 128 * 1024 * 1024     # bytes of output events per run
+_out_bytes_run = 0
+_out_bytes_stage: dict[str, int] = {}
+_out_capped: set[str] = set()             # stage ids ("" = run-wide) already warned
+
 
 class RunCancelled(Exception):
     pass
@@ -33,16 +56,30 @@ class StageSkipped(Exception):
     pass
 
 
+def _rotate(path: Path) -> None:
+    """Move a non-empty leftover stream aside to ``<name>.1`` (best effort)."""
+    try:
+        if path.exists() and path.stat().st_size > 0:
+            os.replace(path, path.with_name(path.name + ".1"))
+    except OSError:
+        pass
+
+
 def init(path: Path) -> None:
     global _fh, _path
     reset()
     _path = Path(path)
-    _fh = open(_path, "a", buffering=1, encoding="utf-8")
+    _rotate(_path)
+    # "w": every run starts its own stream; nothing is appended across runs.
+    _fh = open(_path, "w", buffering=1, encoding="utf-8")
 
 
 def reset() -> None:
-    global _fh, _path, _current_stage, _cancelled, _skip_reason
+    global _fh, _path, _current_stage, _cancelled, _skip_reason, _out_bytes_run
     with _lock:
+        _out_bytes_run = 0
+        _out_bytes_stage.clear()
+        _out_capped.clear()
         if _fh is not None:
             try:
                 _fh.close()
@@ -119,7 +156,38 @@ def log(level: str, msg: str) -> None:
 
 
 def output(stage: str, tool: str, stream: str, line: str) -> None:
-    emit("output", stage=stage, tool=tool, stream=stream, line=line)
+    """Emit one tool output line, subject to the per-line and byte budgets."""
+    global _out_bytes_run
+    if _fh is None:
+        return
+    if len(line) > MAX_OUTPUT_LINE:
+        line = line[:MAX_OUTPUT_LINE] + f" …[+{len(line) - MAX_OUTPUT_LINE} chars]"
+    obj = {"v": 1, "t": int(time.time() * 1000), "type": "output",
+           "stage": stage, "tool": tool, "stream": stream, "line": line}
+    data = json.dumps(obj, ensure_ascii=False) + "\n"
+    n = len(data.encode("utf-8"))
+    notice = None
+    with _lock:
+        if _fh is None:
+            return
+        used = _out_bytes_stage.get(stage, 0)
+        if _out_bytes_run + n > OUTPUT_BUDGET_RUN:
+            key, what = "", f"run output events capped at {OUTPUT_BUDGET_RUN} bytes"
+        elif used + n > OUTPUT_BUDGET_STAGE:
+            key, what = stage, (f"stage {stage or '-'} output events capped at "
+                                f"{OUTPUT_BUDGET_STAGE} bytes")
+        else:
+            _out_bytes_stage[stage] = used + n
+            _out_bytes_run += n
+            _fh.write(data)
+            _fh.flush()
+            return
+        if key in _out_capped:
+            return
+        _out_capped.add(key)
+        notice = what
+    log("warn", f"{notice}; further tool output omitted from events "
+                "(see engine.log and the tool's output files)")
 
 
 def finding(severity: str, template: str, host: str, url: str,
