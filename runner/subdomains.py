@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import shlex
 import time
 import urllib.request
@@ -326,3 +327,185 @@ def _write_lines(path: Path, lines) -> None:
         Path(path).write_text("\n".join(lines) + ("\n" if lines else ""))
     except OSError:
         pass
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3: active brute force (puredns, dnsx fallback)
+# --------------------------------------------------------------------------- #
+# Every Phase 3/4 command redirects stdin from /dev/null: alterx (and other
+# ProjectDiscovery tools) read stdin when it is not a TTY even with -l, and
+# block forever on an inherited pipe.
+_NOSTDIN = " </dev/null"
+
+SECLISTS_DNS = Path("/usr/share/seclists/Discovery/DNS")
+BRUTE_TIERS = {
+    "fast": SECLISTS_DNS / "subdomains-top1million-20000.txt",        # ~20k
+    "standard": SECLISTS_DNS / "bitquark-subdomains-top100000.txt",   # ~100k
+    "deep": SECLISTS_DNS / "n0kovo_subdomains.txt",                   # ~3M
+}
+PERMUTE_MAX_SEEDS = 300
+PERMUTE_LIMIT = 50_000
+TRUSTED_RATE = 200
+
+
+def wordlist_for(brute: str) -> Path | None:
+    """Map a ``--brute`` value (tier name or path) to an existing wordlist."""
+    p = BRUTE_TIERS.get(brute) or Path(brute)
+    return p if p.is_file() else None
+
+
+def _count_lines(path: Path) -> int:
+    n = 0
+    try:
+        with open(path, "rb") as fh:
+            for _ in fh:
+                n += 1
+    except OSError:
+        return 0
+    return n
+
+
+def _dns_timeout(n_queries: int, rate: int) -> int:
+    """Wrapper timeout: ~3x the ideal query time plus validation headroom."""
+    return max(300, int(n_queries / max(1, rate) * 3) + 180)
+
+
+def _resolver_files(outdir: Path, resolvers) -> tuple[Path, Path]:
+    """(public, trusted) resolver files; the builtin trusted set backs both."""
+    outdir = Path(outdir)
+    trusted = outdir / "resolvers_trusted.txt"
+    trusted.write_text("\n".join(BUILTIN_TRUSTED) + "\n")
+    if resolvers:
+        return Path(resolvers), trusted
+    return trusted, trusted
+
+
+def _read_names(path: Path, target: str) -> set[str]:
+    try:
+        return _collect(Path(path).read_text(errors="replace"), target)
+    except OSError:
+        return set()
+
+
+def _puredns_ok() -> bool:
+    return utils.have("puredns") and utils.have("massdns")
+
+
+def brute(target: str, outdir: Path, wordlist: Path, resolvers=None,
+          rate: int = 500) -> tuple[set[str], set[str], str]:
+    """Brute-force ``target`` with ``wordlist``.
+
+    puredns (massdns + wildcard filter + trusted re-validation) when both are
+    installed, else ``dnsx -d -w`` with a manual wildcard filter. Returns
+    ``(hits, wildcard_roots, engine)``; engine is ``""`` when no tool exists.
+    Writes ``subs_brute.txt`` and (puredns) ``subs_brute_wildcards.txt``.
+    """
+    outdir = Path(outdir)
+    out = outdir / "subs_brute.txt"
+    wild = outdir / "subs_brute_wildcards.txt"
+    for f in (out, wild):
+        f.unlink(missing_ok=True)  # never parse a stale result
+    qt, qw = shlex.quote(target), shlex.quote(str(wordlist))
+    timeout = _dns_timeout(_count_lines(wordlist), rate)
+    if _puredns_ok():
+        pub, trusted = _resolver_files(outdir, resolvers)
+        cmd = (f"puredns bruteforce {qw} {qt} -r {shlex.quote(str(pub))} "
+               f"--resolvers-trusted {shlex.quote(str(trusted))} "
+               f"--rate-limit {int(rate)} --rate-limit-trusted {TRUSTED_RATE} -n 5 "
+               f"--write {shlex.quote(str(out))} --write-wildcards {shlex.quote(str(wild))} -q"
+               + _NOSTDIN)
+        txt = utils.run(cmd, timeout=timeout)
+        hits = _read_names(out, target) or _collect(txt, target)
+        return hits, _read_names(wild, target), "puredns"
+    if utils.have("dnsx"):
+        pub, _ = _resolver_files(outdir, resolvers)
+        cmd = (f"dnsx -d {qt} -w {qw} -r {shlex.quote(str(pub))} "
+               f"-rl {min(int(rate), 300)} -wd {qt} -silent "
+               f"-o {shlex.quote(str(out))}" + _NOSTDIN)
+        txt = utils.run(cmd, timeout=timeout)
+        return (_read_names(out, target) or _collect(txt, target)), set(), "dnsx"
+    utils.warn("subs: --brute needs puredns+massdns or dnsx — skipping brute pass")
+    return set(), set(), ""
+
+
+# --------------------------------------------------------------------------- #
+# Phase 4: permutation (alterx, capped)
+# --------------------------------------------------------------------------- #
+def _under(name: str, roots) -> bool:
+    return any(name == r or name.endswith("." + r) for r in roots)
+
+
+def select_seeds(names, target: str, wildcard_roots=(),
+                 cap: int = PERMUTE_MAX_SEEDS) -> list[str]:
+    """Resolved, non-wildcard, non-apex seeds; deepest/most varied first."""
+    pool = sorted({n for n in names if n != target and not _under(n, wildcard_roots)})
+    # deepest first, then interleave by first label so one family can't fill the cap
+    pool.sort(key=lambda n: (-n.count("."), n))
+    seen_first: set[str] = set()
+    primary, rest = [], []
+    for n in pool:
+        first = n.split(".", 1)[0].rstrip("0123456789-")
+        (rest if first in seen_first else primary).append(n)
+        seen_first.add(first)
+    return (primary + rest)[:max(0, cap)]
+
+
+_EST_RE = re.compile(r"Estimated Payloads[^:]*:\s*([0-9]+)")
+
+
+def _estimate(txt: str) -> int | None:
+    """Parse alterx's ``-es`` line (printed on stderr, hence the ``2>&1``)."""
+    m = _EST_RE.search(txt or "")
+    return int(m.group(1)) if m else None
+
+
+def permute(seeds, outdir: Path, target: str, known, resolvers=None,
+            rate: int = 500, limit: int = PERMUTE_LIMIT) -> set[str]:
+    """One capped alterx pass over ``seeds``; return the candidates that resolve.
+
+    ``alterx -es`` estimates first: ``-enrich`` is only used when the enriched
+    estimate fits under ``limit``. ``-limit`` is always applied, never
+    recursive. Known names are dropped before resolution, which uses puredns
+    (wildcard-filtered, trusted re-validation) or plain dnsx.
+    """
+    outdir = Path(outdir)
+    seeds = list(seeds)
+    if not seeds:
+        return set()
+    if not utils.have("alterx"):
+        utils.warn("subs: --permute needs alterx — skipping permutation pass")
+        return set()
+    seeds_f = outdir / "subs_permute_seeds.txt"
+    cand_f = outdir / "subs_permute_cand.txt"
+    res_f = outdir / "subs_permute.txt"
+    seeds_f.write_text("\n".join(seeds) + "\n")
+    for f in (cand_f, res_f):
+        f.unlink(missing_ok=True)
+    qs = shlex.quote(str(seeds_f))
+
+    est = _estimate(utils.run(f"alterx -l {qs} -enrich -es -duc 2>&1" + _NOSTDIN, timeout=120))
+    enrich = "-enrich " if est is not None and est <= limit else ""
+    utils.run(f"alterx -l {qs} {enrich}-limit {int(limit)} -silent -duc "
+              f"-o {shlex.quote(str(cand_f))}" + _NOSTDIN, timeout=300)
+    cands = _read_names(cand_f, target) - set(known)
+    if not cands:
+        return set()
+    cand_f.write_text("\n".join(sorted(cands)) + "\n")
+    qc = shlex.quote(str(cand_f))
+    timeout = _dns_timeout(len(cands), rate)
+    if _puredns_ok():
+        pub, trusted = _resolver_files(outdir, resolvers)
+        txt = utils.run(
+            f"puredns resolve {qc} -r {shlex.quote(str(pub))} "
+            f"--resolvers-trusted {shlex.quote(str(trusted))} --rate-limit {int(rate)} "
+            f"--rate-limit-trusted {TRUSTED_RATE} -w {shlex.quote(str(res_f))} -q" + _NOSTDIN,
+            timeout=timeout)
+    elif utils.have("dnsx"):
+        pub, _ = _resolver_files(outdir, resolvers)
+        txt = utils.run(
+            f"dnsx -l {qc} -r {shlex.quote(str(pub))} -rl {int(rate)} -silent "
+            f"-o {shlex.quote(str(res_f))}" + _NOSTDIN, timeout=timeout)
+    else:
+        utils.warn("subs: no resolver tool (puredns/dnsx) for permutation candidates — skipping")
+        return set()
+    return (_read_names(res_f, target) or _collect(txt, target)) & cands
