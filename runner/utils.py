@@ -50,17 +50,37 @@ def stage_header(num: int, total: int, name: str, width: int = 64) -> None:
     print(colorize(rule, "91"), flush=True)
 
 
+# Strings (proxy credentials) scrubbed from every log line and output event.
+_secrets: tuple = ()
+
+
+def set_secrets(secrets) -> None:
+    """Register strings that must never be printed or emitted (``()`` clears)."""
+    global _secrets
+    _secrets = tuple(sorted({s for s in (secrets or ()) if s}, key=len, reverse=True))
+
+
+def _redact(text: str, extra=()) -> str:
+    for s in (*extra, *_secrets):
+        if s and s in text:
+            text = text.replace(s, "***")
+    return text
+
+
 def log(msg: str) -> None:
+    msg = _redact(msg)
     print(colorize(f"[+] {msg}", "2"), flush=True)
     events.log("info", msg)
 
 
 def warn(msg: str) -> None:
+    msg = _redact(msg)
     print(colorize(f"[!] {msg}", "33"), flush=True)
     events.log("warn", msg)
 
 
 def err(msg: str) -> None:
+    msg = _redact(msg)
     print(colorize(f"[-] {msg}", "31"), flush=True)
     events.log("error", msg)
 
@@ -84,13 +104,13 @@ def _tool_name(cmd: str) -> str:
 
 
 def _pump(stream, sink: list, stream_name: str, stage: str, tool: str,
-          on_line: Callable[[str], None] | None) -> None:
+          on_line: Callable[[str], None] | None, extra_secrets=()) -> None:
     """Drain one pipe line by line: keep raw text, emit events, call on_line."""
     try:
         for raw in stream:
             sink.append(raw)
             line = raw[:-1] if raw.endswith("\n") else raw
-            events.output(stage, tool, stream_name, line)
+            events.output(stage, tool, stream_name, _redact(line, extra_secrets))
             if on_line is not None:
                 try:
                     on_line(line)
@@ -123,19 +143,27 @@ def _join(readers: list, timeout: float) -> None:
 
 
 def run(cmd: str, outfile: str = None, timeout: int = 180,
-        on_line: Callable[[str], None] | None = None) -> str:
+        on_line: Callable[[str], None] | None = None, proxy=None) -> str:
     """Run a shell command, return stdout only; surface stderr on failure.
 
     Both pipes are drained line by line on reader threads (each line becomes
     an `output` event; stdout lines also go to `on_line`).  The control file
     is polled every 250 ms; RunCancelled / StageSkipped kill the tool's
     process group and propagate.
+
+    ``proxy`` (a ``runner.proxy.ProxyConfig``): the child gets every proxy env
+    var (defence in depth for env-reading tools; ``NO_PROXY`` cleared), and the
+    proxy's secrets are redacted from the logged command, output events and
+    the stderr warning. Without it the child env is left untouched.
     """
-    log(f"  $ {cmd}")
+    extra = tuple(proxy.secrets) if proxy is not None else ()
+    env = {**os.environ, **proxy.env()} if proxy is not None else None
+    log(f"  $ {_redact(cmd, extra)}")
     try:
         proc = subprocess.Popen(
             cmd,
             shell=True,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
@@ -145,7 +173,7 @@ def run(cmd: str, outfile: str = None, timeout: int = 180,
             bufsize=1,
         )
     except Exception as e:  # noqa: BLE001
-        warn(f"  failed: {e}")
+        warn(f"  failed: {_redact(str(e), extra)}")
         return ""
 
     tool = _tool_name(cmd)
@@ -154,9 +182,9 @@ def run(cmd: str, outfile: str = None, timeout: int = 180,
     err_raw: list[str] = []
     readers = [
         threading.Thread(target=_pump, daemon=True,
-                         args=(proc.stdout, out_raw, "stdout", stage, tool, on_line)),
+                         args=(proc.stdout, out_raw, "stdout", stage, tool, on_line, extra)),
         threading.Thread(target=_pump, daemon=True,
-                         args=(proc.stderr, err_raw, "stderr", stage, tool, None)),
+                         args=(proc.stderr, err_raw, "stderr", stage, tool, None, extra)),
     ]
     registered = False
     try:
@@ -215,7 +243,7 @@ def run(cmd: str, outfile: str = None, timeout: int = 180,
     stdout = "".join(out_raw)
     stderr = "".join(err_raw)
     if proc.returncode != 0 and stderr:
-        warn(f"  exit {proc.returncode}: {stderr.strip()[:200]}")
+        warn(f"  exit {proc.returncode}: {_redact(stderr.strip(), extra)[:200]}")
     text = stdout
     if outfile:
         p = Path(outfile)

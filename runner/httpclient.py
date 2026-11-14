@@ -141,6 +141,9 @@ class Client:
         s.headers.update(dict(self.cfg.extra_headers))
         if self.cfg.proxy:
             s.proxies.update({"http": self.cfg.proxy, "https": self.cfg.proxy})
+            # Deterministic + fail-closed: ignore ambient *_PROXY / NO_PROXY,
+            # which could otherwise silently exempt the target from the proxy.
+            s.trust_env = False
         retry = Retry(
             total=retries, connect=retries, read=retries,
             backoff_factor=self.cfg.backoff, status_forcelist=self.cfg.status_forcelist,

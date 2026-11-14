@@ -4,6 +4,7 @@ import re
 import shutil
 from pathlib import Path
 
+from runner import proxy as proxymod
 from runner import utils
 from runner.stages import _is_global, _resolve
 
@@ -56,9 +57,12 @@ def _hosts_from_rows(rows, outdir: Path, target: str) -> list[str]:
 
 
 def headi_scan(target: str, outdir: Path, rows: list[dict] | None = None,
-               timeout: int = 300) -> list[dict]:
+               timeout: int = 300, proxy=None) -> list[dict]:
     """Run headi against live hosts; return header-injection findings."""
     utils.log("header injection (headi)")
+    # headi has no proxy option (static Go binary): fail-closed under --proxy.
+    if not proxymod.gate(proxy, "headi"):
+        return []
     binary = _resolve_binary()
     if not binary:
         utils.warn("headi binary not found (set HEADI_BIN) — skipping header-injection scan")

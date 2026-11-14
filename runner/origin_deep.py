@@ -17,6 +17,7 @@ import ipaddress
 import json
 from pathlib import Path
 
+from . import proxy as proxymod
 from . import stages, utils
 
 
@@ -28,7 +29,7 @@ def _is_global(ip: str) -> bool:
         return False
 
 
-def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
+def origin_deep(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[dict]:
     """Discover non-Cloudflare origin IPs for ``target`` via crt.sh SAN history.
 
     Returns ``list[{"ip", "sources", "status", "remote_ip"}]`` — the same shape
@@ -38,7 +39,10 @@ def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
 
     # 1. Query crt.sh for every certificate whose SANs mention <target>.
     crt_url = f"https://crt.sh/?q=%25.{target}&output=json"
-    body = utils.run(f"curl -sS --connect-timeout 10 --max-time 30 \"{crt_url}\"", timeout=40)
+    pk = proxymod.run_kw(proxy)
+    px = proxy.cli("curl") if proxy is not None else ""
+    body = utils.run(f"curl -sS --connect-timeout 10 --max-time 30{px} \"{crt_url}\"",
+                     timeout=40, **pk)
 
     if not body.strip():
         utils.warn("  crt.sh returned no data — aborting deep origin discovery")
@@ -74,7 +78,7 @@ def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     utils.log(f"  {len(subs)} unique subdomain(s) from crt.sh")
 
     # 4. Load Cloudflare ranges up front — a false positive would poison results.
-    ranges = stages._cloudflare_ranges()
+    ranges = stages._cloudflare_ranges(**pk)
     utils.log(f"  loaded {len(ranges)} Cloudflare ranges (AS13335)")
     if not ranges:
         utils.warn("  could not load Cloudflare ranges — aborting deep origin "
@@ -91,7 +95,13 @@ def origin_deep(target: str, outdir: Path, cf_result: dict) -> list[dict]:
 
     # 6. Verify each candidate by force-connecting to the origin IP.
     rows = []
+    if proxy is not None and candidates:
+        utils.warn("  origin verification skipped under --proxy (candidates kept unverified)")
     for ip, sources in sorted(candidates.items()):
+        if proxy is not None:
+            rows.append({"ip": ip, "sources": sources,
+                         "status": stages.UNVERIFIED_PROXY, "remote_ip": ""})
+            continue
         out = utils.run(
             f"curl -sS -k --connect-timeout 10 -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
             f"--resolve {target}:443:{ip} --max-time 12 https://{target}",

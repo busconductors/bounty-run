@@ -9,7 +9,7 @@ from pathlib import Path
 from . import (__version__, api_endpoints, banner, categories, dashboard, dork_scan,
                events, evidence, finding, headi_scan, http_headers, httpclient,
                metis_check, nikto_scan, nmap_scan, origin_deep, panel_detect,
-               param_scan, report, scope, secret_scan, stage_registry, stages,
+               param_scan, proxy, report, scope, secret_scan, stage_registry, stages,
                tech_scan, tls_scan, tracker, utils, waf_scan)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
@@ -58,8 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="out-of-scope rule (repeatable); deny wins over allow")
     p.add_argument("--scope-file", metavar="PATH",
                    help="scope rules file, one per line; a leading '!' marks a deny rule")
-    p.add_argument("--proxy", metavar="URL",
-                   help="route in-process HTTP(S) through this proxy (e.g. http://127.0.0.1:8080)")
+    p.add_argument("--proxy", metavar="URL", type=_proxy_arg,
+                   help="route the HTTP stages through this proxy: http://, https:// (TLS to "
+                        "the proxy itself — most users want http://), socks5:// or socks5h:// "
+                        "host:port, creds percent-encoded. nmap + DNS stay direct; tools that "
+                        "cannot use the proxy are skipped. Env fallback: BOUNTY_RUN_PROXY")
     p.add_argument("--user-agent", metavar="STR", help="override the HTTP User-Agent header")
     p.add_argument("--header", action="append", metavar="K: V", default=[],
                    help="extra HTTP header to send on every in-process request (repeatable)")
@@ -120,6 +123,15 @@ def _positive_int(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
     return n
+
+
+def _proxy_arg(value: str) -> str:
+    """argparse type: a valid proxy URL (kept as the string the user gave)."""
+    try:
+        proxy.parse(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+    return value.strip()
 
 
 def _nonneg_int(value: str) -> int:
@@ -388,11 +400,17 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
                 with events.stage(sid):
                     events.mark_skipped(reason)
 
+    # Run-level proxy: passed only to HTTP stages that shell out to tools
+    # (in-process requests already go through httpclient). Passed only when
+    # set, so proxy-less call signatures are exactly as before.
+    pcfg = proxy.from_args(args)
+    pkw = {"proxy": pcfg} if pcfg else {}
+
     if ok("subs"):
         with events.stage("subs") as sc:
             _hdr("subs")
             st.subs = stages.subdomain_enum(
-                target, outdir, skip_amass=not args.amass,
+                target, outdir, skip_amass=not args.amass, **pkw,
                 findomain=getattr(args, "findomain", False),
                 active=stage_registry.ceiling(args) >= stage_registry.Tier.ACTIVE,
                 resolvers=getattr(args, "resolvers", None),
@@ -425,9 +443,9 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
         if st.cf["cloudflare"]:
             with events.stage("origin") as sc:
                 _hdr("origin")
-                st.origins = stages.origin_hunt(target, outdir, st.cf)
+                st.origins = stages.origin_hunt(target, outdir, st.cf, **pkw)
                 if ok("origin_deep"):
-                    st.origins = st.origins + origin_deep.origin_deep(target, outdir, st.cf)
+                    st.origins = st.origins + origin_deep.origin_deep(target, outdir, st.cf, **pkw)
                 sc.counts["origins"] = len(_merge_origins_by_ip(st.origins))
         elif events.enabled():
             with events.stage("origin"):
@@ -449,22 +467,26 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             _emit_findings(new)
             sc.counts["findings"] = len(new)
 
+    def _nmap_direct(*a, **kw):
+        utils.warn("nmap: runs DIRECT, not through --proxy (out of scope)")
+        return nmap_scan.nmap_scan(*a, **kw)
+
     if ok("nmap"):
-        scan("nmap", nmap_scan.nmap_scan,
+        scan("nmap", _nmap_direct if pcfg else nmap_scan.nmap_scan,
              target, outdir, st.rows, st.origins, full=args.nmap_full)
 
     host_cap = min(args.max_hosts, 20)
     if ok("waf"):
         scan("waf", waf_scan.waf_scan,
-             target, outdir, hosts=live, max_hosts=host_cap)
+             target, outdir, hosts=live, max_hosts=host_cap, **pkw)
     if ok("dork"):
         scan("dork", dork_scan.dork_scan, target, outdir)
     if ok("tls"):
         scan("tls", tls_scan.tls_scan,
-             target, outdir, hosts=live, max_hosts=host_cap)
+             target, outdir, hosts=live, max_hosts=host_cap, **pkw)
     if ok("nikto"):
         scan("nikto", nikto_scan.nikto_scan,
-             target, outdir, hosts=live, max_hosts=host_cap)
+             target, outdir, hosts=live, max_hosts=host_cap, **pkw)
 
     write_summary(outdir, target, st.subs, st.rows, st.cf, st.origins)
     st.summary_written = True
@@ -475,7 +497,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             new = record_prov(keep(stages.vuln_scan(
                 target, outdir, st.rows, severity=args.nuclei_severity,
                 concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
-                origins=st.origins, oast=stage_registry.oast_enabled(args)), "vuln"), "vuln")
+                origins=st.origins, oast=stage_registry.oast_enabled(args), **pkw), "vuln"), "vuln")
             st.findings += new
             sc.counts["findings"] = len(new)
             report.write_findings_report(outdir, target, st.findings, [], origins=st.origins)
@@ -483,30 +505,51 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     if ok("content"):
         with events.stage("content") as sc:
             _hdr("content")
-            st.content = stages.content_discovery(target, outdir, args.wordlist)
+            st.content = stages.content_discovery(target, outdir, args.wordlist, **pkw)
             sc.counts["content"] = len(st.content)
 
     if ok("api"):
         scan("api", api_endpoints.api_endpoints_scan,
-             target, outdir, max_hosts=min(args.max_hosts, 20))
+             target, outdir, max_hosts=min(args.max_hosts, 20), **pkw)
     if ok("param"):
         scan("param", param_scan.param_scan,
-             target, outdir, args.max_param_urls)
+             target, outdir, args.max_param_urls, **pkw)
     if ok("secret"):
         scan("secret", secret_scan.secret_scan, target, outdir)
     if ok("metis"):
-        scan("metis", metis_check.metis_check, target, outdir, live)
+        scan("metis", metis_check.metis_check, target, outdir, live, **pkw)
 
     if ok("headers"):
         scan("headers", http_headers.security_headers_scan,
-             target, outdir, live)
+             target, outdir, live, **pkw)
     if ok("cors"):
         scan("cors", http_headers.cors_scan, target, outdir, live)
     if ok("tech"):
-        scan("tech", tech_scan.tech_scan, target, outdir, live)
+        scan("tech", tech_scan.tech_scan, target, outdir, live, **pkw)
     if ok("headi"):
         scan("headi", headi_scan.headi_scan,
-             target, outdir, st.rows)
+             target, outdir, st.rows, **pkw)
+
+
+def _wafw00f_has_socks() -> bool:
+    """Best-effort: whether wafw00f's interpreter can import PySocks."""
+    import shutil
+    import subprocess
+    w = shutil.which("wafw00f")
+    if not w:
+        return True
+    try:
+        first = Path(w).read_text(errors="replace").splitlines()[0]
+    except (OSError, IndexError):
+        return True
+    if not first.startswith("#!"):
+        return True
+    interp = first[2:].strip().split()
+    try:
+        return subprocess.run([*interp, "-c", "import socks"], capture_output=True,
+                              timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return True
 
 
 def _finish(args, target: str, outdir: Path, skip: set[str], st: RunState) -> int:
@@ -589,6 +632,37 @@ def main(argv=None) -> int:
         return 2
     scope.set_active(active_scope)
 
+    # Run-level proxy: --proxy wins, BOUNTY_RUN_PROXY is the fallback (the TUI
+    # passes it via env so credentials stay out of world-readable argv).
+    stderr = __import__("sys").stderr
+    try:
+        pcfg = proxy.parse(args.proxy) if args.proxy else proxy.from_env()
+    except ValueError as e:
+        print(f"error: invalid {proxy.ENV_VAR}: {e}", file=stderr)
+        scope.reset()
+        return 2
+    if pcfg is not None:
+        args.proxy = pcfg.url
+        utils.set_secrets(pcfg.secrets)
+        if pcfg.kind == "socks5" and not proxy.have_socks():
+            print("error: SOCKS5 needs PySocks: pip install 'requests[socks]' "
+                  "(Kali: apt install python3-socks)", file=stderr)
+            scope.reset()
+            utils.set_secrets(())
+            return 2
+        perr = proxy.preflight(pcfg, target)
+        if perr:
+            print(f"error: proxy preflight failed — {perr}", file=stderr)
+            scope.reset()
+            utils.set_secrets(())
+            return 2
+    else:
+        ambient = proxy.ambient_env()
+        if ambient:
+            utils.warn(f"{', '.join(ambient)} set in the environment but --proxy is not: "
+                       "some tools will honour it and others will not (half-proxied run). "
+                       "Use --proxy for a consistent, fail-closed proxied run.")
+
     # Configure the process-wide HTTP client (no network I/O here) and enforce
     # scope on every request hop (redirects included).
     httpclient.configure(httpclient.HttpConfig.from_args(args))
@@ -615,6 +689,7 @@ def main(argv=None) -> int:
         httpclient.client().close()
         evidence.reset()
         scope.reset()
+        utils.set_secrets(())
         if args.events:
             events.reset()
 
@@ -622,6 +697,12 @@ def main(argv=None) -> int:
 def _run(args, target: str, outdir: Path, skip: set[str]) -> int:
     utils.log(f"Bounty Runner v{__version__} — target: {target}")
     utils.log(f"output dir: {outdir}")
+    pcfg = proxy.from_args(args)
+    if pcfg is not None:
+        utils.log(proxy.banner_line(pcfg))
+        if pcfg.kind == "socks5" and not _wafw00f_has_socks():
+            utils.warn("wafw00f's interpreter lacks PySocks — waf stage may fail under "
+                       "SOCKS (apt install python3-socks)")
 
     st = RunState(target, start=time.monotonic())
     evidence.activate(evidence.EvidenceStore(

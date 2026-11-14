@@ -54,7 +54,8 @@ def _live_hosts(outdir: Path, target: str, hosts: list[str] | None) -> list[str]
 
 
 def security_headers_scan(target: str, outdir: Path, hosts: list[str] | None = None,
-                          include_deprecated: bool = False) -> list[dict]:
+                          include_deprecated: bool = False,
+                          proxy=None) -> list[dict]:
     """Invoke vendored shcheck.py and return missing/insecure-header findings."""
     utils.log("security headers (shcheck)")
     if not SHCHECK.exists():
@@ -70,11 +71,19 @@ def security_headers_scan(target: str, outdir: Path, hosts: list[str] | None = N
     cmd = f"python3 {SHCHECK} -j -d -g {' '.join(urls)}"
     if include_deprecated:
         cmd += " -k"
-    from runner import httpclient
-    proxy_args = httpclient.tool_proxy_args("shcheck")
-    if proxy_args:
-        cmd += " " + " ".join(proxy_args)
-    raw = utils.run(cmd, outfile=str(Path(outdir) / "security_headers.json"), timeout=120)
+    from runner import proxy as proxymod
+    if proxy is not None:
+        if not proxymod.gate(proxy, "shcheck"):
+            return []
+        cmd += proxy.cli("shcheck")
+    else:
+        # legacy path: proxy configured only on the shared HTTP client
+        from runner import httpclient
+        proxy_args = httpclient.tool_proxy_args("shcheck")
+        if proxy_args:
+            cmd += " " + " ".join(proxy_args)
+    raw = utils.run(cmd, outfile=str(Path(outdir) / "security_headers.json"), timeout=120,
+                    **proxymod.run_kw(proxy))
     data = _parse_shcheck_json(raw)
 
     findings: list[dict] = []

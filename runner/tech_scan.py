@@ -16,10 +16,12 @@ Schema (whatweb --log-json): a JSON array of
        "<Tech>": {"version": [...], "string": [...], "confidence": ..., ...}}}
 """
 import json
+import shlex
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from runner import events, utils
+from runner import proxy as proxymod
 from runner.stages import _is_global, _resolve
 
 
@@ -72,12 +74,14 @@ def _parse_whatweb_json(raw: str) -> list[dict]:
 
 
 def tech_scan(target: str, outdir: Path, hosts: list[str] | None = None,
-              timeout: int = 300) -> list[dict]:
+              timeout: int = 300, proxy=None) -> list[dict]:
     """Fingerprint live hosts with whatweb; emit one finding per technology."""
     utils.log("tech detection (whatweb)")
     if not utils.have("whatweb"):
         utils.warn("whatweb not found — skipping tech detection")
         events.mark_skipped("tool missing: whatweb")
+        return []
+    if not proxymod.gate(proxy, 'whatweb'):
         return []
 
     live = _live_hosts(outdir, target, hosts)
@@ -88,8 +92,10 @@ def tech_scan(target: str, outdir: Path, hosts: list[str] | None = None,
     log_path = Path(outdir) / "whatweb.json"
     urls = [f"https://{h}" for h in live]
     utils.run(
-        f"whatweb -a 3 --log-json={log_path} {' '.join(urls)}",
+        f"whatweb -a 3 --log-json={log_path} {' '.join(urls)}"
+        f"{proxy.cli('whatweb') if proxy is not None else ''}",
         timeout=timeout,
+        **proxymod.run_kw(proxy),
     )
 
     if not log_path.exists():

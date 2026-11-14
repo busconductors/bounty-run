@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import events, scope, subdomains, utils
+from . import proxy as proxymod
 
 try:
     # Shared, pooled client stand-in; TLS warnings are silenced in Client.__init__.
@@ -52,7 +53,8 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
                    active: bool = False,
                    resolvers: str | None = None,
                    dns_rate: int = 500,
-                   cache_dir=None) -> list[str]:
+                   cache_dir=None,
+                   proxy=None) -> list[str]:
     """Stage 1: passive subdomain discovery via subfinder (+ optional sources).
 
     With every keyword argument at its default this reproduces the legacy
@@ -77,17 +79,18 @@ def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
     stats: dict = {"sources": {}, "skipped": {}}
     subs = {t}
 
-    found = subdomains.passive_subfinder(t, outdir)
+    pk = proxymod.run_kw(proxy)  # passive sources go via the proxy; DNS stays direct
+    found = subdomains.passive_subfinder(t, outdir, **pk)
     stats["sources"]["subfinder"] = len(found)
     subs |= found
 
     if not skip_amass:
-        amass_names = subdomains.passive_amass(t, outdir)
+        amass_names = subdomains.passive_amass(t, outdir, **pk)
         stats["sources"]["amass"] = len(amass_names)
         subs |= amass_names
 
     if findomain:
-        fd = subdomains.passive_findomain(t, outdir)
+        fd = subdomains.passive_findomain(t, outdir, **pk)
         stats["sources"]["findomain"] = len(fd)
         subs |= fd
 
@@ -258,11 +261,13 @@ def _mx_hosts(domain: str) -> list[str]:
     return hosts
 
 
-def _cloudflare_ranges() -> list:
+def _cloudflare_ranges(proxy=None) -> list:
     """Fetch Cloudflare's published IP ranges (AS13335)."""
     ranges = []
+    px = proxy.cli("curl") if proxy is not None else ""
     for url in ("https://www.cloudflare.com/ips-v4", "https://www.cloudflare.com/ips-v6"):
-        out = utils.run(f"curl -sS --connect-timeout 10 --max-time 30 {url}", timeout=40)
+        out = utils.run(f"curl -sS --connect-timeout 10 --max-time 30{px} {url}", timeout=40,
+                        **proxymod.run_kw(proxy))
         for line in out.splitlines():
             line = line.strip()
             if line:
@@ -301,13 +306,19 @@ def _verify_origin(target: str, ip: str) -> dict:
     return {"status": parts[0] if parts else "", "remote_ip": parts[1] if len(parts) > 1 else ""}
 
 
-def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
+# Status recorded for origin candidates when verification is skipped under a
+# proxy: `curl --resolve` through a proxy would "verify" the CF edge (the proxy
+# resolves the name), and running it direct would leak. Owner decision: skip.
+UNVERIFIED_PROXY = "unverified(proxy)"
+
+
+def origin_hunt(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[dict]:
     """Stage 4: find the origin IP behind Cloudflare via leak subdomains + MX."""
     utils.log(f"origin hunting ({target})")
     edge_ip = cf_result.get("ip") or _resolve(target)
     utils.log(f"  edge IP (Cloudflare): {edge_ip or 'unknown'}")
 
-    cf_ranges = _cloudflare_ranges()
+    cf_ranges = _cloudflare_ranges(**proxymod.run_kw(proxy))
     utils.log(f"  loaded {len(cf_ranges)} Cloudflare ranges (AS13335)")
     if not cf_ranges:
         utils.warn("  could not load Cloudflare ranges — aborting origin hunt (would false-positive)")
@@ -334,8 +345,13 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict) -> list[dict]:
     stage = events.current_stage() or "origin"
     sorted_candidates = sorted(candidates.items())
     total = len(sorted_candidates)
+    if proxy is not None and sorted_candidates:
+        utils.warn("  origin verification skipped under --proxy (candidates kept unverified)")
     for done, (ip, sources) in enumerate(sorted_candidates, 1):
-        v = _verify_origin(target, ip)
+        if proxy is not None:
+            v = {"status": UNVERIFIED_PROXY, "remote_ip": ""}
+        else:
+            v = _verify_origin(target, ip)
         rows.append({"ip": ip, "sources": sources, "status": v["status"],
                      "remote_ip": v["remote_ip"]})
         events.progress(stage, done, total)
@@ -451,7 +467,7 @@ def _emit_nuclei_finding_from_line(line: str) -> None:
 
 def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = "info,low,medium,high,critical",
               concurrency: int = 25, timeout: int = 1800, origins: list[dict] = None,
-              oast: bool = True) -> list[dict]:
+              oast: bool = True, proxy=None) -> list[dict]:
     """Stage 5: run nuclei against live hosts, parse JSONL into findings.
 
     `origins` is an optional list of dicts (each with an 'ip' key) for origin
@@ -467,6 +483,13 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
         utils.warn("nuclei not found — skipping")
         events.mark_skipped("tool missing: nuclei")
         return []
+    if not proxymod.gate(proxy, "nuclei"):
+        return []
+    # Under a proxy: HTTP templates + nuclei's own OAST/update traffic go via
+    # -proxy/-proxy-internal; non-HTTP templates (tcp/ssl/js/ws) connect direct
+    # by owner decision (the VPN covers them).
+    px = proxy.cli("nuclei") if proxy is not None else ""
+    pk = proxymod.run_kw(proxy)
     _patience_banner()
     concurrency = _clamp_concurrency(concurrency)
     hosts = sorted({r["host"] for r in live_rows if r["status"]})
@@ -483,9 +506,10 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     utils.log(f"  scanning {len(hosts)} host(s) [{severity}] — this can take a few minutes")
     utils.run(
         f"nuclei -l {shlex.quote(str(hosts_file))} -severity {shlex.quote(severity)} "
-        f"-c {concurrency}{ni} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
+        f"-c {concurrency}{ni}{px} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
         timeout=timeout,
         on_line=_emit_nuclei_finding_from_line,
+        **pk,
     )
     findings = _parse_nuclei_jsonl(outdir / "nuclei.jsonl")
 
@@ -505,9 +529,10 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
         utils.run(
             f"nuclei -l {shlex.quote(str(origin_targets))} -severity {shlex.quote(severity)} "
             f"-sni {shlex.quote(target)} -H {shlex.quote('Host: ' + target)} "
-            f"-c {concurrency}{ni} -jsonl -silent -o {shlex.quote(str(origin_jsonl))}",
+            f"-c {concurrency}{ni}{px} -jsonl -silent -o {shlex.quote(str(origin_jsonl))}",
             timeout=timeout,
             on_line=_emit_nuclei_finding_from_line,
+            **pk,
         )
         findings.extend(_parse_nuclei_jsonl(origin_jsonl))
 
@@ -515,7 +540,8 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
     return findings
 
 
-def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 40) -> list[str]:
+def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 40,
+                      proxy=None) -> list[str]:
     """Stage 6: ffuf content discovery against the main target."""
     utils.log("content discovery (ffuf)")
     if not utils.have("ffuf"):
@@ -525,6 +551,9 @@ def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 4
     if not Path(wordlist).exists():
         utils.warn(f"wordlist not found: {wordlist} — skipping ffuf")
         return []
+    if not proxymod.gate(proxy, "ffuf"):
+        return []
+    px = proxy.cli("ffuf") if proxy is not None else ""
 
     def _on_line(line: str) -> None:
         line = line.strip()
@@ -533,9 +562,10 @@ def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 4
 
     out = utils.run(
         f"ffuf -u https://{target}/FUZZ -w {shlex.quote(wordlist)} "
-        f"-mc 200,204,301,302,307,401,403 -ac -t {threads} -s",
+        f"-mc 200,204,301,302,307,401,403 -ac -t {threads} -s{px}",
         timeout=600,
         on_line=_on_line,
+        **proxymod.run_kw(proxy),
     )
     paths = sorted({line.strip() for line in out.splitlines() if line.strip()})
     outfile = outdir / "content_discovery.txt"

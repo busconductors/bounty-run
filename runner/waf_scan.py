@@ -26,6 +26,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from runner import events, utils
+from runner import proxy as proxymod
 from runner.stages import _is_global, _resolve
 
 
@@ -54,12 +55,14 @@ def _hosts(target: str, hosts: list[str], max_hosts: int) -> list[str]:
 
 
 def waf_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
-             timeout: int = 300) -> list[dict]:
+             timeout: int = 300, proxy=None) -> list[dict]:
     """Fingerprint WAFs in front of live hosts; one info finding per WAF/host."""
     utils.log("WAF fingerprinting (wafw00f)")
     if not utils.have("wafw00f"):
         utils.warn("wafw00f not found — skipping WAF fingerprinting")
         events.mark_skipped("tool missing: wafw00f")
+        return []
+    if not proxymod.gate(proxy, 'wafw00f'):
         return []
 
     live = _hosts(target, hosts, max_hosts)
@@ -76,8 +79,10 @@ def waf_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
 
     utils.run(
         f"wafw00f -a -i {shlex.quote(str(targets_path))} "
-        f"-o {shlex.quote(str(json_path))} -f json -T 10 --no-colors",
+        f"-o {shlex.quote(str(json_path))} -f json -T 10 --no-colors"
+        f"{proxy.cli('wafw00f') if proxy is not None else ''}",
         timeout=timeout,
+        **proxymod.run_kw(proxy),
     )
 
     if not json_path.exists():

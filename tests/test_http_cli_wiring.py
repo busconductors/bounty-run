@@ -45,8 +45,11 @@ class TestFlagsParse:
 class TestRunJsonRedaction:
     def test_proxy_creds_absent_from_run_json(self, tmp_path):
         events_path = tmp_path / "events.jsonl"
+        # The proxy preflight (fail-closed on a dead proxy) is stubbed: this
+        # test is about redaction, and nothing listens on 127.0.0.1:8080.
         with mock.patch.object(cli, "_run", return_value=0), \
              mock.patch.object(cli, "_resolve_outdir", return_value=tmp_path), \
+             mock.patch.object(cli.proxy, "preflight", return_value=None), \
              mock.patch.object(cli.banner, "print_banner"):
             cli.main(["example.com", "--no-banner", "--events", str(events_path),
                       "--proxy", "http://user:pass@127.0.0.1:8080"])

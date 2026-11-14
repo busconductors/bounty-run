@@ -21,6 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import proxy as proxymod
 from . import scope, utils
 
 # trickest/resolvers — a large, frequently-updated public resolver list.
@@ -71,7 +72,7 @@ def _collect(txt: str, target: str) -> set[str]:
 # --------------------------------------------------------------------------- #
 # passive collectors
 # --------------------------------------------------------------------------- #
-def passive_subfinder(target: str, outdir: Path) -> set[str]:
+def passive_subfinder(target: str, outdir: Path, proxy=None) -> set[str]:
     """Run subfinder with hardened flags; parse stdout, fall back to the file.
 
     Uses ``-all -duc -timeout 60 -max-time 5`` under a 360 s wrapper so slow
@@ -86,7 +87,9 @@ def passive_subfinder(target: str, outdir: Path) -> set[str]:
         f"subfinder -d {shlex.quote(target)} -all -silent -duc "
         f"-timeout 60 -max-time 5 -o {shlex.quote(str(sub_out))}"
     )
-    txt = utils.run(cmd, timeout=360)
+    if proxy is not None:
+        cmd += proxy.cli("subfinder")
+    txt = utils.run(cmd, timeout=360, **proxymod.run_kw(proxy))
     found = _collect(txt, target)
     if not found and sub_out.exists():
         try:
@@ -96,7 +99,7 @@ def passive_subfinder(target: str, outdir: Path) -> set[str]:
     return found
 
 
-def passive_amass(target: str, outdir: Path) -> set[str]:
+def passive_amass(target: str, outdir: Path, proxy=None) -> set[str]:
     """Run amass v5 passive enum, then read names out of its asset DB.
 
     amass v5 dropped the v4-style ``-passive`` flag and stores results in a
@@ -105,6 +108,8 @@ def passive_amass(target: str, outdir: Path) -> set[str]:
     """
     if not utils.have("amass"):
         return set()
+    if not proxymod.gate(proxy, "amass", mark=False):
+        return set()
     amass_dir = Path(outdir) / "amass"
     qt = shlex.quote(target)
     qd = shlex.quote(str(amass_dir))
@@ -112,14 +117,17 @@ def passive_amass(target: str, outdir: Path) -> set[str]:
         f"amass enum -d {qt} -timeout 5 -dir {qd} && "
         f"amass subs -names -d {qt} -dir {qd}"
     )
-    txt = utils.run(cmd, outfile=str(Path(outdir) / "amass.txt"), timeout=300)
+    txt = utils.run(cmd, outfile=str(Path(outdir) / "amass.txt"), timeout=300,
+                    **proxymod.run_kw(proxy))
     return _collect(txt, target)
 
 
-def passive_findomain(target: str, outdir: Path) -> set[str]:
+def passive_findomain(target: str, outdir: Path, proxy=None) -> set[str]:
     """Run findomain (its own crt.sh/certspotter clients); opt-in add-on."""
     if not utils.have("findomain"):
         utils.warn("findomain not found — skipping")
+        return set()
+    if not proxymod.gate(proxy, "findomain", mark=False):
         return set()
     cmd = f"findomain -t {shlex.quote(target)} -q"
     txt = utils.run(cmd, outfile=str(Path(outdir) / "findomain.txt"), timeout=180)

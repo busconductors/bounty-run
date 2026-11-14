@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from runner import events, scope, utils
+from runner import proxy as proxymod
 
 # A real UA + retries/backoff + --fail so throttled error bodies (429/503 HTML)
 # don't get fed to json.loads. --compressed keeps the 500-row payload small.
@@ -138,7 +139,8 @@ def _read_cached_endpoints(outdir: Path, max_urls: int) -> list[str]:
     return lines[:max_urls]
 
 
-def discover_endpoints(target: str, outdir: Path, max_urls: int = 50) -> list[str]:
+def discover_endpoints(target: str, outdir: Path, max_urls: int = 50,
+                       proxy=None) -> list[str]:
     """Wayback CDX discovery -> _strip_param_values -> _VALID_PARAM filter -> dedupe -> cap.
 
     Shared by ``param_scan`` (sqlmap) and ``injection_scan`` (SSTI/NoSQLi/CRLF/XSS/
@@ -146,7 +148,10 @@ def discover_endpoints(target: str, outdir: Path, max_urls: int = 50) -> list[st
     normalized endpoint list (empty when nothing discovered, in which case the file
     is not written).
     """
-    raw = utils.run(CDX_URL.format(target=target), timeout=60)
+    cdx = CDX_URL.format(target=target)
+    if proxy is not None:
+        cdx = cdx.replace("curl ", "curl" + proxy.cli("curl") + " ", 1)
+    raw = utils.run(cdx, timeout=60, **proxymod.run_kw(proxy))
 
     endpoints = []
     seen = set()
@@ -179,14 +184,16 @@ def discover_endpoints(target: str, outdir: Path, max_urls: int = 50) -> list[st
     return endpoints
 
 
-def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
+def param_scan(target: str, outdir: Path, max_urls: int = 50, proxy=None) -> list[dict]:
     """Discover parameterized URLs via Wayback CDX and test them with sqlmap.
 
     Returns a list of findings; dedupe happens later at the cli.py layer.
     """
     findings: list[dict] = []
 
-    endpoints = discover_endpoints(target, outdir, max_urls)
+    if not proxymod.gate(proxy, "sqlmap"):
+        return []
+    endpoints = discover_endpoints(target, outdir, max_urls, **proxymod.run_kw(proxy))
     if not endpoints:
         return []
 
@@ -200,7 +207,9 @@ def param_scan(target: str, outdir: Path, max_urls: int = 50) -> list[dict]:
     total = len(endpoints)
     for done, url in enumerate(endpoints, 1):
         cmd = f"sqlmap -u {shlex.quote(url)} {SQLMAP_FLAGS}"
-        out = utils.run(cmd, timeout=300)
+        if proxy is not None:
+            cmd += proxy.cli("sqlmap")
+        out = utils.run(cmd, timeout=300, **proxymod.run_kw(proxy))
         report_parts.append(f"### {url}\n{out}\n")
         events.progress(stage, done, total)
         if _is_injectable(out):

@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from runner import events, utils
+from runner import proxy as proxymod
 from runner.stages import _is_global, _resolve
 
 # (category, compiled rule, severity) — case-insensitive, first match wins.
@@ -135,7 +136,7 @@ def _findings_for(host: str, items: list[dict]) -> list[dict]:
     return findings
 
 
-def _scan_host(host: str, nikto_dir: Path, maxtime: int) -> list[dict]:
+def _scan_host(host: str, nikto_dir: Path, maxtime: int, proxy=None) -> list[dict]:
     """Run nikto on one host and return its findings; never raises."""
     out = nikto_dir / f"{host}.json"
     try:
@@ -143,8 +144,9 @@ def _scan_host(host: str, nikto_dir: Path, maxtime: int) -> list[dict]:
         utils.run(
             f"nikto -h {shlex.quote('https://' + host)} -Format json "
             f"-o {shlex.quote(str(out))} -maxtime {int(maxtime)}s -timeout 10 "
-            f"-nointeractive -ask no",
+            f"-nointeractive -ask no{proxy.cli('nikto') if proxy is not None else ''}",
             timeout=int(maxtime) + 60,
+            **proxymod.run_kw(proxy),
         )
         if not out.exists():
             utils.warn(f"nikto produced no output for {host}")
@@ -161,12 +163,14 @@ def _scan_host(host: str, nikto_dir: Path, maxtime: int) -> list[dict]:
 
 
 def nikto_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
-               maxtime: int = 300, workers: int = 4) -> list[dict]:
+               maxtime: int = 300, workers: int = 4, proxy=None) -> list[dict]:
     """Run nikto per host (bounded, parallel) and return classified findings."""
     utils.log("nikto web-server scan")
     if not utils.have("nikto"):
         utils.warn("nikto not found — skipping nikto scan")
         events.mark_skipped("tool missing: nikto")
+        return []
+    if not proxymod.gate(proxy, 'nikto'):
         return []
 
     try:
@@ -186,7 +190,8 @@ def nikto_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     total = len(targets)
     results: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = {pool.submit(_scan_host, h, nikto_dir, maxtime): h for h in targets}
+        pk = proxymod.run_kw(proxy)
+        futures = {pool.submit(_scan_host, h, nikto_dir, maxtime, **pk): h for h in targets}
         done = 0
         try:
             for fut in as_completed(futures):

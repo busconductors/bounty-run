@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from runner import events, utils
+from runner import proxy as proxymod
 from runner.stages import _is_global, _resolve
 
 PORT = 443
@@ -240,7 +241,8 @@ def _collect_hosts(target: str, hosts: list[str], max_hosts: int) -> list[str]:
     return routable[:max(0, max_hosts)]
 
 
-def _scan_host(host: str, jsondir: Path, timeout: int, now: datetime) -> list[dict]:
+def _scan_host(host: str, jsondir: Path, timeout: int, now: datetime,
+               proxy=None) -> list[dict]:
     out = jsondir / f"{host}.json"
     try:
         if out.exists():
@@ -248,7 +250,9 @@ def _scan_host(host: str, jsondir: Path, timeout: int, now: datetime) -> list[di
         cmd = (f"sslyze --quiet --json_out={shlex.quote(str(out))} --certinfo "
                f"--sslv2 --sslv3 --tlsv1 --tlsv1_1 --tlsv1_2 --heartbleed --robot "
                f"{shlex.quote(f'{host}:{PORT}')}")
-        utils.run(cmd, timeout=int(timeout))
+        if proxy is not None:
+            cmd += proxy.cli("sslyze")
+        utils.run(cmd, timeout=int(timeout), **proxymod.run_kw(proxy))
         if not out.exists():
             utils.warn(f"sslyze: no JSON output for {host} (timeout or connect error)")
             return []
@@ -262,13 +266,18 @@ def _scan_host(host: str, jsondir: Path, timeout: int, now: datetime) -> list[di
 
 
 def tls_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
-             timeout: int = 180, workers: int = 4) -> list[dict]:
+             timeout: int = 180, workers: int = 4, proxy=None) -> list[dict]:
     """Run sslyze per host (bounded, parallel); return `tls:*` findings."""
     utils.log("TLS/SSL analysis (sslyze)")
     if not utils.have("sslyze"):
         utils.warn("sslyze not found — skipping TLS/SSL analysis")
         events.mark_skipped("tool missing: sslyze")
         return []
+    if not proxymod.gate(proxy, 'sslyze'):
+        return []
+    if proxy is not None:
+        utils.warn("tls: through an intercepting proxy (Burp/mitmproxy) sslyze grades "
+                   "the PROXY's TLS, not the target's — treat results with care")
 
     targets = _collect_hosts(target, hosts, max_hosts)
     if not targets:
@@ -284,7 +293,8 @@ def tls_scan(target: str, outdir: Path, hosts: list[str], max_hosts: int = 20,
     total = len(targets)
     results: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = {pool.submit(_scan_host, h, jsondir, timeout, now): h for h in targets}
+        pk = proxymod.run_kw(proxy)
+        futures = {pool.submit(_scan_host, h, jsondir, timeout, now, **pk): h for h in targets}
         done = 0
         try:
             for fut in as_completed(futures):

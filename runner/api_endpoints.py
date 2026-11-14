@@ -16,10 +16,12 @@ so the command is `katana -u <url> -d <depth> -jc -jsonl -silent`.  Each JSONL
 line carries the crawled URL at request.endpoint.
 """
 import json
+import shlex
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from runner import events, scope, utils
+from runner import proxy as proxymod
 from runner.stages import _is_global, _resolve
 
 # Path substrings that mark a URL as API-like.
@@ -72,11 +74,13 @@ def _is_api_url(url: str) -> bool:
     return any(kw in path for kw in API_KEYWORDS)
 
 
-def _crawl(url: str, depth: int, timeout: int) -> list[str]:
+def _crawl(url: str, depth: int, timeout: int, proxy=None) -> list[str]:
     """Run katana over one URL in JSONL mode; return the crawled endpoint URLs."""
     raw = utils.run(
-        f"katana -u {url} -d {depth} -jc -jsonl -silent",
+        f"katana -u {shlex.quote(url)} -d {depth} -jc -jsonl -silent"
+        f"{proxy.cli('katana') if proxy is not None else ''}",
         timeout=timeout,
+        **proxymod.run_kw(proxy),
     )
     urls: list[str] = []
     for line in (raw or "").splitlines():
@@ -95,12 +99,14 @@ def _crawl(url: str, depth: int, timeout: int) -> list[str]:
 
 def api_endpoints_scan(target: str, outdir: Path, hosts: list[str] | None = None,
                        depth: int = 3, max_hosts: int = 20,
-                       timeout: int = 300) -> list[dict]:
+                       timeout: int = 300, proxy=None) -> list[dict]:
     """Crawl live hosts with katana and emit API-endpoint findings."""
     utils.log("API endpoint enumeration (katana)")
     if not utils.have("katana"):
         utils.warn("katana not found — skipping API endpoint enumeration")
         events.mark_skipped("tool missing: katana")
+        return []
+    if not proxymod.gate(proxy, 'katana'):
         return []
 
     live = _live_hosts(outdir, target, hosts, max_hosts)
@@ -113,7 +119,7 @@ def api_endpoints_scan(target: str, outdir: Path, hosts: list[str] | None = None
     kept_urls: list[str] = []
     seen: set[str] = set()
     for host in live:
-        for url in _crawl(f"https://{host}", depth, timeout):
+        for url in _crawl(f"https://{host}", depth, timeout, **proxymod.run_kw(proxy)):
             if url in seen or not _is_api_url(url):
                 continue
             # Scope gap closure: katana can wander off-target; drop those URLs.

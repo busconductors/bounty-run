@@ -140,22 +140,70 @@ def append_port(target, port):
         else target + ':' + port + '/'
 
 
+def socks_handlers(proxy, ctx=None):
+    """[bounty-run patch] urllib handlers that tunnel through a SOCKS5 proxy.
+
+    urllib has no SOCKS support. PySocks' bundled ``sockshandler`` reads
+    ``HTTPSConnection._check_hostname``, which no longer exists on Python 3.12+,
+    so the connections are built here on ``socks.create_connection`` directly.
+    ``socks5h://`` resolves the target name at the proxy, ``socks5://`` locally.
+    """
+    import socks  # PySocks; the engine gates SOCKS runs on it at launch
+    u = urllib.parse.urlsplit(proxy)
+    rdns = u.scheme.lower() == 'socks5h'
+    user = urllib.parse.unquote(u.username) if u.username else None
+    pw = urllib.parse.unquote(u.password) if u.password else None
+
+    def _sock(host, port, timeout):
+        return socks.create_connection((host, port), timeout, None, socks.SOCKS5,
+                                       u.hostname, u.port, rdns, user, pw)
+
+    class _Conn(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = _sock(self.host, self.port, self.timeout)
+
+    class _ConnS(http.client.HTTPSConnection):
+        def connect(self):
+            raw = _sock(self.host, self.port, self.timeout)
+            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+
+    class _H(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(_Conn, req)
+
+    class _HS(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            kw = {'context': ctx} if ctx is not None else {}
+            return self.do_open(_ConnS, req, **kw)
+
+    return [_H(), _HS()]
+
+
 def build_opener(proxy, ssldisabled):
     proxyhnd = urllib.request.ProxyHandler()
     sslhnd = urllib.request.HTTPSHandler()
-    if proxy:
-        proxyhnd = urllib.request.ProxyHandler({
-            'http':  proxy,
-            'https': proxy
-        })
+    ctx = None
     if ssldisabled:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         sslhnd = urllib.request.HTTPSHandler(context = ctx)
+    if proxy and proxy.lower().startswith(('socks5://', 'socks5h://')):
+        # [bounty-run patch] SOCKS: no ProxyHandler (an empty one also stops
+        # ambient *_proxy env from re-routing the request).
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                             *socks_handlers(proxy, ctx))
+        urllib.request.install_opener(opener)
+        return opener
+    if proxy:
+        proxyhnd = urllib.request.ProxyHandler({
+            'http':  proxy,
+            'https': proxy
+        })
 
     opener = urllib.request.build_opener(proxyhnd, sslhnd)
     urllib.request.install_opener(opener)
+    return opener
 
 
 def normalize(target):

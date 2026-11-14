@@ -145,13 +145,18 @@ AUX_EXPLOIT_MAP = {
 
 
 def metis_check(target: str, outdir: Path, hosts: list[str],
-                timeout: int = 600) -> list[dict]:
+                timeout: int = 600, proxy=None) -> list[dict]:
     """Run the Metis autocheck sweep over ``hosts``; return metis:* findings.
 
     Warn + return [] (never raise) if there are no hosts, the shim is missing,
     the sweep errors, or the output cannot be parsed.
     """
     findings: list[dict] = []
+    # Mixed raw-socket protocols: cannot be proxied, so never run it direct
+    # under --proxy (fail-closed).
+    from runner import proxy as proxymod
+    if not proxymod.gate(proxy, "metis"):
+        return findings
     hosts = [h for h in (hosts or []) if h and str(h).strip()]
     if not hosts:
         utils.warn("metis: no live hosts to check — skipping")
