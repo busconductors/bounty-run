@@ -30,6 +30,9 @@ type Options struct {
 	NmapFull                              bool // --nmap-full: all ports; only with Nmap
 	Skip                                  []string
 	Timeout, MaxParamURLs                 int
+	// Proxy is a validated proxy URL ("" = none). It is deliberately NOT put
+	// in Argv: SpawnEnv passes it as BOUNTY_RUN_PROXY (see ProxyEnvVar).
+	Proxy string
 }
 
 var domainRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
@@ -73,7 +76,8 @@ func NewRunDir(root, target string, now time.Time) (string, error) {
 	}
 }
 
-// Argv builds the engine command line (without the binary).
+// Argv builds the engine command line (without the binary). It never contains
+// the proxy, which travels in the environment (ProxyEnv).
 func Argv(o Options, dir string) []string {
 	a := []string{o.Target, "-o", dir, "--events", dir + "/events.jsonl", "--no-banner"}
 	for _, f := range []struct {
@@ -100,6 +104,12 @@ func Argv(o Options, dir string) []string {
 // dir/engine.log and stdin from /dev/null. A goroutine Waits on the child so it
 // never lingers as a zombie while the TUI keeps running.
 func Spawn(bin string, argv []string, dir string) (int, error) {
+	return SpawnEnv(bin, argv, dir, nil)
+}
+
+// SpawnEnv is Spawn with extra environment entries appended to the TUI's own
+// (later entries win, so they override an inherited value of the same name).
+func SpawnEnv(bin string, argv []string, dir string, extraEnv []string) (int, error) {
 	logf, err := os.OpenFile(filepath.Join(dir, "engine.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return 0, err
@@ -113,6 +123,9 @@ func Spawn(bin string, argv []string, dir string) (int, error) {
 	cmd := exec.Command(bin, argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}

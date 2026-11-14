@@ -51,7 +51,8 @@ func startLaunch(t *testing.T, cfg Config) *teatest.TestModel {
 	return tm
 }
 
-// submitForm types target and presses enter through every field.
+// submitForm types target and presses enter through every field
+// (target, proxy, preset, timeout, max param → submit).
 func submitForm(tm *teatest.TestModel, target string) {
 	tm.Type(target)
 	for range 5 {
@@ -312,7 +313,8 @@ func TestLaunchCustomPageListsHints(t *testing.T) {
 	}
 	tm.Type("example.com")
 	time.Sleep(150 * time.Millisecond)
-	key(tea.KeyEnter) // target → preset (standard)
+	key(tea.KeyEnter) // target → proxy
+	key(tea.KeyEnter) // proxy (empty) → preset (standard)
 	key(tea.KeyDown)  // standard → deep
 	key(tea.KeyDown)  // deep → custom
 	key(tea.KeyEnter) // preset → timeout
@@ -406,5 +408,72 @@ print(json.dumps({"planned": PLANNED_STAGES(a, skip), "bad": sorted(bad), "amass
 		if deep := id == "deep"; got.Amass != deep || got.Full != deep {
 			t.Errorf("%s: amass=%v nmap-full=%v", id, got.Amass, got.Full)
 		}
+	}
+}
+
+func TestLaunchProxyOption(t *testing.T) {
+	l := newLaunch(Config{})
+	l.target = "a.com"
+	if o, err := l.options(); err != nil || o.Proxy != "" {
+		t.Fatalf("no proxy: %+v %v", o, err)
+	}
+	l.proxy = "  socks5h://u:p%40ss@127.0.0.1:1080 "
+	o, err := l.options()
+	if err != nil || o.Proxy != "socks5h://u:p%40ss@127.0.0.1:1080" {
+		t.Fatalf("proxy: %+v %v", o, err)
+	}
+	for _, bad := range []string{"127.0.0.1:8080", "socks4://h:1", "http://h:1;id"} {
+		l.proxy = bad
+		if _, err := l.options(); err == nil || !strings.HasPrefix(err.Error(), "not a valid proxy URL") {
+			t.Errorf("options(%q) err = %v", bad, err)
+		}
+		if validProxy(bad) == nil {
+			t.Errorf("validProxy(%q) accepted", bad)
+		}
+	}
+	if validProxy("") != nil || validProxy("   ") != nil {
+		t.Error("empty proxy must be valid (no proxy)")
+	}
+}
+
+// startRun hands the proxy to the engine via BOUNTY_RUN_PROXY, never argv.
+func TestLaunchStartRunPassesProxyEnv(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "env-engine.sh")
+	body := `#!/bin/sh
+ev=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--events" ]; then ev="$a"; fi
+  prev="$a"
+done
+d="$(dirname "$ev")"
+echo $$ > "$d/fake.pid"
+printf '%s' "$BOUNTY_RUN_PROXY" > "$d/proxy.seen"
+printf '%s\n' "$@" > "$d/argv.seen"
+echo '{"v":1,"t":1,"type":"run_start","target":"example.com","stages":["subs"]}' >> "$ev"
+sleep 10
+`
+	if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	o := engine.Options{Target: "example.com", Proxy: "http://u:secret@127.0.0.1:8080"}
+	msg := startRun(Config{OutputsRoot: root, EngineBin: p}, o)()
+	am, ok := msg.(AttachMsg)
+	if !ok {
+		t.Fatalf("msg = %#v", msg)
+	}
+	if b, err := os.ReadFile(filepath.Join(am.Dir, "fake.pid")); err == nil {
+		if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid > 0 {
+			t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+		}
+	}
+	seen, _ := os.ReadFile(filepath.Join(am.Dir, "proxy.seen"))
+	if string(seen) != o.Proxy {
+		t.Errorf("engine BOUNTY_RUN_PROXY = %q", seen)
+	}
+	argv, _ := os.ReadFile(filepath.Join(am.Dir, "argv.seen"))
+	if strings.Contains(string(argv), "secret") || strings.Contains(string(argv), "--proxy") {
+		t.Errorf("proxy in argv: %q", argv)
 	}
 }

@@ -129,8 +129,8 @@ type launchModel struct {
 	form *huh.Form
 
 	// Form values; the fields are bound by pointer so a rebuilt form keeps them.
-	target, preset, timeout, maxParam string
-	custom                            []string // enabled toggles when preset is Custom
+	target, proxy, preset, timeout, maxParam string
+	custom                                   []string // enabled toggles when preset is Custom
 
 	state         launchState
 	inlineErr     string
@@ -147,6 +147,17 @@ func newLaunch(cfg Config) *launchModel {
 func validTarget(s string) error {
 	if _, err := engine.NormalizeTarget(s); err != nil {
 		return errors.New("not a valid domain")
+	}
+	return nil
+}
+
+// validProxy accepts "" (no proxy) or a URL engine.ParseProxy accepts.
+func validProxy(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	if _, err := engine.ParseProxy(s); err != nil {
+		return errors.New("not a valid proxy URL: " + err.Error())
 	}
 	return nil
 }
@@ -176,6 +187,9 @@ func (l *launchModel) buildForm() *huh.Form {
 		huh.NewGroup(
 			huh.NewInput().Title("Target").Placeholder("example.com").
 				Value(&l.target).Validate(validTarget),
+			huh.NewInput().Title("Proxy (optional)").Placeholder("http://127.0.0.1:8080").
+				Description("http(s):// or socks5(h)://host:port · HTTP stages only; nmap/DNS stay direct").
+				Value(&l.proxy).Validate(validProxy),
 			huh.NewSelect[string]().Title("Preset").Options(presetOpts...).Value(&l.preset).
 				DescriptionFunc(func() string { return presetByID(l.preset).desc }, &l.preset),
 			huh.NewInput().Title("HTTP timeout (s)").Placeholder("default").
@@ -217,6 +231,13 @@ func (l *launchModel) options() (engine.Options, error) {
 		return engine.Options{}, errors.New("not a valid domain")
 	}
 	o := engine.Options{Target: t}
+	if strings.TrimSpace(l.proxy) != "" {
+		p, err := engine.ParseProxy(l.proxy)
+		if err != nil {
+			return engine.Options{}, errors.New("not a valid proxy URL: " + err.Error())
+		}
+		o.Proxy = p
+	}
 	on := presetByID(l.preset).on
 	if l.preset == "custom" {
 		on = l.custom
@@ -249,7 +270,7 @@ func startRun(cfg Config, o engine.Options) tea.Cmd {
 		if err != nil {
 			return launchResultMsg{err: err}
 		}
-		pid, err := engine.Spawn(cfg.EngineBin, engine.Argv(o, dir), dir)
+		pid, err := engine.SpawnEnv(cfg.EngineBin, engine.Argv(o, dir), dir, engine.ProxyEnv(o))
 		if err != nil {
 			_ = os.RemoveAll(dir) // the leaf we just made; no phantom run
 			return launchResultMsg{err: err}
