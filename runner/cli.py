@@ -35,6 +35,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("target", help="target domain (e.g. example.com)")
     p.add_argument("-o", "--output-dir", help="output directory (default: <repo>/outputs/<target>/<ts>)")
     p.add_argument("--amass", action="store_true", help="also run amass passive enum (needs API keys to be useful)")
+    p.add_argument("--findomain", action="store_true",
+                   help="also run findomain passive enum in the subs stage (opt-in)")
+    p.add_argument("--resolvers", metavar="PATH",
+                   help="resolver list for dnsx resolution (default: cached trickest list)")
+    p.add_argument("--dns-rate", type=_positive_int, default=500, metavar="N",
+                   help="DNS queries per second for resolution (default 500; try 300 on VPN)")
+    p.add_argument("--no-subs-cache", action="store_true",
+                   help="disable the per-target union cache for the subs stage")
     p.add_argument("--timeout", type=_positive_int, default=8, help="HTTP probe timeout in seconds (default 8)")
     p.add_argument("--threads", type=_positive_int, default=30, help="concurrent HTTP probe threads (default 30)")
     p.add_argument("--intensity", choices=("passive", "active", "intrusive"), default="intrusive",
@@ -383,7 +391,15 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     if ok("subs"):
         with events.stage("subs") as sc:
             _hdr("subs")
-            st.subs = stages.subdomain_enum(target, outdir, skip_amass=not args.amass)
+            st.subs = stages.subdomain_enum(
+                target, outdir, skip_amass=not args.amass,
+                findomain=getattr(args, "findomain", False),
+                active=stage_registry.ceiling(args) >= stage_registry.Tier.ACTIVE,
+                resolvers=getattr(args, "resolvers", None),
+                dns_rate=getattr(args, "dns_rate", 500),
+                cache_dir=(None if getattr(args, "no_subs_cache", False)
+                           else REPO_OUTPUTS / target / ".cache"),
+            )
             sc.counts["subdomains"] = len(st.subs)
     if ok("panel"):
         with events.stage("panel") as sc:

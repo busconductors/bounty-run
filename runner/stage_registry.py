@@ -83,6 +83,11 @@ def _ceiling(args) -> Tier:
     return _TIER_BY_NAME.get(getattr(args, "intensity", "intrusive"), Tier.INTRUSIVE)
 
 
+def ceiling(args) -> Tier:
+    """Public accessor for the intensity ceiling (see :func:`_ceiling`)."""
+    return _ceiling(args)
+
+
 def cap_permitted(cap: Cap, args) -> bool:
     """Whether a hard capability is permitted by the current flags.
 

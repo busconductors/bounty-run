@@ -4,10 +4,11 @@ import json
 import shlex
 import socket
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import events, scope, utils
+from . import events, scope, subdomains, utils
 
 try:
     # Shared, pooled client stand-in; TLS warnings are silenced in Client.__init__.
@@ -46,32 +47,85 @@ def _gethostbyname_bounded(host: str, timeout: float = DNS_TIMEOUT) -> str:
     return box["ip"]
 
 
-def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True) -> list[str]:
-    """Stage 1: passive subdomain discovery via subfinder (+ optional amass)."""
-    utils.log(f"subdomain enumeration ({target})")
-    subs = {target}
+def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
+                   findomain: bool = False,
+                   active: bool = False,
+                   resolvers: str | None = None,
+                   dns_rate: int = 500,
+                   cache_dir=None) -> list[str]:
+    """Stage 1: passive subdomain discovery via subfinder (+ optional sources).
 
-    if utils.have("subfinder"):
-        txt = utils.run(f"subfinder -d {target} -silent",
-                        outfile=str(outdir / "subfinder.txt"), timeout=300)
-        for line in txt.splitlines():
-            line = line.strip().lower()
-            if line and not line.startswith(("#", "[", "-", "*")) and (line == target or line.endswith("." + target)):
-                subs.add(line)
+    With every keyword argument at its default this reproduces the legacy
+    behaviour exactly: subfinder-only, no cache, no resolution, and the exact
+    sorted in-scope union written to ``subdomains.txt`` and returned.
+
+    Opt-in extras (all behind defaults-off kwargs):
+      * ``findomain`` — add findomain's passive sources.
+      * ``cache_dir`` — union a per-target cache that only grows.
+      * ``active`` — when set and dnsx is present, resolve the union and split
+        it into resolved / internal / dangling sidecars. ``subdomains.txt``
+        itself keeps union semantics (Phase 2), so downstream stages are
+        unchanged. ``active`` is gated by the caller on the intensity ceiling,
+        keeping the stage zero-packet under ``--intensity passive``.
+
+    Extra per-source stats land in ``subs_stats.json`` (never in the stage's
+    event counts, which stay ``{"subdomains": N}``).
+    """
+    t = (target or "").strip().lower().rstrip(".")
+    utils.log(f"subdomain enumeration ({t})")
+    t0 = time.monotonic()
+    stats: dict = {"sources": {}, "skipped": {}}
+    subs = {t}
+
+    found = subdomains.passive_subfinder(t, outdir)
+    stats["sources"]["subfinder"] = len(found)
+    subs |= found
+
+    if not skip_amass:
+        amass_names = subdomains.passive_amass(t, outdir)
+        stats["sources"]["amass"] = len(amass_names)
+        subs |= amass_names
+
+    if findomain:
+        fd = subdomains.passive_findomain(t, outdir)
+        stats["sources"]["findomain"] = len(fd)
+        subs |= fd
+
+    if cache_dir:
+        cached = subdomains.cache_load(cache_dir, t)
+        stats["sources"]["cache"] = len(cached)
+        subs |= cached
+
+    if active and utils.have("dnsx"):
+        res_path = subdomains.resolvers_file(cache_dir, resolvers)
+        rr = subdomains.resolve(subs, outdir, t, res_path, rate=dns_rate)
+        stats["resolved"] = len(rr.resolved)
+        stats["internal"] = len(rr.internal)
+        stats["dangling"] = len(rr.dangling)
+    elif not active:
+        stats["skipped"]["resolve"] = "intensity below active"
     else:
-        utils.warn("subfinder not found — skipping")
+        stats["skipped"]["resolve"] = "dnsx not found"
 
-    if not skip_amass and utils.have("amass"):
-        txt = utils.run(f"amass enum -passive -d {target}",
-                        outfile=str(outdir / "amass.txt"), timeout=300)
-        for line in txt.splitlines():
-            line = line.strip().lower()
-            if line and not line.startswith(("#", "[", "-", "*")) and (line == target or line.endswith("." + target)):
-                subs.add(line)
+    in_scope = scope.for_target(t).filter_hosts(sorted(subs))
 
-    in_scope = scope.for_target(target).filter_hosts(sorted(subs))
+    # Union of every source + cache (incl. unresolved names). resolve() already
+    # wrote this file from the pre-scope union; refresh it to the in-scope set.
+    (outdir / "subdomains_all.txt").write_text("\n".join(in_scope) + "\n")
     outfile = outdir / "subdomains.txt"
     outfile.write_text("\n".join(in_scope) + "\n")
+
+    if cache_dir:
+        subdomains.cache_save(cache_dir, t, set(in_scope))
+
+    stats["count"] = len(in_scope)
+    stats["elapsed_s"] = round(time.monotonic() - t0, 2)
+    try:
+        (outdir / "subs_stats.json").write_text(
+            json.dumps(stats, indent=2, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
     utils.log(f"  {len(in_scope)} subdomains -> {outfile.name}")
     return in_scope
 
