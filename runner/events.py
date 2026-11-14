@@ -40,7 +40,7 @@ _stage_log: list[dict] = []
 
 # Output-event bounds (see module docstring). Module attributes so tests can
 # shrink them.
-MAX_OUTPUT_LINE = 4096                    # chars kept per output line
+MAX_OUTPUT_LINE = 1024 * 1024             # chars kept per output line (TUI contract: 100 KiB lines round-trip)
 OUTPUT_BUDGET_STAGE = 16 * 1024 * 1024    # bytes of output events per stage
 OUTPUT_BUDGET_RUN = 128 * 1024 * 1024     # bytes of output events per run
 _out_bytes_run = 0
