@@ -562,7 +562,9 @@ def content_discovery(target: str, outdir: Path, wordlist: str, threads: int = 4
 
     out = utils.run(
         f"ffuf -u https://{target}/FUZZ -w {shlex.quote(wordlist)} "
-        f"-mc 200,204,301,302,307,401,403 -ac -t {threads} -s{px}",
+        # 302/307 excluded: wildcard-redirect sites answer every path with a
+        # temporary redirect, which -ac can't filter, flooding the count.
+        f"-mc 200,204,301,401,403 -ac -t {threads} -s{px}",
         timeout=600,
         on_line=_on_line,
         **proxymod.run_kw(proxy),
