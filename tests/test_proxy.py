@@ -332,8 +332,12 @@ def test_origin_verification_skipped_under_proxy(tmp_path):
          mock.patch.object(utils, "log"), mock.patch.object(utils, "warn"):
         rows = stages.origin_hunt("example.com", tmp_path, {"ip": "104.16.1.1"}, proxy=HTTP)
     assert calls == []
-    assert rows == [{"ip": "93.184.216.34", "sources": ["www.example.com"],
-                     "status": stages.UNVERIFIED_PROXY, "remote_ip": ""}]
+    assert len(rows) == 1
+    assert {k: rows[0][k] for k in ("ip", "sources", "status", "remote_ip")} == {
+        "ip": "93.184.216.34", "sources": ["www.example.com"],
+        "status": stages.UNVERIFIED_PROXY, "remote_ip": ""}
+    # unverified under --proxy: never CONFIRMED, so never scanned
+    assert rows[0]["tier"] == "LIKELY"
 
 
 def test_origin_deep_verification_skipped_under_proxy(tmp_path):

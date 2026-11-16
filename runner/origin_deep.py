@@ -2,8 +2,9 @@
 
 Uses crt.sh certificate-transparency history to find subdomains whose
 certificates leaked the real origin IP before Cloudflare was added in front of
-them. Each candidate IP is force-connected to the target via ``curl --resolve``
-to confirm it actually serves the site.
+them. Each surviving candidate IP is graded by :mod:`runner.ipintel` (range
+feeds, ASN/WHOIS metadata, active checks with negative controls) exactly like
+:func:`stages.origin_hunt`; only CONFIRMED rows are admitted into scan scope.
 
 Manual (NOT automated — needs API keys) fingerprints that also work here:
 
@@ -32,8 +33,9 @@ def _is_global(ip: str) -> bool:
 def origin_deep(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[dict]:
     """Discover non-Cloudflare origin IPs for ``target`` via crt.sh SAN history.
 
-    Returns ``list[{"ip", "sources", "status", "remote_ip"}]`` — the same shape
-    as :func:`stages.origin_hunt`, so ``cli.py`` can merge the two lists.
+    Returns ``list[{"ip", "sources", "status", "remote_ip", "tier", "reason",
+    ...}]`` — the same shape as :func:`stages.origin_hunt`, so ``cli.py`` can
+    merge the two lists.
     """
     utils.log(f"deep origin discovery via crt.sh ({target})")
 
@@ -85,12 +87,13 @@ def origin_deep(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[
                    "discovery (would false-positive)")
         return []
 
-    # 3 + 5. Dedupe (already done via the set), resolve each, keep only IPs that
-    #        are NOT Cloudflare. Collect sources keyed by the IP they came from.
+    # 3 + 5. Dedupe (already done via the set), resolve each (every A record),
+    #        keep only IPs that are NOT Cloudflare. Sources keyed by IP.
     candidates = {}  # ip -> list of subdomains that resolved to it
     for sub in sorted(subs):
-        ip = stages._resolve(sub)
-        if ip and _is_global(ip) and not stages._is_cloudflare(ip, ranges):
+        for ip in stages._resolve_all(sub):
+            if not (_is_global(ip) and not stages._is_cloudflare(ip, ranges)):
+                continue
             # A CT name is in the target's zone by construction, but it may
             # CNAME out to a SaaS/CDN (status -> statuspage.io, help -> zendesk,
             # shop -> shopify); that IP is the provider's, not the origin.
@@ -100,33 +103,12 @@ def origin_deep(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[
                 continue
             candidates.setdefault(ip, []).append(sub)
 
-    # 6. Verify each candidate by force-connecting to the origin IP.
-    rows = []
-    if proxy is not None and candidates:
-        utils.warn("  origin verification skipped under --proxy (candidates kept unverified)")
-    for ip, sources in sorted(candidates.items()):
-        if proxy is not None:
-            rows.append({"ip": ip, "sources": sources,
-                         "status": stages.UNVERIFIED_PROXY, "remote_ip": ""})
-            continue
-        out = utils.run(
-            f"curl -sS -k --connect-timeout 10 -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
-            f"--resolve {target}:443:{ip} --max-time 12 https://{target}",
-            timeout=20,
-        )
-        parts = out.strip().split("|")
-        rows.append({
-            "ip": ip,
-            "sources": sources,
-            "status": parts[0] if parts else "",
-            "remote_ip": parts[1] if len(parts) > 1 else "",
-        })
+    # 6. Grade each candidate (shared ranges, metadata, active verification).
+    rows = stages.classify_candidates(target, candidates, proxy)
 
     # 7. Write the artifact + log counts.
     outfile = outdir / "origin_deep.txt"
-    lines = [f"{r['ip']}\t{r['status']}\t{','.join(r['sources'])}" for r in rows]
-    outfile.write_text("\n".join(lines) + "\n")
+    stages.write_origin_file(outfile, rows)
     utils.log(f"  {len(rows)} deep origin candidate(s) -> {outfile.name}")
-    for r in rows:
-        utils.log(f"    {r['ip']}  [{r['status']}]  via {', '.join(r['sources'])}")
+    stages.log_origin_rows(rows)
     return rows

@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import events, scope, subdomains, utils
+from . import events, ipintel, scope, subdomains, utils
 from . import proxy as proxymod
 
 try:
@@ -341,14 +341,25 @@ def _is_global(ip: str) -> bool:
 
 
 def _verify_origin(target: str, ip: str) -> dict:
-    """Force-connect to `ip` for `target` and check if it serves the site."""
-    out = utils.run(
-        f"curl -sS -k --connect-timeout 10 -o /dev/null -w '%{{http_code}}|%{{remote_ip}}' "
-        f"--resolve {target}:443:{ip} --max-time 12 https://{target}",
-        timeout=20,
-    )
-    parts = out.strip().split("|")
-    return {"status": parts[0] if parts else "", "remote_ip": parts[1] if len(parts) > 1 else ""}
+    """Force-connect to `ip` for `target` (SNI + Host = target, -k).
+
+    Returns {status, remote_ip, headers, body, error}: the Layer-3 target
+    probe used by :func:`ipintel.classify`.
+    """
+    return ipintel.http_probe(target, ip)
+
+
+def _resolve_all(host: str) -> list[str]:
+    """Every IPv4 address `host` resolves to (gethostbyname_ex); [] on failure.
+
+    A host with several A records is judged on all of them, not on whichever
+    one gethostbyname happened to return.
+    """
+    try:
+        ips = _bounded_lookup(socket.gethostbyname_ex, host)[2]
+    except Exception:  # noqa: BLE001
+        return []
+    return sorted(set(ips))
 
 
 # Status recorded for origin candidates when verification is skipped under a
@@ -357,8 +368,80 @@ def _verify_origin(target: str, ip: str) -> dict:
 UNVERIFIED_PROXY = "unverified(proxy)"
 
 
+def classify_candidates(target: str, candidates: dict, proxy=None) -> list[dict]:
+    """Grade ``{ip: [sources]}`` with :mod:`runner.ipintel`; one row per IP.
+
+    Runs after the global / Cloudflare / in-domain / CNAME filters. Under
+    ``--proxy`` the active layer is skipped (a direct probe would leave the
+    proxy), so no row can reach CONFIRMED there; Layers 1-2 still run from
+    cache and still mark known shared front-ends SHARED.
+    """
+    if not candidates:
+        return []
+    intel = ipintel.get(proxy)
+    intel.prefetch_asn(list(candidates))
+    probe = None
+    baseline = None
+    if proxy is None:
+        probe = ipintel.Probe(target_http=lambda host, ip: _verify_origin(host, ip))
+        baseline = probe.baseline(target)
+        why = ipintel.baseline_invalid(baseline)
+        if why:
+            utils.warn(f"  origin baseline unusable ({why}) — content not compared, "
+                       "nothing can grade above LIKELY")
+    else:
+        utils.warn("  origin verification skipped under --proxy (candidates kept "
+                   "unverified; none will be scanned)")
+    rows = []
+    stage = events.current_stage() or "origin"
+    total = len(candidates)
+    for done, (ip, sources) in enumerate(sorted(candidates.items()), 1):
+        if probe is not None:
+            probe.last_hit = {}
+        v = ipintel.classify(ip, target, intel, baseline, probe,
+                             unverified_reason=UNVERIFIED_PROXY)
+        hit = probe.last_hit if probe is not None else {}
+        status = UNVERIFIED_PROXY if proxy is not None else str(hit.get("status", "") or "")
+        rows.append({"ip": ip, "sources": sources, "status": status,
+                     "remote_ip": hit.get("remote_ip", "") or "", **v.row()})
+        events.progress(stage, done, total)
+    return rows
+
+
+def write_origin_file(path: Path, rows: list[dict]) -> None:
+    """``ip  status  sources  tier  reason`` per candidate (first three columns
+    unchanged from the legacy format); SHARED IPs only as ``#`` comment lines
+    so they stay visible as an audit trail without looking like candidates."""
+    lines = []
+    for r in rows:
+        if r.get("tier") == ipintel.SHARED:
+            lines.append(f"# SHARED\t{r['ip']}\t{r.get('reason', '')}\t{','.join(r['sources'])}")
+        else:
+            lines.append(f"{r['ip']}\t{r['status']}\t{','.join(r['sources'])}"
+                         f"\t{r.get('tier', '')}\t{r.get('reason', '')}")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def log_origin_rows(rows: list[dict]) -> None:
+    for r in rows:
+        utils.log(f"    {r['ip']}  [{r.get('tier', '?')}]  {r.get('reason', '')}  "
+                  f"via {', '.join(r['sources'])}")
+    confirmed = [r["ip"] for r in rows if r.get("tier") == ipintel.CONFIRMED]
+    review = [r["ip"] for r in rows if r.get("tier") == ipintel.LIKELY]
+    if review:
+        utils.warn(f"  {len(review)} LIKELY origin(s) for manual review (not scanned): "
+                   f"{', '.join(review)}")
+    if confirmed:
+        utils.log(f"  {len(confirmed)} CONFIRMED origin(s) admitted to scan scope: "
+                  f"{', '.join(confirmed)}")
+
+
 def origin_hunt(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[dict]:
-    """Stage 4: find the origin IP behind Cloudflare via leak subdomains + MX."""
+    """Stage 4: find the origin IP behind Cloudflare via leak subdomains + MX.
+
+    Every surviving IP is graded by :func:`ipintel.classify`; only CONFIRMED
+    rows are later admitted into the scan scope (see ``cli._pipeline``).
+    """
     utils.log(f"origin hunting ({target})")
     edge_ip = cf_result.get("ip") or _resolve(target)
     utils.log(f"  edge IP (Cloudflare): {edge_ip or 'unknown'}")
@@ -385,8 +468,7 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[
 
     for name in LEAK_SUBDOMAINS:
         host = f"{name}.{target}"
-        ip = _resolve(host)
-        if ip:
+        for ip in _resolve_all(host):
             add(host, ip, host)
 
     for mx in _mx_hosts(target):
@@ -395,31 +477,14 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[
             # is the provider's server, never the web origin. Don't even resolve.
             utils.log(f"  skip MX:{mx}: third-party mail host outside {target}")
             continue
-        ip = _resolve(mx)
-        if ip:
+        for ip in _resolve_all(mx):
             add(mx, ip, f"MX:{mx}")
 
-    rows = []
-    stage = events.current_stage() or "origin"
-    sorted_candidates = sorted(candidates.items())
-    total = len(sorted_candidates)
-    if proxy is not None and sorted_candidates:
-        utils.warn("  origin verification skipped under --proxy (candidates kept unverified)")
-    for done, (ip, sources) in enumerate(sorted_candidates, 1):
-        if proxy is not None:
-            v = {"status": UNVERIFIED_PROXY, "remote_ip": ""}
-        else:
-            v = _verify_origin(target, ip)
-        rows.append({"ip": ip, "sources": sources, "status": v["status"],
-                     "remote_ip": v["remote_ip"]})
-        events.progress(stage, done, total)
-
+    rows = classify_candidates(target, candidates, proxy)
     outfile = outdir / "origin_candidates.txt"
-    lines = [f"{r['ip']}\t{r['status']}\t{','.join(r['sources'])}" for r in rows]
-    outfile.write_text("\n".join(lines) + "\n")
+    write_origin_file(outfile, rows)
     utils.log(f"  {len(rows)} origin candidate(s) -> {outfile.name}")
-    for r in rows:
-        utils.log(f"    {r['ip']}  [{r['status']}]  via {', '.join(r['sources'])}")
+    log_origin_rows(rows)
     return rows
 
 

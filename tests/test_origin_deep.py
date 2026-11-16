@@ -96,7 +96,8 @@ class OriginDeepTests(unittest.TestCase):
         for r in rows:
             self.assertEqual(r["status"], "200")
             self.assertEqual(r["remote_ip"], r["ip"])
-            self.assertEqual(set(r), {"ip", "sources", "status", "remote_ip"})
+            # legacy fields kept; ipintel adds the grade + its metadata
+            self.assertTrue({"ip", "sources", "status", "remote_ip", "tier", "reason"} <= set(r))
 
     def test_cloudflare_ips_are_filtered_out(self):
         with mock.patch.object(utils, "run", side_effect=fake_run), \
@@ -153,9 +154,10 @@ class OriginDeepTests(unittest.TestCase):
         self.assertTrue(outfile.exists())
         lines = outfile.read_text().splitlines()
         self.assertEqual(len(lines), 2)
-        # Format: ip \t status \t sources
-        self.assertIn("5.6.7.8\t200\tdev.example.com,mail.example.com", lines)
-        self.assertIn("9.9.9.10\t200\tother.example.com", lines)
+        # Format: ip \t status \t sources \t tier \t reason (first three legacy)
+        self.assertTrue(any(l.startswith("5.6.7.8\t200\tdev.example.com,mail.example.com\t")
+                            for l in lines))
+        self.assertTrue(any(l.startswith("9.9.9.10\t200\tother.example.com\t") for l in lines))
 
     def test_empty_crtsh_body_returns_empty(self):
         with mock.patch.object(utils, "run", return_value=""):
