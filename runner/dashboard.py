@@ -455,6 +455,18 @@ def _verdict_line(candidates, origins, cloudflare, subdomains) -> str:
                 else "{} exposed panels".format(panels))
 
     # Origin-behind-Cloudflare always surfaces when it occurs (WAF-bypass story).
+    # Graded rows (ipintel tiers) only claim a leak for a CONFIRMED origin;
+    # other non-shared rows are leads for manual review.
+    if origins and cloudflare and any(o.get("tier") for o in origins):
+        confirmed = [o for o in origins if o.get("tier") == "CONFIRMED" and o.get("ip")]
+        leads = [o for o in origins if o.get("tier") in ("LIKELY", "REJECTED")]
+        if confirmed:
+            clauses.append("origin IP {} leaked behind Cloudflare — WAF bypass likely".format(
+                confirmed[0]["ip"]))
+        elif leads:
+            clauses.append("{} unconfirmed origin lead(s) behind Cloudflare — manual "
+                           "review".format(len(leads)))
+        origins = []
     if origins and cloudflare:
         ip = next((o.get("ip") for o in origins if o.get("ip")), None)
         if ip:
@@ -583,7 +595,9 @@ def _summary_origins_html(origins) -> str:
     cards = []
     for o in origins:
         ip = o.get("ip") or ""
-        status = o.get("status") or ""
+        status = str(o.get("status") or "")
+        if o.get("tier"):
+            status = "{} {}".format(o["tier"], status).strip()
         sources = ", ".join(o.get("sources") or [])
         cards.append(
             '<div class="card"><dl>'
@@ -684,7 +698,9 @@ def _origins_alert_html(origins) -> str:
     rows = []
     for o in origins:
         ip = o.get("ip") or "?"
-        status = o.get("status") or ""
+        status = str(o.get("status") or "")
+        if o.get("tier"):
+            status = "{} {}".format(o["tier"], status).strip()
         sources = ", ".join(o.get("sources") or [])
         rows.append(
             '<div class="orow"><div><div class="ip">{ip}</div>'

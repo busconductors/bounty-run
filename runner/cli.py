@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import (__version__, api_endpoints, banner, categories, dashboard, dork_scan,
-               events, evidence, finding, headi_scan, http_headers, httpclient,
+               events, evidence, finding, headi_scan, http_headers, httpclient, ipintel,
                metis_check, nikto_scan, nmap_scan, origin_deep, panel_detect,
                param_scan, proxy, report, scope, secret_scan, stage_registry, stages,
                tech_scan, tls_scan, tracker, utils, waf_scan)
@@ -100,6 +100,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nuclei-timeout", type=_positive_int, default=1800,
                    help="nuclei timeout in seconds (default 1800 — a full all-templates "
                         "sweep across origin IPs can take 15-30+ minutes)")
+    p.add_argument("--refresh-ipintel", action="store_true",
+                   help="force a refresh of the cached provider IP-range feeds used to "
+                        "classify origin IPs (~/.cache/bounty-run/ipintel)")
+    p.add_argument("--ipintel-offline", action="store_true",
+                   help="classify origin IPs from the cached range feeds only: no feed "
+                        "refresh, no ASN/RDAP/PTR lookups")
     p.add_argument("--interactive", action="store_true",
                    help="prompt for output directory + engagement name (-o skips the prompts)")
     p.add_argument("--no-banner", action="store_true", help="suppress the startup banner")
@@ -197,7 +203,9 @@ def write_summary(outdir: Path, target: str, subs: list[str], rows: list[dict], 
             "## Origin candidates (behind Cloudflare)",
             "",
         ]
-        lines += [f"- `{r['ip']}` — HTTP {r['status']} — via {', '.join(r['sources'])}" for r in origins]
+        lines += [f"- `{r['ip']}` — HTTP {r['status']} — via {', '.join(r['sources'])}"
+                  + (f" — {r['tier']}: {r.get('reason', '')}" if r.get("tier") else "")
+                  for r in origins]
     lines.append("")
     (outdir / "SUMMARY.md").write_text("\n".join(lines))
     utils.log(f"summary -> {outdir / 'SUMMARY.md'}")
@@ -215,7 +223,12 @@ def _normalize_target(raw: str) -> str:
 
 
 def _merge_origins_by_ip(origins: list[dict]) -> list[dict]:
-    """Merge origin entries sharing the same ip, concatenating their sources."""
+    """Merge origin entries sharing the same ip, concatenating their sources.
+
+    When two stages graded the same IP differently the most conservative tier
+    wins (SHARED < REJECTED < LIKELY < CONFIRMED), so a disagreement can never
+    widen the scan scope.
+    """
     merged: dict[str, dict] = {}
     order: list[str] = []
     for o in origins:
@@ -223,6 +236,7 @@ def _merge_origins_by_ip(origins: list[dict]) -> list[dict]:
         if ip is None:
             continue
         if ip in merged:
+            merged[ip] = ipintel.merge_rows(merged[ip], o)
             for src in o.get("sources", []):
                 if src not in merged[ip]["sources"]:
                     merged[ip]["sources"].append(src)
@@ -439,6 +453,8 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             st.cf = stages.cloudflare_detect(target, outdir)
             sc.counts["cloudflare"] = int(bool(st.cf["cloudflare"]))
 
+    ipintel.configure(offline=getattr(args, "ipintel_offline", False),
+                      refresh=getattr(args, "refresh_ipintel", False))
     if ok("origin"):
         if st.cf["cloudflare"]:
             with events.stage("origin") as sc:
@@ -451,10 +467,18 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             with events.stage("origin"):
                 events.mark_skipped("no cloudflare")
     st.origins = _merge_origins_by_ip(st.origins)
-    # Admit discovered origin IPs into scope so their nmap/nuclei findings
-    # (host = origin IP) are not dropped by the in-scope finding guard.
+    # Scope gate: only CONFIRMED origin IPs become nmap/nuclei targets and are
+    # admitted into scope (so their findings are not dropped by the in-scope
+    # guard). LIKELY / REJECTED / SHARED rows stay in the report for manual
+    # review; a misclassification then costs a review, not a third-party scan.
+    scan_origins = ipintel.scan_targets(st.origins)
+    held = [o["ip"] for o in st.origins
+            if isinstance(o, dict) and o.get("ip") and o not in scan_origins
+            and o.get("tier") != ipintel.SHARED]
+    if held:
+        utils.warn(f"origin IPs held for manual review (not scanned): {', '.join(held)}")
     if scope.is_active():
-        origin_ips = [o.get("ip") for o in st.origins if isinstance(o, dict) and o.get("ip")]
+        origin_ips = [o["ip"] for o in scan_origins]
         if origin_ips:
             scope.set_active(scope.active().with_hosts(origin_ips))
 
@@ -473,7 +497,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
 
     if ok("nmap"):
         scan("nmap", _nmap_direct if pcfg else nmap_scan.nmap_scan,
-             target, outdir, st.rows, st.origins, full=args.nmap_full)
+             target, outdir, st.rows, scan_origins, full=args.nmap_full)
 
     host_cap = min(args.max_hosts, 20)
     if ok("waf"):
@@ -497,7 +521,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
             new = record_prov(keep(stages.vuln_scan(
                 target, outdir, st.rows, severity=args.nuclei_severity,
                 concurrency=args.nuclei_c, timeout=args.nuclei_timeout,
-                origins=st.origins, oast=stage_registry.oast_enabled(args), **pkw), "vuln"), "vuln")
+                origins=scan_origins, oast=stage_registry.oast_enabled(args), **pkw), "vuln"), "vuln")
             st.findings += new
             sc.counts["findings"] = len(new)
             report.write_findings_report(outdir, target, st.findings, [], origins=st.origins)

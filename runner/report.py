@@ -149,6 +149,7 @@ def write_findings_report(outdir: Path, target: str, findings: list[dict], conte
         lines += ["", "## Origin candidates (behind Cloudflare)", ""]
         lines += [
             f"- `{o.get('ip', '')}` — HTTP {o.get('status', '')} — via {', '.join(o.get('sources', []))}"
+            + (f" — {o['tier']}: {o.get('reason', '')}" if o.get("tier") else "")
             for o in origins
         ]
         lines.append("")
