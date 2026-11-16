@@ -327,6 +327,7 @@ def test_origin_verification_skipped_under_proxy(tmp_path):
     with mock.patch.object(stages, "_cloudflare_ranges", return_value=[__import__("ipaddress").ip_network("104.16.0.0/13")]), \
          mock.patch.object(stages, "_resolve", side_effect=lambda h: "93.184.216.34" if h.startswith("www.") else ""), \
          mock.patch.object(stages, "_mx_hosts", return_value=[]), \
+         mock.patch.object(stages, "_canonical_name", side_effect=lambda h: h), \
          mock.patch.object(stages, "_verify_origin", side_effect=lambda *a: calls.append(a)), \
          mock.patch.object(utils, "log"), mock.patch.object(utils, "warn"):
         rows = stages.origin_hunt("example.com", tmp_path, {"ip": "104.16.1.1"}, proxy=HTTP)
@@ -345,6 +346,7 @@ def test_origin_deep_verification_skipped_under_proxy(tmp_path):
     with mock.patch.object(utils, "run", side_effect=fake_run), \
          mock.patch.object(stages, "_cloudflare_ranges", return_value=[__import__("ipaddress").ip_network("104.16.0.0/13")]), \
          mock.patch.object(stages, "_resolve", return_value="93.184.216.34"), \
+         mock.patch.object(stages, "_canonical_name", side_effect=lambda h: h), \
          mock.patch.object(utils, "log"), mock.patch.object(utils, "warn"):
         rows = origin_deep.origin_deep("example.com", tmp_path, {}, proxy=HTTP)
     assert len(seen) == 1 and "--proxy http://u:pw@h:8080" in seen[0]

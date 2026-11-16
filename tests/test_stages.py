@@ -98,6 +98,74 @@ class OriginHuntFilterTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.outdir = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
+        # Hermetic: no CNAMEs unless a test says otherwise (name is its own canonical).
+        p = mock.patch.object(stages, "_canonical_name", side_effect=lambda h: h)
+        self.canonical = p.start()
+        self.addCleanup(p.stop)
+
+    def _hunt(self, resolve_map, mx=()):
+        """Run origin_hunt with a fake resolver/MX set; return (rows, verify mock)."""
+        cf_ranges = [ipaddress.ip_network("104.16.0.0/13")]
+        with mock.patch.object(stages, "_resolve", side_effect=lambda h: resolve_map.get(h, "")) as res, \
+             mock.patch.object(stages, "_cloudflare_ranges", return_value=cf_ranges), \
+             mock.patch.object(stages, "_mx_hosts", return_value=list(mx)), \
+             mock.patch.object(utils, "log"), \
+             mock.patch.object(stages, "_verify_origin",
+                               side_effect=lambda t, ip: {"status": "200", "remote_ip": ip}) as verify:
+            rows = stages.origin_hunt("yoco.com", self.outdir, {"ip": "104.16.1.1"})
+        self.resolved = [c.args[0] for c in res.call_args_list]
+        return rows, verify
+
+    def test_google_workspace_mx_is_not_an_origin_candidate(self):
+        # yoco.com regression: MX -> Google Workspace must never become an origin.
+        google = {"aspmx.l.google.com": "142.250.27.27",
+                  "alt1.aspmx.l.google.com": "142.251.9.27",
+                  "alt2.aspmx.l.google.com": "192.178.164.27"}
+        rows, verify = self._hunt(google, mx=list(google))
+        self.assertEqual(rows, [])
+        verify.assert_not_called()
+        for mx in google:  # not even resolved
+            self.assertNotIn(mx, self.resolved)
+        self.assertNotIn("142.250.27.27",
+                         (self.outdir / "origin_candidates.txt").read_text())
+
+    def test_third_party_mx_providers_are_not_origin_candidates(self):
+        # netcare.co.za regression (Mimecast) + Microsoft 365 / Proofpoint.
+        mx = ["za-smtp-inbound-2.mimecast.co.za", "yoco-com.mail.protection.outlook.com",
+              "mxa-001.pphosted.com"]
+        rows, _ = self._hunt({h: "41.74.193.10" for h in mx}, mx=mx)
+        self.assertEqual(rows, [])
+
+    def test_lookalike_domain_mx_is_not_in_domain(self):
+        # "notyoco.com" ends with "yoco.com" as a string but is not a subdomain.
+        rows, _ = self._hunt({"mx.notyoco.com": "5.6.7.8"}, mx=["mx.notyoco.com"])
+        self.assertEqual(rows, [])
+
+    def test_self_hosted_mx_in_target_domain_is_still_a_candidate(self):
+        rows, _ = self._hunt({"mx.yoco.com": "5.6.7.8"}, mx=["mx.yoco.com"])
+        self.assertEqual([(r["ip"], r["sources"]) for r in rows],
+                         [("5.6.7.8", ["mx.yoco.com", "MX:mx.yoco.com"])])
+
+    def test_leak_subdomain_cnamed_to_provider_is_not_a_candidate(self):
+        # autodiscover -> Microsoft, mail -> Google Sites: in-zone names, provider IPs.
+        cnames = {"autodiscover.yoco.com": "autodiscover.outlook.com",
+                  "mail.yoco.com": "ghs.googlehosted.com"}
+        self.canonical.side_effect = lambda h: cnames.get(h, h)
+        rows, verify = self._hunt({"autodiscover.yoco.com": "52.97.1.1",
+                                   "mail.yoco.com": "142.250.1.1",
+                                   "direct.yoco.com": "5.6.7.8"})
+        self.assertEqual([r["ip"] for r in rows], ["5.6.7.8"])
+        self.assertEqual(verify.call_count, 1)
+
+    def test_leak_subdomain_cnamed_within_target_is_kept(self):
+        self.canonical.side_effect = lambda h: "origin.yoco.com" if h == "direct.yoco.com" else h
+        rows, _ = self._hunt({"direct.yoco.com": "5.6.7.8"})
+        self.assertEqual([r["ip"] for r in rows], ["5.6.7.8"])
+
+    def test_unknown_canonical_name_fails_closed(self):
+        self.canonical.side_effect = lambda h: ""
+        rows, _ = self._hunt({"direct.yoco.com": "5.6.7.8"})
+        self.assertEqual(rows, [])
 
     def test_private_and_loopback_ips_are_not_recorded(self):
         cf_ranges = [ipaddress.ip_network("1.2.3.0/24")]
@@ -119,6 +187,22 @@ class OriginHuntFilterTests(unittest.TestCase):
             rows = stages.origin_hunt("example.com", self.outdir, {})
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["ip"], "5.6.7.8")
+
+
+class OwnershipHelperTests(unittest.TestCase):
+    def test_in_domain(self):
+        self.assertTrue(stages._in_domain("yoco.com", "yoco.com"))
+        self.assertTrue(stages._in_domain("MX.Yoco.com.", "yoco.com"))
+        self.assertFalse(stages._in_domain("aspmx.l.google.com", "yoco.com"))
+        self.assertFalse(stages._in_domain("notyoco.com", "yoco.com"))
+        self.assertFalse(stages._in_domain("", "yoco.com"))
+
+    def test_canonical_name_follows_cname_and_fails_empty(self):
+        with mock.patch.object(stages.socket, "gethostbyname_ex",
+                               return_value=("ghs.googlehosted.com.", ["mail.yoco.com"], ["1.2.3.4"])):
+            self.assertEqual(stages._canonical_name("mail.yoco.com"), "ghs.googlehosted.com")
+        with mock.patch.object(stages.socket, "gethostbyname_ex", side_effect=OSError("nx")):
+            self.assertEqual(stages._canonical_name("x.yoco.com"), "")
 
 
 class VulnScanTests(unittest.TestCase):

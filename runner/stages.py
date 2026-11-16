@@ -24,17 +24,18 @@ except ImportError:
 DNS_TIMEOUT = 5
 
 
-def _gethostbyname_bounded(host: str, timeout: float = DNS_TIMEOUT) -> str:
-    """socket.gethostbyname with a wall-clock bound; raises on failure/timeout.
+def _bounded_lookup(fn, host: str, timeout: float = DNS_TIMEOUT):
+    """Run the blocking resolver call `fn(host)` with a wall-clock bound.
 
     The worker is a daemon thread, so a lookup the resolver never answers can
-    neither stall the caller nor block interpreter exit.
+    neither stall the caller nor block interpreter exit. Raises on
+    failure/timeout.
     """
     box: dict = {}
 
     def _worker():
         try:
-            box["ip"] = socket.gethostbyname(host)
+            box["res"] = fn(host)
         except BaseException as e:  # noqa: BLE001
             box["err"] = e
 
@@ -45,7 +46,12 @@ def _gethostbyname_bounded(host: str, timeout: float = DNS_TIMEOUT) -> str:
         raise TimeoutError(f"DNS lookup for {host} timed out after {timeout}s")
     if "err" in box:
         raise box["err"]
-    return box["ip"]
+    return box["res"]
+
+
+def _gethostbyname_bounded(host: str, timeout: float = DNS_TIMEOUT) -> str:
+    """socket.gethostbyname with a wall-clock bound; raises on failure/timeout."""
+    return _bounded_lookup(socket.gethostbyname, host, timeout)
 
 
 def subdomain_enum(target: str, outdir: Path, skip_amass: bool = True, *,
@@ -246,6 +252,45 @@ def _resolve(host: str) -> str:
         return ""
 
 
+def _in_domain(name: str, domain: str) -> bool:
+    """True if `name` is `domain` itself or a subdomain of it (case/dot-insensitive)."""
+    n = name.strip().lower().rstrip(".")
+    d = domain.strip().lower().rstrip(".")
+    return bool(n) and bool(d) and (n == d or n.endswith("." + d))
+
+
+def _canonical_name(host: str) -> str:
+    """Final name after following the CNAME chain for `host`; "" on failure.
+
+    gethostbyname_ex returns (canonical, aliases, ips); with glibc the canonical
+    name is the last CNAME target (== `host` when there is no CNAME).
+    """
+    try:
+        return _bounded_lookup(socket.gethostbyname_ex, host)[0].lower().rstrip(".")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _third_party_reason(host: str, target: str) -> str:
+    """Why `host` should NOT be treated as the target's own infra; "" if owned.
+
+    The name we queried may be in the target's zone, but if its CNAME chain ends
+    outside the target's domain (autodiscover -> outlook.com, mail ->
+    ghs.googlehosted.com, status -> statuspage.io, www -> a CDN) the IP belongs
+    to that provider, not to the target. Fails closed: if ownership cannot be
+    established the host is excluded, since a wrong guess means scanning a
+    third party.
+    """
+    if not _in_domain(host, target):
+        return f"{host} is outside {target}"
+    canon = _canonical_name(host)
+    if not canon:
+        return f"could not determine canonical name for {host}"
+    if not _in_domain(canon, target):
+        return f"{host} is a CNAME to third-party {canon}"
+    return ""
+
+
 def _mx_hosts(domain: str) -> list[str]:
     """Return MX hostnames via dig."""
     if not utils.have("dig"):
@@ -326,20 +371,33 @@ def origin_hunt(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[
 
     candidates = {}  # ip -> list of sources
 
-    def add(ip: str, source: str) -> None:
-        if ip and _is_global(ip) and not _is_cloudflare(ip, cf_ranges):
-            candidates.setdefault(ip, []).append(source)
+    def add(host: str, ip: str, source: str) -> None:
+        if not (ip and _is_global(ip) and not _is_cloudflare(ip, cf_ranges)):
+            return
+        # Only the target's own infra is an origin candidate: drop hosts outside
+        # the target's domain (e.g. MX -> aspmx.l.google.com, Mimecast) and
+        # in-zone names that CNAME out to a provider.
+        why = _third_party_reason(host, target)
+        if why:
+            utils.log(f"  skip {ip} ({source}): {why}")
+            return
+        candidates.setdefault(ip, []).append(source)
 
     for name in LEAK_SUBDOMAINS:
         host = f"{name}.{target}"
         ip = _resolve(host)
         if ip:
-            add(ip, host)
+            add(host, ip, host)
 
     for mx in _mx_hosts(target):
+        if not _in_domain(mx, target):
+            # Hosted mail (Google Workspace, Microsoft 365, Mimecast, Proofpoint)
+            # is the provider's server, never the web origin. Don't even resolve.
+            utils.log(f"  skip MX:{mx}: third-party mail host outside {target}")
+            continue
         ip = _resolve(mx)
         if ip:
-            add(ip, f"MX:{mx}")
+            add(mx, ip, f"MX:{mx}")
 
     rows = []
     stage = events.current_stage() or "origin"

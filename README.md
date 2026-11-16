@@ -266,7 +266,7 @@ opt-in only run when their flag is set.
 2. `panel` - flag cPanel/webmail/phpMyAdmin-style subdomains (no network)
 3. `live` - HTTP/HTTPS probe (status, server, Cloudflare flag)
 4. `cf` - Cloudflare detection from `cf-ray`/`server`/`cf-cache-status` headers and resolved IP
-5. `origin` - when Cloudflare is detected: leak-subdomain sweep and MX records, filtered against Cloudflare's published ranges and verified with `curl --resolve`; plus `origin_deep` (crt.sh certificate-transparency history)
+5. `origin` - when Cloudflare is detected: leak-subdomain sweep and MX records, filtered against Cloudflare's published ranges and verified with `curl --resolve`. Only the target's own infra is kept: MX hosts outside the target domain (Google Workspace, Microsoft 365, Mimecast, Proofpoint) and in-zone names whose CNAME chain ends outside the target domain (SaaS/CDN/mail providers) are skipped and logged; plus `origin_deep` (crt.sh certificate-transparency history)
 6. `nmap` - port scan (opt-in `--nmap`, `--nmap-full` for all ports)
 7. `waf` - `wafw00f` fingerprint against live hosts
 8. `dork` - passive Mojeek/DuckDuckGo queries for exposed files and panels, filtered to in-scope hosts

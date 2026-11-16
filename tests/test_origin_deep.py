@@ -65,6 +65,10 @@ class OriginDeepTests(unittest.TestCase):
         self.outdir = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
         self.target = "example.com"
+        # Hermetic: no CNAMEs unless a test says otherwise (name is its own canonical).
+        p = mock.patch.object(stages, "_canonical_name", side_effect=lambda h: h)
+        self.canonical = p.start()
+        self.addCleanup(p.stop)
 
     # --- helpers ---------------------------------------------------------
 
@@ -171,6 +175,25 @@ class OriginDeepTests(unittest.TestCase):
             rows = origin_deep.origin_deep(self.target, self.outdir, {})
         self.assertEqual(rows, [])
         self.assertTrue(any("Cloudflare ranges" in c.args[0] for c in warn.call_args_list))
+
+    def test_crtsh_name_cnamed_to_third_party_is_not_a_candidate(self):
+        # other.example.com is in-zone but CNAMEs to a SaaS host; its IP is the
+        # provider's (shared) infra, not the target origin.
+        cnames = {"other.example.com": "example.statuspage.io"}
+        self.canonical.side_effect = lambda h: cnames.get(h, h)
+        with mock.patch.object(utils, "run", side_effect=fake_run), \
+             mock.patch.object(stages, "_resolve", side_effect=lambda h: RESOLVE_MAP.get(h, "")), \
+             mock.patch.object(stages, "_cloudflare_ranges", return_value=list(CF_RANGES)):
+            rows = origin_deep.origin_deep(self.target, self.outdir, {})
+        self.assertEqual({r["ip"] for r in rows}, {"5.6.7.8"})
+
+    def test_crtsh_name_with_unknown_canonical_fails_closed(self):
+        self.canonical.side_effect = lambda h: ""
+        with mock.patch.object(utils, "run", side_effect=fake_run), \
+             mock.patch.object(stages, "_resolve", side_effect=lambda h: RESOLVE_MAP.get(h, "")), \
+             mock.patch.object(stages, "_cloudflare_ranges", return_value=list(CF_RANGES)):
+            rows = origin_deep.origin_deep(self.target, self.outdir, {})
+        self.assertEqual(rows, [])
 
     def test_non_list_payload_returns_empty(self):
         with mock.patch.object(utils, "run", return_value=json.dumps({"oops": True})):

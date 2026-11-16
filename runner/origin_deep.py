@@ -91,6 +91,13 @@ def origin_deep(target: str, outdir: Path, cf_result: dict, proxy=None) -> list[
     for sub in sorted(subs):
         ip = stages._resolve(sub)
         if ip and _is_global(ip) and not stages._is_cloudflare(ip, ranges):
+            # A CT name is in the target's zone by construction, but it may
+            # CNAME out to a SaaS/CDN (status -> statuspage.io, help -> zendesk,
+            # shop -> shopify); that IP is the provider's, not the origin.
+            why = stages._third_party_reason(sub, target)
+            if why:
+                utils.log(f"  skip {ip} ({sub}): {why}")
+                continue
             candidates.setdefault(ip, []).append(sub)
 
     # 6. Verify each candidate by force-connecting to the origin IP.
