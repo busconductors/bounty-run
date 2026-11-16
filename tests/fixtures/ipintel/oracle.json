@@ -1,0 +1,4 @@
+{"last_updated_timestamp": "2026-11-10T00:00:00", "regions": [
+  {"region": "us-ashburn-1", "cidrs": [
+    {"cidr": "129.213.0.0/16", "tags": ["OCI"]},
+    {"cidr": "134.70.24.0/21", "tags": ["OSN", "OBJECT_STORAGE"]}]}]}

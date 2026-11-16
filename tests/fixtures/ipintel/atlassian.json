@@ -1,0 +1,3 @@
+{"creationDate": "2026-11-16T00:00:00", "syncToken": 1763251393, "items": [
+  {"network": "104.192.136.0", "mask_len": 21, "cidr": "104.192.136.0/21", "mask": "255.255.248.0", "direction": ["ingress", "egress"]},
+  {"network": "13.52.5.96", "mask_len": 28, "cidr": "13.52.5.96/28", "mask": "255.255.255.240", "direction": ["egress"]}]}

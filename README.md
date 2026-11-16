@@ -266,7 +266,12 @@ opt-in only run when their flag is set.
 2. `panel` - flag cPanel/webmail/phpMyAdmin-style subdomains (no network)
 3. `live` - HTTP/HTTPS probe (status, server, Cloudflare flag)
 4. `cf` - Cloudflare detection from `cf-ray`/`server`/`cf-cache-status` headers and resolved IP
-5. `origin` - when Cloudflare is detected: leak-subdomain sweep and MX records, filtered against Cloudflare's published ranges and verified with `curl --resolve`. Only the target's own infra is kept: MX hosts outside the target domain (Google Workspace, Microsoft 365, Mimecast, Proofpoint) and in-zone names whose CNAME chain ends outside the target domain (SaaS/CDN/mail providers) are skipped and logged; plus `origin_deep` (crt.sh certificate-transparency history)
+5. `origin` - when Cloudflare is detected: leak-subdomain sweep and MX records, filtered against Cloudflare's published ranges and verified with `curl --resolve`. Only the target's own infra is kept: MX hosts outside the target domain (Google Workspace, Microsoft 365, Mimecast, Proofpoint) and in-zone names whose CNAME chain ends outside the target domain (SaaS/CDN/mail providers) are skipped and logged; plus `origin_deep` (crt.sh certificate-transparency history). Every surviving IP (all A records of each name) is then graded by `runner/ipintel.py`:
+   - **Layer 1, offline range feeds**: AWS, Google, Azure, Fastly, GitHub Pages, Oracle, Atlassian, Zendesk, Microsoft 365, DigitalOcean, Linode and mail SPF, plus built-in Vercel/Netlify/Shopify IPs. An IP in a shared front-end range is **SHARED** and never probed. AWS ranges are subtracted from EC2 (EC2 ∩ S3/CloudFront/Global Accelerator counts as shared).
+   - **Layer 2, ASN/WHOIS/PTR** (iptoasn file, Team Cymru DNS, RDAP): recorded as metadata only. It never rejects on cloud ownership. A shared PTR (`1e100.net`, `myshopify.com`, ...) or an Akamai ASN marks SHARED, and a block held by the target itself raises confidence.
+   - **Layer 3, active checks**: the response via the IP is compared with the real site, the TLS certificate is read with SNI = target (Cloudflare Origin CA or a non-provider SAN), and two negative controls (random Host+SNI, no SNI) make multi-tenant platforms identify themselves.
+
+   Tiers: **CONFIRMED**, **LIKELY**, **REJECTED** or **SHARED**. **Only CONFIRMED origin IPs are admitted into scope and scanned by nmap/nuclei.** Every other IP is listed for manual review only. When a shared-range feed is missing or more than 30 days old, nothing grades above LIKELY. Under `--proxy` the active layer is skipped (a direct probe would leave the proxy), so no origin reaches CONFIRMED and none is scanned. Feeds are cached in `~/.cache/bounty-run/ipintel/` (override with `BOUNTY_RUN_IPINTEL_DIR`) and refreshed when stale. Use `--refresh-ipintel` to force a refresh, or `--ipintel-offline` to use the cache only, with no ASN/RDAP/PTR lookups
 6. `nmap` - port scan (opt-in `--nmap`, `--nmap-full` for all ports)
 7. `waf` - `wafw00f` fingerprint against live hosts
 8. `dork` - passive Mojeek/DuckDuckGo queries for exposed files and panels, filtered to in-scope hosts
@@ -297,7 +302,7 @@ outputs/<target>/<timestamp>/
 ├── panels.txt              # panel-style subdomains (<sub>\t<kind>\t<severity>)
 ├── live_hosts.txt          # host, status, server, CF flag
 ├── cloudflare.json         # Cloudflare detection result + evidence
-├── origin_candidates.txt   # origin IPs behind Cloudflare (if any)
+├── origin_candidates.txt   # origin IPs behind Cloudflare: ip, status, sources, tier, reason (SHARED as # comments)
 ├── origin_deep.txt         # crt.sh deep-origin candidates
 ├── nmap.xml                # raw nmap XML (--nmap)
 ├── nmap_open_ports.txt     # open ports per host (--nmap)

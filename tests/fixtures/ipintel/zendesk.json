@@ -1,0 +1,2 @@
+{"ips": {"ingress": {"all": ["216.198.0.0/18"], "specific": []},
+         "egress": {"all": ["52.11.180.0/22"], "specific": []}}}

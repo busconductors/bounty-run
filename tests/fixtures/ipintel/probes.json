@@ -1,0 +1,60 @@
+{
+  "_comment": "Point-in-time negative-control fingerprints observed 2026-11-16: no-SNI certificate + random-Host response per shared platform.",
+  "23.227.38.65": {
+    "platform": "shopify",
+    "ptr": "myshopify.com",
+    "nosni_cert": {"subject": "CN = *.myshopify.com", "issuer": "C = US, O = Let's Encrypt, CN = R11",
+                   "cn": "*.myshopify.com", "org": "", "sans": ["*.myshopify.com", "myshopify.com"]},
+    "bogus_host": {"status": "403", "headers": {"server": "cloudflare", "cf-ray": "8e1f2a3b4c5d6e7f-JNB"},
+                   "body": "<html><head><title>Access denied</title></head><body>Access denied</body></html>"}
+  },
+  "185.199.108.153": {
+    "platform": "github",
+    "ptr": "cdn-185-199-108-153.github.com",
+    "nosni_cert": {"subject": "CN = *.github.io", "issuer": "C = US, O = DigiCert Inc, CN = DigiCert Global G2 TLS RSA SHA256 2020 CA1",
+                   "cn": "*.github.io", "org": "", "sans": ["*.github.io", "github.io", "*.githubusercontent.com"]},
+    "bogus_host": {"status": "404", "headers": {"server": "GitHub.com", "x-github-request-id": "A1B2:3C4D:5E6F:7A8B"},
+                   "body": "<title>Site not found &middot; GitHub Pages</title> There isn't a GitHub Pages site here."}
+  },
+  "151.101.1.1": {
+    "platform": "fastly",
+    "ptr": "",
+    "nosni_cert": {"subject": "CN = fastly-pin-check.secretcdn.net", "issuer": "C = BE, O = GlobalSign nv-sa, CN = GlobalSign Atlas R3 DV TLS CA 2025 Q1",
+                   "cn": "fastly-pin-check.secretcdn.net", "org": "", "sans": ["fastly-pin-check.secretcdn.net"]},
+    "bogus_host": {"status": "200", "headers": {"via": "1.1 varnish", "x-served-by": "cache-jnb7020-JNB"}, "body": ""}
+  },
+  "76.76.21.21": {
+    "platform": "vercel",
+    "ptr": "",
+    "nosni_cert": {"subject": "CN = no-sni.vercel-infra.com", "issuer": "C = US, O = Let's Encrypt, CN = R10",
+                   "cn": "no-sni.vercel-infra.com", "org": "", "sans": ["no-sni.vercel-infra.com"]},
+    "bogus_host": {"status": "404", "headers": {"server": "Vercel", "x-vercel-error": "DEPLOYMENT_NOT_FOUND"},
+                   "body": "The deployment could not be found on Vercel.\n\nDEPLOYMENT_NOT_FOUND"}
+  },
+  "75.2.60.5": {
+    "platform": "netlify",
+    "ptr": "",
+    "nosni_cert": {"subject": "C = US, ST = California, L = San Francisco, O = \"Netlify, Inc\", CN = *.netlify.app",
+                   "issuer": "C = US, O = DigiCert Inc, CN = DigiCert Global G2 TLS RSA SHA256 2020 CA1",
+                   "cn": "*.netlify.app", "org": "Netlify, Inc", "sans": ["*.netlify.app", "netlify.app"]},
+    "bogus_host": {"status": "404", "headers": {"server": "Netlify", "x-nf-request-id": "01JABCDEF"},
+                   "body": "Not Found - Request ID: 01JABCDEF"}
+  },
+  "35.71.139.13": {
+    "platform": "heroku",
+    "ptr": "a0b1c2d3e4f5.awsglobalaccelerator.com",
+    "nosni_cert": {"subject": "CN = *.herokuapp.com", "issuer": "C = US, O = Amazon, CN = Amazon RSA 2048 M02",
+                   "cn": "*.herokuapp.com", "org": "", "sans": ["*.herokuapp.com", "herokuapp.com"]},
+    "bogus_host": {"status": "404", "headers": {"server": "Heroku", "via": "2.0 heroku-router"},
+                   "body": "<title>No such app</title>"}
+  },
+  "142.250.80.46": {
+    "platform": "google",
+    "ptr": "lga34s34-in-f14.1e100.net",
+    "nosni_cert": {"subject": "OU = No SNI provided; please fix your client., CN = invalid2.invalid",
+                   "issuer": "OU = No SNI provided; please fix your client., CN = invalid2.invalid",
+                   "cn": "invalid2.invalid", "org": "", "sans": []},
+    "bogus_host": {"status": "404", "headers": {"content-type": "text/html; charset=UTF-8"},
+                   "body": "<title>Error 404 (Not Found)!!1</title> That's an error."}
+  }
+}

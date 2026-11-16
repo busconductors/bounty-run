@@ -1,0 +1,10 @@
+{"changeNumber": 412, "cloud": "Public", "values": [
+  {"name": "AzureFrontDoor.Frontend", "id": "AzureFrontDoor.Frontend",
+   "properties": {"changeNumber": 9, "addressPrefixes": ["13.107.246.0/24", "2620:1ec:bdf::/48"]}},
+  {"name": "AppService", "id": "AppService",
+   "properties": {"changeNumber": 9, "addressPrefixes": ["20.40.202.0/23"]}},
+  {"name": "AzureCloud", "id": "AzureCloud",
+   "properties": {"changeNumber": 9, "addressPrefixes": ["13.64.0.0/11", "13.107.246.0/24", "20.40.0.0/14", "2603:1000::/24"]}},
+  {"name": "AzureCloud.eastus", "id": "AzureCloud.eastus",
+   "properties": {"changeNumber": 9, "addressPrefixes": ["13.64.0.0/11"]}}
+]}

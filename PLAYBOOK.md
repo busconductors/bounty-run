@@ -351,7 +351,7 @@ jq -r '.[] | select(.severity=="high" or .severity=="critical") | "\(.severity)\
 
 ### 7.3 Raw tool output
 
-When a finding needs context, go to the raw files: `nuclei.jsonl` (full template match data), `sqlmap_report.txt`, `nikto/<host>.json`, `sslyze/<host>.json`, `nmap.xml` and `origin_candidates.txt`. The origin file has `IP  status  sources`; a `200` status with the target's content is a confirmed origin.
+When a finding needs context, go to the raw files: `nuclei.jsonl` (full template match data), `sqlmap_report.txt`, `nikto/<host>.json`, `sslyze/<host>.json`, `nmap.xml` and `origin_candidates.txt`. The origin file has `IP  status  sources  tier  reason`. Only `CONFIRMED` rows are scanned. Review `LIKELY` rows by hand, and treat the `# SHARED` comment lines as third-party front-ends, never origins.
 
 ---
 

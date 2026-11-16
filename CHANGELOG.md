@@ -3,6 +3,19 @@
 All notable changes to Bounty Runner are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Origin-IP classification** (`runner/ipintel.py`): each origin candidate is graded CONFIRMED / LIKELY / REJECTED / SHARED using provider range feeds, ASN/WHOIS/PTR metadata and active checks (content vs the real site, TLS certificate, random-Host and no-SNI negative controls)
+- `--refresh-ipintel` and `--ipintel-offline` flags for the range-feed cache (`~/.cache/bounty-run/ipintel/`)
+
+### Changed
+
+- **Scope gate**: only CONFIRMED origin IPs are admitted into scope and passed to nmap/nuclei; everything else is reported for manual review. Under `--proxy` no origin is scanned
+- Origin hunting now classifies every A record of a host, not just the first
+- `origin_candidates.txt` / `origin_deep.txt` gain `tier` and `reason` columns; SHARED IPs appear as `#` comment lines
+
 ## [1.2.0] - Interactive TUI
 
 ### Added

@@ -1,0 +1,2 @@
+[{"id": 1, "serviceArea": "Exchange", "urls": ["outlook.office.com"], "ips": ["13.107.6.152/31", "40.92.0.0/15", "2603:1006::/40"]},
+ {"id": 2, "serviceArea": "Common", "urls": ["*.office.com"]}]
