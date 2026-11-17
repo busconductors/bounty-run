@@ -13,6 +13,22 @@ def _jsonl(urls):
     return "\n".join(json.dumps({"request": {"endpoint": u}}) for u in urls)
 
 
+def _fake_run(urls):
+    """Stand-in for utils.run: stream katana JSONL lines to on_line (capture=False).
+
+    _crawl now consumes katana output line by line via on_line instead of the
+    return value, so the mock must drive on_line to mirror real streaming.
+    """
+    lines = _jsonl(urls).splitlines()
+
+    def _run(cmd, *a, on_line=None, **kw):
+        if on_line is not None:
+            for ln in lines:
+                on_line(ln)
+        return ""
+    return _run
+
+
 # A mix of API-like and static URLs katana might surface.
 CRAWLED = [
     "https://example.com/api/users",        # keep: /api/
@@ -49,7 +65,7 @@ class TestScan(unittest.TestCase):
              mock.patch.object(api_endpoints.utils, "log"), \
              mock.patch.object(api_endpoints.utils, "warn"), \
              mock.patch.object(api_endpoints.utils, "run",
-                               return_value=_jsonl(CRAWLED)):
+                               side_effect=_fake_run(CRAWLED)):
             return api_endpoints.api_endpoints_scan(
                 "example.com", outdir, hosts=["example.com"])
 
@@ -83,8 +99,8 @@ class TestScan(unittest.TestCase):
                  mock.patch.object(api_endpoints.utils, "log"), \
                  mock.patch.object(api_endpoints.utils, "warn"), \
                  mock.patch.object(api_endpoints.utils, "run",
-                                   return_value=_jsonl(["https://example.com/api/x",
-                                                        "https://example.com/api/x"])):
+                                   side_effect=_fake_run(["https://example.com/api/x",
+                                                          "https://example.com/api/x"])):
                 findings = api_endpoints.api_endpoints_scan(
                     "example.com", outdir, hosts=["example.com"])
         self.assertEqual(len(findings), 1)

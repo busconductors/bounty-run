@@ -74,26 +74,40 @@ def _is_api_url(url: str) -> bool:
     return any(kw in path for kw in API_KEYWORDS)
 
 
+def _katana_endpoint(line: str) -> str:
+    """Pull request.endpoint from one katana JSONL line; "" if absent/unparseable."""
+    line = line.strip()
+    if not line:
+        return ""
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        return ""
+    return ((obj.get("request") or {}).get("endpoint") or "").strip()
+
+
 def _crawl(url: str, depth: int, timeout: int, proxy=None) -> list[str]:
-    """Run katana over one URL in JSONL mode; return the crawled endpoint URLs."""
-    raw = utils.run(
+    """Run katana over one URL in JSONL mode; return the crawled endpoint URLs.
+
+    katana's full JSONL crawl of a large site can be hundreds of MB; it is parsed
+    as it streams (``on_line`` + ``capture=False``) so only the extracted endpoint
+    URLs are kept, never the whole crawl output as one in-memory blob.
+    """
+    urls: list[str] = []
+
+    def _on_line(line: str) -> None:
+        endpoint = _katana_endpoint(line)
+        if endpoint:
+            urls.append(endpoint)
+
+    utils.run(
         f"katana -u {shlex.quote(url)} -d {depth} -jc -jsonl -silent"
         f"{proxy.cli('katana') if proxy is not None else ''}",
         timeout=timeout,
+        on_line=_on_line,
+        capture=False,
         **proxymod.run_kw(proxy),
     )
-    urls: list[str] = []
-    for line in (raw or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        endpoint = ((obj.get("request") or {}).get("endpoint") or "").strip()
-        if endpoint:
-            urls.append(endpoint)
     return urls
 
 
