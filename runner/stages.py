@@ -571,14 +571,22 @@ def _nuclei_line_to_finding(line: str) -> dict | None:
 
 
 def _parse_nuclei_jsonl(path: Path) -> list[dict]:
-    """Parse one nuclei JSONL output file into finding dicts (defensively)."""
+    """Parse one nuclei JSONL output file into finding dicts (defensively).
+
+    Streamed line by line: nuclei.jsonl reaches hundreds of MB / GB on a large
+    host set, so ``read_text().split("\\n")`` would hold the whole file as one
+    string plus a list of every line (~2-3x the file size) on top of the finding
+    dicts — a multi-GB transient spike. Iterating the open file keeps only one
+    line resident at a time.
+    """
     findings = []
     if not path.exists():
         return findings
-    for line in path.read_text().split("\n"):
-        f = _nuclei_line_to_finding(line)
-        if f is not None:
-            findings.append(f)
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            f = _nuclei_line_to_finding(line)
+            if f is not None:
+                findings.append(f)
     return findings
 
 
@@ -632,6 +640,10 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
         f"-c {concurrency}{ni}{px} -jsonl -silent -o {shlex.quote(str(outdir / 'nuclei.jsonl'))}",
         timeout=timeout,
         on_line=_emit_nuclei_finding_from_line,
+        # nuclei streams the same JSONL to stdout (consumed per-line above) AND to
+        # -o nuclei.jsonl; retaining stdout in RAM too would balloon the engine on
+        # a large host set. Stream it (return unused; findings parsed from the file).
+        capture=False,
         **pk,
     )
     findings = _parse_nuclei_jsonl(outdir / "nuclei.jsonl")
@@ -655,6 +667,7 @@ def vuln_scan(target: str, outdir: Path, live_rows: list[dict], severity: str = 
             f"-c {concurrency}{ni}{px} -jsonl -silent -o {shlex.quote(str(origin_jsonl))}",
             timeout=timeout,
             on_line=_emit_nuclei_finding_from_line,
+            capture=False,  # see the main nuclei pass above
             **pk,
         )
         findings.extend(_parse_nuclei_jsonl(origin_jsonl))

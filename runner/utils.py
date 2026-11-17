@@ -103,12 +103,20 @@ def _tool_name(cmd: str) -> str:
     return os.path.basename(argv[0]) if argv else ""
 
 
-def _pump(stream, sink: list, stream_name: str, stage: str, tool: str,
+def _pump(stream, sink: list | None, stream_name: str, stage: str, tool: str,
           on_line: Callable[[str], None] | None, extra_secrets=()) -> None:
-    """Drain one pipe line by line: keep raw text, emit events, call on_line."""
+    """Drain one pipe line by line: keep raw text, emit events, call on_line.
+
+    ``sink`` is ``None`` when the caller does not want the aggregate output
+    retained (``run(capture=False)``): the line is still emitted as an event and
+    handed to ``on_line``, but it is not accumulated in memory. This is what
+    keeps a gigabyte-scale tool stream (nuclei/katana JSONL) from ballooning the
+    engine's RSS when the output is already persisted to disk / streamed.
+    """
     try:
         for raw in stream:
-            sink.append(raw)
+            if sink is not None:
+                sink.append(raw)
             line = raw[:-1] if raw.endswith("\n") else raw
             events.output(stage, tool, stream_name, _redact(line, extra_secrets))
             if on_line is not None:
@@ -143,13 +151,22 @@ def _join(readers: list, timeout: float) -> None:
 
 
 def run(cmd: str, outfile: str = None, timeout: int = 180,
-        on_line: Callable[[str], None] | None = None, proxy=None) -> str:
+        on_line: Callable[[str], None] | None = None, proxy=None,
+        capture: bool = True) -> str:
     """Run a shell command, return stdout only; surface stderr on failure.
 
     Both pipes are drained line by line on reader threads (each line becomes
     an `output` event; stdout lines also go to `on_line`).  The control file
     is polled every 250 ms; RunCancelled / StageSkipped kill the tool's
     process group and propagate.
+
+    ``capture`` (default ``True``) keeps today's behaviour: the full stdout is
+    accumulated and returned. Pass ``capture=False`` for a streaming caller that
+    consumes every line via ``on_line`` and does not need the aggregate (nuclei,
+    katana): stdout is then neither buffered in a list nor joined into a second
+    full copy, so a multi-hundred-MB/GB tool stream no longer balloons the
+    engine's RSS. ``run`` returns ``""`` in that mode. stderr is always captured
+    (it is small and needed for the failure message).
 
     ``proxy`` (a ``runner.proxy.ProxyConfig``): the child gets every proxy env
     var (defence in depth for env-reading tools; ``NO_PROXY`` cleared), and the
@@ -178,7 +195,9 @@ def run(cmd: str, outfile: str = None, timeout: int = 180,
 
     tool = _tool_name(cmd)
     stage = events.current_stage() or ""
-    out_raw: list[str] = []
+    # out_raw is None when not capturing: stdout lines are still emitted and fed
+    # to on_line by _pump, but never retained (the balloon fix).
+    out_raw: list[str] | None = [] if capture else None
     err_raw: list[str] = []
     readers = [
         threading.Thread(target=_pump, daemon=True,
@@ -240,7 +259,7 @@ def run(cmd: str, outfile: str = None, timeout: int = 180,
         if registered:
             events.unregister_child(proc.pid)
 
-    stdout = "".join(out_raw)
+    stdout = "".join(out_raw) if out_raw is not None else ""
     stderr = "".join(err_raw)
     if proc.returncode != 0 and stderr:
         warn(f"  exit {proc.returncode}: {_redact(stderr.strip(), extra)[:200]}")

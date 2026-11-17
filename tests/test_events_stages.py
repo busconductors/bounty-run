@@ -49,7 +49,8 @@ class TestVulnScanLiveFindings(_EventsBase):
             '"matched-at": "https://example.com/b", "host": "example.com"}',
         ]
 
-        def fake_run(cmd, outfile=None, timeout=180, on_line=None):
+        def fake_run(cmd, outfile=None, timeout=180, on_line=None, **kwargs):
+            # kwargs absorbs capture=False (nuclei streams stdout without buffering).
             if on_line is not None:
                 for l in lines:
                     on_line(l)
