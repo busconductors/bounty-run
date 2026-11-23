@@ -263,3 +263,71 @@ func TestTailExitsOnCancelWhileMissing(t *testing.T) {
 		t.Fatal("Tail did not exit on cancel")
 	}
 }
+
+// An in-place rewrite that regrows past the old offset within one poll must
+// still be detected (same inode, size >= old offset).
+func TestTailDetectsInPlaceRewrite(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, p, logLine("old")+`{"v":1,"t":1,"type":"log","level":"info","msg":"par`)
+	ch := startTail(t, p)
+	wantMsg(t, next(t, ch), "old")
+	expectNone(t, ch, 2*pollInterval) // partial line is held back
+	var sb strings.Builder
+	for i := 0; i < 6; i++ {
+		sb.WriteString(logLine("new" + string(rune('0'+i))))
+	}
+	if err := os.WriteFile(p, []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantReset(t, next(t, ch))
+	for i := 0; i < 6; i++ {
+		wantMsg(t, next(t, ch), "new"+string(rune('0'+i)))
+	}
+}
+
+func startTailCap(t *testing.T, path string, maxLine int) <-chan any {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	out := make(chan any, 16)
+	go tail(ctx, path, out, maxLine)
+	return out
+}
+
+func TestTailOversizeLineWarnsOnceThenContinues(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	big := strings.Repeat("x", 200000) // spans many read chunks
+	appendFile(t, p, logLine(big)+logLine("after"))
+	ch := startTailCap(t, p, 1000)
+	w, ok := next(t, ch).(WarnMsg)
+	if !ok || !strings.Contains(w.Text, "too long") {
+		t.Fatalf("want too-long WarnMsg, got %#v", w)
+	}
+	wantMsg(t, next(t, ch), "after")
+	expectNone(t, ch, 2*pollInterval)
+}
+
+func TestTailOversizeUnterminatedLineThenNewline(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, p, strings.Repeat("y", 5000)) // no newline yet
+	ch := startTailCap(t, p, 1000)
+	if _, ok := next(t, ch).(WarnMsg); !ok {
+		t.Fatal("want WarnMsg")
+	}
+	appendFile(t, p, strings.Repeat("y", 5000)) // still the same line: no second warning
+	expectNone(t, ch, 2*pollInterval)
+	appendFile(t, p, "\n"+logLine("after"))
+	wantMsg(t, next(t, ch), "after")
+}
+
+func TestTailLineJustUnderCapDecodes(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	const limit = 4096
+	pad := limit - len(logLine("")) - 1 // line incl. newline is limit-1 bytes
+	appendFile(t, p, logLine(strings.Repeat("z", pad)))
+	ch := startTailCap(t, p, limit)
+	m, ok := next(t, ch).(Msg)
+	if !ok || len(m.Ev.Msg) != pad {
+		t.Fatalf("got %#v", m)
+	}
+}
