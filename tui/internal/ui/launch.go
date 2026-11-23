@@ -17,9 +17,6 @@ import (
 	"bountyrun/core/runstore"
 )
 
-// launchWait is how long a launch waits for run_start before showing engine.log.
-const launchWait = 3 * time.Second
-
 const capError = "3 runs already active — wait or cancel one"
 
 // stageIDs mirrors runner/cli.py STAGE_IDS (pipeline order, same names as --skip).
@@ -279,9 +276,10 @@ func startRun(cfg Config, o engine.Options) tea.Cmd {
 		info := runstore.RunInfo{Dir: dir, PID: pid, PGID: pid}
 		started, stErr := runstore.PIDStart(pid)
 		info.PIDStart = started
-		if err := engine.WaitStarted(dir, launchWait); err != nil {
+		wait := engine.LaunchTimeout(o)
+		if err := engine.WaitLaunch(info, wait); err != nil {
 			if errors.Is(err, engine.ErrNoStart) {
-				err = stopUnstarted(info, stErr == nil)
+				err = stopUnstarted(info, stErr == nil, wait)
 			}
 			return launchResultMsg{err: err} // dir kept: engine.log explains why
 		}
@@ -293,7 +291,7 @@ func startRun(cfg Config, o engine.Options) tea.Cmd {
 // like any hard kill) and describes the outcome with the engine.log tail.
 // known is false when the engine had already exited before its start time
 // could be read; there is then nothing safe to signal.
-func stopUnstarted(info runstore.RunInfo, known bool) error {
+func stopUnstarted(info runstore.RunInfo, known bool, wait time.Duration) error {
 	outcome := "stopped"
 	if known {
 		if err := engine.HardKill(info, info.Dir); err != nil {
@@ -301,7 +299,7 @@ func stopUnstarted(info runstore.RunInfo, known bool) error {
 		}
 	}
 	return fmt.Errorf("engine did not start within %s — %s\nengine.log tail:\n%s",
-		launchWait, outcome, engine.LogTail(info.Dir, 20))
+		wait, outcome, engine.LogTail(info.Dir, 20))
 }
 
 func (l *launchModel) Update(msg tea.Msg) tea.Cmd {
