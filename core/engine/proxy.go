@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -111,4 +112,19 @@ func ProxyEnv(o Options) []string {
 		return nil
 	}
 	return []string{ProxyEnvVar + "=" + o.Proxy}
+}
+
+// HeadersEnvVar carries extra request headers to the engine as a JSON array of
+// "Name: value" strings, for the same reason the proxy does (see ProxyEnvVar).
+const HeadersEnvVar = "BOUNTY_RUN_HEADERS"
+
+// SpawnEnvFor is the extra environment for an engine launched with o: the proxy
+// (as ProxyEnv) and any headers. It is empty when neither is set.
+func SpawnEnvFor(o Options) []string {
+	env := ProxyEnv(o)
+	if len(o.Headers) > 0 {
+		b, _ := json.Marshal(o.Headers) // []string never fails to marshal
+		env = append(env, HeadersEnvVar+"="+string(b))
+	}
+	return env
 }

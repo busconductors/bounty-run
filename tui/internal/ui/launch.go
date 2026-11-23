@@ -65,10 +65,20 @@ type preset struct {
 	on              []string // enabled toggles; nil for Custom
 }
 
+// presetOn is the enabled toggles of a shared engine preset.
+func presetOn(id string) []string {
+	for _, p := range engine.Presets() {
+		if p.ID == id {
+			return append(slices.Clone(p.Stages), p.Flags...)
+		}
+	}
+	return nil
+}
+
 var (
-	quickOn    = []string{"subs", "panel", "live", "cf", "origin", "origin_deep", "waf", "dork", "secret", "headers", "cors", "tech"}
-	standardOn = append(slices.Clone(quickOn), "nmap", "vuln", "content", "api")
-	deepOn     = append(slices.Clone(standardOn), "param", "tls", "nikto", "metis", "headi", "amass", "nmap-full")
+	quickOn    = presetOn("quick")
+	standardOn = presetOn("standard")
+	deepOn     = presetOn("deep")
 )
 
 const presetDefault = "standard"
@@ -267,7 +277,7 @@ func startRun(cfg Config, o engine.Options) tea.Cmd {
 		if err != nil {
 			return launchResultMsg{err: err}
 		}
-		pid, err := engine.SpawnEnv(cfg.EngineBin, engine.Argv(o, dir), dir, engine.ProxyEnv(o))
+		pid, err := engine.SpawnEnv(cfg.EngineBin, engine.Argv(o, dir), dir, engine.SpawnEnvFor(o))
 		if err != nil {
 			_ = os.RemoveAll(dir) // the leaf we just made; no phantom run
 			return launchResultMsg{err: err}

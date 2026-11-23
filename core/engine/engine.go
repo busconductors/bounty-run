@@ -33,6 +33,32 @@ type Options struct {
 	// Proxy is a validated proxy URL ("" = none). It is deliberately NOT put
 	// in Argv: SpawnEnv passes it as BOUNTY_RUN_PROXY (see ProxyEnvVar).
 	Proxy string
+
+	// Engine flags the desktop app exposes. Zero values emit no flag.
+	Intensity               string // passive | active | intrusive
+	Findomain               bool
+	Resolvers               string
+	DNSRate, Threads        int
+	NoSubsCache, NoOAST     bool
+	ScopeAllow, ScopeDeny   []string
+	ScopeFile, UserAgent    string
+	RateLimit               float64
+	Retries                 *int // nil = engine default; 0 is a real value
+	VerifyTLS               bool
+	NoEvidence              bool
+	EvidenceUnredacted      bool
+	EvidenceMaxBody         int
+	MaxHosts                int
+	Wordlist                string
+	NucleiSeverity          string
+	NucleiC, NucleiTimeout  int
+	RefreshIPIntel          bool
+	IPIntelOffline, NoTrack bool
+
+	// Headers are "Name: value" strings. They may carry credentials, so they are
+	// never put in Argv: SpawnEnvFor passes them as BOUNTY_RUN_HEADERS (a JSON
+	// array). The engine reads that variable from a later release on.
+	Headers []string
 }
 
 var domainRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
@@ -97,8 +123,80 @@ func Argv(o Options, dir string) []string {
 	if o.MaxParamURLs > 0 {
 		a = append(a, "--max-param-urls", strconv.Itoa(o.MaxParamURLs))
 	}
+	if o.Intensity != "" {
+		a = append(a, "--intensity", o.Intensity)
+	}
+	if o.Findomain {
+		a = append(a, "--findomain")
+	}
+	a = appendEq(a, "--resolvers", o.Resolvers)
+	a = appendInt(a, "--dns-rate", o.DNSRate)
+	if o.NoSubsCache {
+		a = append(a, "--no-subs-cache")
+	}
+	a = appendInt(a, "--threads", o.Threads)
+	if o.NoOAST {
+		a = append(a, "--no-oast")
+	}
+	for _, r := range o.ScopeAllow {
+		a = appendEq(a, "--scope-allow", r)
+	}
+	for _, r := range o.ScopeDeny {
+		a = appendEq(a, "--scope-deny", r)
+	}
+	a = appendEq(a, "--scope-file", o.ScopeFile)
+	a = appendEq(a, "--user-agent", o.UserAgent)
+	if o.RateLimit > 0 {
+		a = append(a, "--rate-limit", strconv.FormatFloat(o.RateLimit, 'g', -1, 64))
+	}
+	if o.Retries != nil && *o.Retries >= 0 {
+		a = append(a, "--retries", strconv.Itoa(*o.Retries))
+	}
+	for _, f := range []struct {
+		on   bool
+		flag string
+	}{{o.VerifyTLS, "--verify-tls"}, {o.NoEvidence, "--no-evidence"}, {o.EvidenceUnredacted, "--evidence-unredacted"}} {
+		if f.on {
+			a = append(a, f.flag)
+		}
+	}
+	a = appendInt(a, "--evidence-max-body", o.EvidenceMaxBody)
+	a = appendInt(a, "--max-hosts", o.MaxHosts)
+	a = appendEq(a, "--wordlist", o.Wordlist)
+	a = appendEq(a, "--nuclei-severity", o.NucleiSeverity)
+	a = appendInt(a, "--nuclei-c", o.NucleiC)
+	a = appendInt(a, "--nuclei-timeout", o.NucleiTimeout)
+	for _, f := range []struct {
+		on   bool
+		flag string
+	}{{o.RefreshIPIntel, "--refresh-ipintel"}, {o.IPIntelOffline, "--ipintel-offline"}, {o.NoTrack, "--no-track"}} {
+		if f.on {
+			a = append(a, f.flag)
+		}
+	}
 	return a
 }
+
+// appendInt adds "flag n" when n > 0.
+func appendInt(a []string, flag string, n int) []string {
+	if n > 0 {
+		return append(a, flag, strconv.Itoa(n))
+	}
+	return a
+}
+
+// appendEq adds "--flag=v" when v is non-empty. The single-element form keeps
+// argparse from reading a value that starts with "-" as an option.
+func appendEq(a []string, flag, v string) []string {
+	if v != "" {
+		return append(a, flag+"="+v)
+	}
+	return a
+}
+
+// PreviewArgv is the command line shown to the user before launch. It is
+// exactly what Argv spawns; secrets (proxy, headers) are never in Argv.
+func PreviewArgv(o Options, dir string) []string { return Argv(o, dir) }
 
 // Spawn starts the engine in its own session with stdout/stderr going to
 // dir/engine.log and stdin from /dev/null. A goroutine Waits on the child so it
@@ -107,8 +205,10 @@ func Spawn(bin string, argv []string, dir string) (int, error) {
 	return SpawnEnv(bin, argv, dir, nil)
 }
 
-// SpawnEnv is Spawn with extra environment entries appended to the TUI's own
-// (later entries win, so they override an inherited value of the same name).
+// SpawnEnv is Spawn with extra environment entries appended to the parent's own
+// (later entries win, so they override an inherited value of the same name). An
+// inherited BOUNTY_RUN_HEADERS is always dropped so headers reach the engine
+// only when extraEnv sets them for this launch.
 func SpawnEnv(bin string, argv []string, dir string, extraEnv []string) (int, error) {
 	logf, err := os.OpenFile(filepath.Join(dir, "engine.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -123,9 +223,13 @@ func SpawnEnv(bin string, argv []string, dir string, extraEnv []string) (int, er
 	cmd := exec.Command(bin, argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
+	env := make([]string, 0, len(os.Environ())+len(extraEnv))
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, HeadersEnvVar+"=") {
+			env = append(env, e)
+		}
 	}
+	cmd.Env = append(env, extraEnv...)
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
