@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"bountyrun/tui/internal/runstore"
+	"bountyrun/core/runstore"
 )
 
 func TestNormalizeTarget(t *testing.T) {

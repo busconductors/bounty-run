@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"bountyrun/tui/internal/events"
+	"bountyrun/core/events"
 )
 
 // RunInfo is the content of run.json plus its directory.

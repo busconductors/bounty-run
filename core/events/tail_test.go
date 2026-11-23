@@ -7,22 +7,20 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 const deadline = 5 * time.Second
 
-func startTail(t *testing.T, path string) <-chan tea.Msg {
+func startTail(t *testing.T, path string) <-chan any {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	out := make(chan tea.Msg, 16)
+	out := make(chan any, 16)
 	go Tail(ctx, path, out)
 	return out
 }
 
-func next(t *testing.T, ch <-chan tea.Msg) tea.Msg {
+func next(t *testing.T, ch <-chan any) any {
 	t.Helper()
 	select {
 	case m := <-ch:
@@ -33,7 +31,7 @@ func next(t *testing.T, ch <-chan tea.Msg) tea.Msg {
 	}
 }
 
-func expectNone(t *testing.T, ch <-chan tea.Msg, d time.Duration) {
+func expectNone(t *testing.T, ch <-chan any, d time.Duration) {
 	t.Helper()
 	select {
 	case m := <-ch:
@@ -58,7 +56,7 @@ func logLine(msg string) string {
 	return `{"v":1,"t":1,"type":"log","level":"info","msg":"` + msg + `"}` + "\n"
 }
 
-func wantMsg(t *testing.T, m tea.Msg, text string) {
+func wantMsg(t *testing.T, m any, text string) {
 	t.Helper()
 	got, ok := m.(Msg)
 	if !ok {
@@ -136,7 +134,7 @@ func TestTailStopsOnCancel(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "events.jsonl")
 	appendFile(t, p, logLine("a"))
 	ctx, cancel := context.WithCancel(context.Background())
-	out := make(chan tea.Msg, 4)
+	out := make(chan any, 4)
 	done := make(chan struct{})
 	go func() { Tail(ctx, p, out); close(done) }()
 	wantMsg(t, next(t, out), "a")

@@ -10,7 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
-	"bountyrun/tui/internal/events"
+	"bountyrun/core/events"
 )
 
 // The embedded copy must match the repo asset (`make banner` syncs it).

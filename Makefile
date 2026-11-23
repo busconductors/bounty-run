@@ -21,10 +21,12 @@ engine:
 
 lint:
 	$(PYTHON) -m ruff check .
-	@unformatted="$$(gofmt -l tui)"; \
+	@unformatted="$$(gofmt -l core tui)"; \
 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
+	cd core && go vet ./...
 	cd tui && go vet ./...
 
 test:
 	$(PYTHON) -m pytest -q
+	cd core && go test ./...
 	cd tui && go test ./...

@@ -1,6 +1,6 @@
 """Drive one of every event type through the real runner.events emitter.
 
-Used by the Go contract test (tui/internal/events/contract_test.go).
+Used by the Go contract test (core/events/contract_test.go).
 Usage: fake_run.py <events.jsonl path>
 """
 import sys

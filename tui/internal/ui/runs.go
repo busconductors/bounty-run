@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"bountyrun/tui/internal/runstore"
+	"bountyrun/core/runstore"
 )
 
 const maxActive = 3

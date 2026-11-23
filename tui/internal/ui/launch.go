@@ -13,8 +13,8 @@ import (
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 
-	"bountyrun/tui/internal/engine"
-	"bountyrun/tui/internal/runstore"
+	"bountyrun/core/engine"
+	"bountyrun/core/runstore"
 )
 
 // launchWait is how long a launch waits for run_start before showing engine.log.

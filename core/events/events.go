@@ -104,7 +104,7 @@ func Decode(line []byte) (Event, error) {
 	return e, nil
 }
 
-// Msg carries one decoded event for a run (bubbletea message).
+// Msg carries one decoded event for a run (delivered to consumers as an opaque message).
 type Msg struct {
 	RunDir string
 	Ev     Event

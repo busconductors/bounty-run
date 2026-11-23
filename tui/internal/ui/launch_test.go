@@ -16,8 +16,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
-	"bountyrun/tui/internal/engine"
-	"bountyrun/tui/internal/runstore"
+	"bountyrun/core/engine"
+	"bountyrun/core/runstore"
 )
 
 // fakeEngine writes a script that records its pid, appends run_start to the

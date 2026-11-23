@@ -13,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
-	"bountyrun/tui/internal/events"
-	"bountyrun/tui/internal/runstore"
+	"bountyrun/core/events"
+	"bountyrun/core/runstore"
 )
 
 // runningDir is a run with vuln currently running and no run_end.

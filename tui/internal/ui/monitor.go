@@ -15,9 +15,9 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
-	"bountyrun/tui/internal/engine"
-	"bountyrun/tui/internal/events"
-	"bountyrun/tui/internal/runstore"
+	"bountyrun/core/engine"
+	"bountyrun/core/events"
+	"bountyrun/core/runstore"
 )
 
 // tailBatchMax caps how many queued tail messages one Update applies, so a
@@ -105,7 +105,7 @@ type MonitorModel struct {
 
 	ctx      context.Context
 	cancel   context.CancelFunc
-	ch       chan tea.Msg
+	ch       chan any
 	tailDone chan struct{}
 
 	target         string
@@ -159,7 +159,7 @@ func NewMonitor(dir string, cfg Config) MonitorModel {
 // Init starts one Tail goroutine for this attach and waits for its messages.
 func (m *MonitorModel) Init() tea.Cmd {
 	m.ctx, m.cancel = context.WithCancel(context.Background())
-	m.ch = make(chan tea.Msg, tailBatchMax)
+	m.ch = make(chan any, tailBatchMax)
 	m.tailDone = make(chan struct{})
 	ctx, path, ch, done := m.ctx, m.path, m.ch, m.tailDone
 	go func() {

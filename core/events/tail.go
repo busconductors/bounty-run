@@ -10,13 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 const pollInterval = 100 * time.Millisecond
 
-func send(ctx context.Context, out chan<- tea.Msg, m tea.Msg) bool {
+func send(ctx context.Context, out chan<- any, m any) bool {
 	select {
 	case out <- m:
 		return true
@@ -28,7 +26,7 @@ func send(ctx context.Context, out chan<- tea.Msg, m tea.Msg) bool {
 // Tail replays path from offset 0 then follows appended lines, sending
 // Msg/WarnMsg/VersionMsg on out until ctx is done. A partial trailing line is
 // held back until its newline arrives.
-func Tail(ctx context.Context, path string, out chan<- tea.Msg) {
+func Tail(ctx context.Context, path string, out chan<- any) {
 	runDir := filepath.Dir(path)
 	var f *os.File
 	for f == nil {
