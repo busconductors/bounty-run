@@ -145,3 +145,121 @@ func TestTailStopsOnCancel(t *testing.T) {
 		t.Fatal("Tail did not return after cancel")
 	}
 }
+
+func wantReset(t *testing.T, m any) {
+	t.Helper()
+	if _, ok := m.(ResetMsg); !ok {
+		t.Fatalf("want ResetMsg, got %#v", m)
+	}
+}
+
+func TestTailFollowsReplacedFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, p, logLine("old1"))
+	ch := startTail(t, p)
+	wantMsg(t, next(t, ch), "old1")
+	if err := os.Rename(p, p+".1"); err != nil {
+		t.Fatal(err)
+	}
+	appendFile(t, p, logLine("new1"))
+	wantReset(t, next(t, ch))
+	wantMsg(t, next(t, ch), "new1")
+	appendFile(t, p, logLine("new2"))
+	wantMsg(t, next(t, ch), "new2")
+}
+
+func TestTailHandlesTruncation(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, p, logLine("aaaaaaaaaaaa")+logLine("bbbbbbbbbbbb"))
+	ch := startTail(t, p)
+	wantMsg(t, next(t, ch), "aaaaaaaaaaaa")
+	wantMsg(t, next(t, ch), "bbbbbbbbbbbb")
+	if err := os.WriteFile(p, []byte(logLine("c")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantReset(t, next(t, ch))
+	wantMsg(t, next(t, ch), "c")
+}
+
+func TestTailNeverReadsRotatedFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, p, logLine("old1"))
+	ch := startTail(t, p)
+	wantMsg(t, next(t, ch), "old1")
+	if err := os.Rename(p, p+".1"); err != nil {
+		t.Fatal(err)
+	}
+	// Path is briefly missing: no error, no exit.
+	expectNone(t, ch, 3*pollInterval)
+	appendFile(t, p, logLine("new1"))
+	wantReset(t, next(t, ch))
+	for {
+		m := next(t, ch)
+		if got, ok := m.(Msg); ok {
+			if got.Ev.Msg == "rotated-later" {
+				t.Fatal("read rotated file")
+			}
+			if got.Ev.Msg == "new1" {
+				break
+			}
+		}
+	}
+	appendFile(t, p+".1", logLine("rotated-later"))
+	expectNone(t, ch, 3*pollInterval)
+}
+
+func TestTailResetDropsPartialLine(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, p, logLine("old1")+`{"v":1,"t":1,"type":"log","level":"info","msg":"par`)
+	ch := startTail(t, p)
+	wantMsg(t, next(t, ch), "old1")
+	if err := os.Rename(p, p+".1"); err != nil {
+		t.Fatal(err)
+	}
+	appendFile(t, p, logLine("new1"))
+	wantReset(t, next(t, ch))
+	wantMsg(t, next(t, ch), "new1") // not a malformed/joined line
+}
+
+func TestTailReplacementDoesNotLeakDescriptors(t *testing.T) {
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skip("no /proc/self/fd")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "events.jsonl")
+	appendFile(t, p, logLine("seed"))
+	ch := startTail(t, p)
+	wantMsg(t, next(t, ch), "seed")
+	base := len(entries)
+	for i := 0; i < 20; i++ {
+		if err := os.Rename(p, p+".1"); err != nil {
+			t.Fatal(err)
+		}
+		appendFile(t, p, logLine("x"))
+		wantReset(t, next(t, ch))
+		wantMsg(t, next(t, ch), "x")
+	}
+	entries, _ = os.ReadDir("/proc/self/fd")
+	if len(entries) > base+2 {
+		t.Fatalf("fd count grew from %d to %d", base, len(entries))
+	}
+}
+
+func TestTailExitsOnCancelWhileMissing(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "events.jsonl")
+	appendFile(t, p, logLine("a"))
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan any, 16)
+	done := make(chan struct{})
+	go func() { Tail(ctx, p, out); close(done) }()
+	wantMsg(t, <-out, "a")
+	os.Remove(p)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(deadline):
+		t.Fatal("Tail did not exit on cancel")
+	}
+}

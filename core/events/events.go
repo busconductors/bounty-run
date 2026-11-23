@@ -115,3 +115,7 @@ type WarnMsg struct{ RunDir, Text string }
 
 // VersionMsg reports that a run's log has an incompatible schema version.
 type VersionMsg struct{ RunDir string }
+
+// ResetMsg reports that the event file was replaced or truncated; the tail
+// restarts at offset 0 and consumers should discard state derived from the old stream.
+type ResetMsg struct{}

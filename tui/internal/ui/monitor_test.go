@@ -309,3 +309,16 @@ func TestRootReattachCancelsPreviousTail(t *testing.T) {
 		}
 	}
 }
+
+// A ResetMsg is ignored and must not drop the messages batched after it.
+func TestMonitorIgnoresResetMsg(t *testing.T) {
+	mm := NewMonitor("/runs/a", Config{})
+	m := &mm
+	m.update(tailMsg{gen: m.gen, msgs: []tea.Msg{
+		events.ResetMsg{},
+		events.Msg{RunDir: "/runs/a", Ev: events.Event{Type: "output", Tool: "x", Line: "after-reset"}},
+	}})
+	if v := plain(m.render()); !strings.Contains(v, "after-reset") {
+		t.Fatal(v)
+	}
+}
