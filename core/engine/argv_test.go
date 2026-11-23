@@ -1,10 +1,10 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -194,44 +194,61 @@ func maxOptions() Options {
 		RefreshIPIntel: true, IPIntelOffline: true, NoTrack: true}
 }
 
+// engineProbe imports the real parser, checks every emitted flag against it,
+// then parses the whole argv. Exit 3 means a third-party dependency listed in
+// requirements.txt is not installed; every other failure is a real failure.
+// It only builds the parser and parses; it contacts no target.
+const engineProbe = `
+import re, sys
+def third_party():
+    names = set()
+    for line in open("requirements.txt"):
+        m = re.match(r"\s*([A-Za-z0-9_.-]+)", line.split("#")[0])
+        if m:
+            names.add(m.group(1).lower().replace("-", "_"))
+    return names
+try:
+    from runner.cli import build_parser
+except ModuleNotFoundError as e:
+    if (e.name or "").split(".")[0].lower() in third_party():
+        sys.stderr.write("missing dependency: %s\n" % e.name)
+        sys.exit(3)
+    raise
+parser = build_parser()
+argv = sys.argv[1:]
+for a in argv:
+    if a.startswith("--") and a.split("=", 1)[0] not in parser._option_string_actions:
+        sys.stderr.write("unknown flag emitted by Argv: %s\n" % a)
+        sys.exit(4)
+parser.parse_args(argv)
+`
+
+// engineRoot is the repo root; BOUNTY_ENGINE_ROOT overrides it (used to prove
+// the test fails against a broken engine copy).
+func engineRoot() string {
+	if r := os.Getenv("BOUNTY_ENGINE_ROOT"); r != "" {
+		return r
+	}
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..")
+}
+
 // TestArgvFlagsExistInEngineParser checks every flag Argv can emit against the
-// real argparse definition. It only builds the parser; it contacts no target.
+// real argparse definition. It skips only without python3 or without the
+// engine's third-party dependencies; any other failure fails the test.
 func TestArgvFlagsExistInEngineParser(t *testing.T) {
 	py, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 not available")
 	}
-	_, file, _, _ := runtime.Caller(0)
-	root := filepath.Join(filepath.Dir(file), "..", "..")
-	if _, err := os.Stat(filepath.Join(root, "bounty_run.py")); err != nil {
-		t.Skip("bounty_run.py not found")
+	cmd := exec.Command(py, append([]string{"-c", engineProbe}, Argv(maxOptions(), "/d")...)...)
+	cmd.Dir = engineRoot()
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 3 {
+		t.Skipf("engine dependency not installed: %s", out)
 	}
-	cmd := exec.Command(py, "bounty_run.py", "--help")
-	cmd.Dir = root
-	help, err := cmd.Output()
 	if err != nil {
-		t.Skipf("engine --help unavailable: %v", err)
-	}
-	argv := Argv(maxOptions(), "/d")
-	known := regexp.MustCompile(`--[a-z][a-z-]*`)
-	have := map[string]bool{}
-	for _, f := range known.FindAllString(string(help), -1) {
-		have[f] = true
-	}
-	for _, a := range argv {
-		if !strings.HasPrefix(a, "--") {
-			continue
-		}
-		flag, _, _ := strings.Cut(a, "=")
-		if !have[flag] {
-			t.Errorf("Argv emits %s, which the engine parser does not define", flag)
-		}
-	}
-	// Values must also parse (choices, ints, leading '-').
-	chk := exec.Command(py, "-c", "import sys; from runner.cli import build_parser; build_parser().parse_args(sys.argv[1:])")
-	chk.Dir = root
-	chk.Args = append(chk.Args, argv...)
-	if out, err := chk.CombinedOutput(); err != nil {
-		t.Errorf("engine parser rejected argv: %v\n%s", err, out)
+		t.Fatalf("engine parser check failed: %v\n%s", err, out)
 	}
 }
