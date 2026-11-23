@@ -525,7 +525,7 @@ def _patience_banner() -> None:
     ANSI bold/colour is gated by the same stdout-is-tty logic as the rest of the
     CLI (utils._color_enabled), so piped/redirected output stays plain text.
     """
-    bold = _color_enabled = getattr(utils, "_color_enabled", None)
+    _color_enabled = getattr(utils, "_color_enabled", None)
     on = bool(_color_enabled()) if callable(_color_enabled) else False
 
     def b(text: str) -> str:
@@ -582,7 +582,7 @@ def _parse_nuclei_jsonl(path: Path) -> list[dict]:
     findings = []
     if not path.exists():
         return findings
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             f = _nuclei_line_to_finding(line)
             if f is not None:

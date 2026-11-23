@@ -16,11 +16,26 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from runner import (api_endpoints, cli, dashboard, dork_scan, headi_scan,  # noqa: E402
-                    http_headers, metis_check, nikto_scan, nmap_scan, origin_deep,
-                    panel_detect, param_scan, report, secret_scan, stages,
-                    tech_scan, tls_scan, waf_scan)
-
+from runner import (  # noqa: E402
+    api_endpoints,
+    cli,
+    dashboard,
+    dork_scan,
+    headi_scan,
+    http_headers,
+    metis_check,
+    nikto_scan,
+    nmap_scan,
+    origin_deep,
+    panel_detect,
+    param_scan,
+    report,
+    secret_scan,
+    stages,
+    tech_scan,
+    tls_scan,
+    waf_scan,
+)
 
 NEW_LABELS = [
     "High-value panels (subdomains)",
@@ -62,7 +77,7 @@ class TestBuildMetrics(unittest.TestCase):
 
     def test_new_buckets_not_counted_as_nuclei(self):
         labels = [label for label, _ in _metrics(_phase12_findings())]
-        self.assertFalse([l for l in labels if l.startswith("Nuclei findings")])
+        self.assertFalse([label for label in labels if label.startswith("Nuclei findings")])
 
     def test_zero_when_absent(self):
         m = dict(_metrics([]))

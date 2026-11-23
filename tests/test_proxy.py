@@ -15,9 +15,23 @@ from unittest import mock
 
 import pytest
 
-from runner import (api_endpoints, cli, events, headi_scan, http_headers, metis_check,
-                    nikto_scan, origin_deep, param_scan, proxy, stages, tech_scan,
-                    tls_scan, utils, waf_scan)
+from runner import (
+    api_endpoints,
+    cli,
+    events,
+    headi_scan,
+    http_headers,
+    metis_check,
+    nikto_scan,
+    origin_deep,
+    param_scan,
+    proxy,
+    stages,
+    tech_scan,
+    tls_scan,
+    utils,
+    waf_scan,
+)
 
 VENDOR = Path(__file__).resolve().parents[1] / "runner" / "vendor"
 
@@ -203,7 +217,7 @@ def ev(tmp_path):
 
 
 def _events(p):
-    return [json.loads(l) for l in p.read_text().splitlines()]
+    return [json.loads(line) for line in p.read_text().splitlines()]
 
 
 def test_run_redacts_cmd_output_and_sets_env(ev, capsys):
@@ -324,7 +338,8 @@ def test_sqlmap_gets_proxy_cred(tmp_path):
 
 def test_origin_verification_skipped_under_proxy(tmp_path):
     calls = []
-    with mock.patch.object(stages, "_cloudflare_ranges", return_value=[__import__("ipaddress").ip_network("104.16.0.0/13")]), \
+    with mock.patch.object(stages, "_cloudflare_ranges",
+                           return_value=[__import__("ipaddress").ip_network("104.16.0.0/13")]), \
          mock.patch.object(stages, "_resolve", side_effect=lambda h: "93.184.216.34" if h.startswith("www.") else ""), \
          mock.patch.object(stages, "_mx_hosts", return_value=[]), \
          mock.patch.object(stages, "_canonical_name", side_effect=lambda h: h), \
@@ -348,7 +363,8 @@ def test_origin_deep_verification_skipped_under_proxy(tmp_path):
         return json.dumps([{"name_value": "a.example.com"}]) if "crt.sh" in cmd else ""
 
     with mock.patch.object(utils, "run", side_effect=fake_run), \
-         mock.patch.object(stages, "_cloudflare_ranges", return_value=[__import__("ipaddress").ip_network("104.16.0.0/13")]), \
+         mock.patch.object(stages, "_cloudflare_ranges",
+                           return_value=[__import__("ipaddress").ip_network("104.16.0.0/13")]), \
          mock.patch.object(stages, "_resolve", return_value="93.184.216.34"), \
          mock.patch.object(stages, "_canonical_name", side_effect=lambda h: h), \
          mock.patch.object(utils, "log"), mock.patch.object(utils, "warn"):

@@ -5,18 +5,9 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
+## [1.2.0] - 2026-11-23
 
-- **Origin-IP classification** (`runner/ipintel.py`): each origin candidate is graded CONFIRMED / LIKELY / REJECTED / SHARED using provider range feeds, ASN/WHOIS/PTR metadata and active checks (content vs the real site, TLS certificate, random-Host and no-SNI negative controls)
-- `--refresh-ipintel` and `--ipintel-offline` flags for the range-feed cache (`~/.cache/bounty-run/ipintel/`)
-
-### Changed
-
-- **Scope gate**: only CONFIRMED origin IPs are admitted into scope and passed to nmap/nuclei; everything else is reported for manual review. Under `--proxy` no origin is scanned
-- Origin hunting now classifies every A record of a host, not just the first
-- `origin_candidates.txt` / `origin_deep.txt` gain `tier` and `reason` columns; SHARED IPs appear as `#` comment lines
-
-## [1.2.0] - Interactive TUI
+Interactive TUI and origin-IP classification.
 
 ### Added
 
@@ -28,6 +19,14 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Launch and control**: launch form, detached engine spawn (output captured in `engine.log`), and a cap of 3 active runs (enforced by the TUI)
 - Skip and cancel with confirmation, and hard kill via the recorded process group when the engine stops responding
 - README "Interactive TUI" section
+- **Origin-IP classification** (`runner/ipintel.py`): each origin candidate is graded CONFIRMED / LIKELY / REJECTED / SHARED using provider range feeds, ASN/WHOIS/PTR metadata and active checks (content vs the real site, TLS certificate, random-Host and no-SNI negative controls)
+- `--refresh-ipintel` and `--ipintel-offline` flags for the range-feed cache (`~/.cache/bounty-run/ipintel/`)
+
+### Changed
+
+- **Scope gate**: only CONFIRMED origin IPs are admitted into scope and passed to nmap/nuclei; everything else is reported for manual review. Under `--proxy` no origin is scanned
+- Origin hunting now classifies every A record of a host, not just the first
+- `origin_candidates.txt` / `origin_deep.txt` gain `tier` and `reason` columns; SHARED IPs appear as `#` comment lines
 
 ## [1.1.0] - Deeper scanning
 

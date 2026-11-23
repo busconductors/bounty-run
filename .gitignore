@@ -8,6 +8,10 @@ __pycache__/
 venv/
 bin/
 .pytest_cache/
+.ruff_cache/
+# Root-anchored: desktop/build/ holds Wails sources and must stay tracked
+/build/
+/dist/
 
 # Bounty Runner runtime artifacts: scan output and findings databases
 results/

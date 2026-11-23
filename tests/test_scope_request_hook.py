@@ -1,9 +1,7 @@
 """C15: scope enforced on every HTTP request hop via the request hook."""
 import io
-from unittest import mock
 
 import pytest
-import requests
 from requests.adapters import HTTPAdapter
 from urllib3.response import HTTPResponse
 

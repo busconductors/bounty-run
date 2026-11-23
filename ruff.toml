@@ -1,0 +1,8 @@
+# Keep in step with the oldest Python in the CI matrix: this stops pyupgrade
+# rules from rewriting code to syntax or stdlib names that version lacks.
+target-version = "py310"
+line-length = 120
+extend-exclude = ["runner/vendor"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP"]

@@ -1,6 +1,5 @@
 """Tests for runner/nikto_scan.py (Phase 12, Task 5)."""
 import json
-import re
 import shlex
 import unittest
 from pathlib import Path

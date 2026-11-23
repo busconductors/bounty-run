@@ -35,7 +35,8 @@ class TestBuildMetrics(unittest.TestCase):
     def test_new_templates_own_buckets(self):
         findings = [
             {"template": "missing-security-header:x-frame-options", "severity": "low", "host": "h", "url": "u"},
-            {"template": "insecure-security-header:content-security-policy", "severity": "info", "host": "h", "url": "u"},
+            {"template": "insecure-security-header:content-security-policy", "severity": "info",
+             "host": "h", "url": "u"},
             {"template": "cors-misconfiguration:reflected", "severity": "high", "host": "h", "url": "u"},
             {"template": "headi:host", "severity": "high", "host": "h", "url": "u"},
         ]

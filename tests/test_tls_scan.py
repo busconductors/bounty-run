@@ -4,7 +4,6 @@ The fixture is a trimmed sslyze 6.3 `--json_out` capture of example.com:443,
 edited to trip every check (TLS 1.0 + 3DES accepted, Heartbleed, weak ROBOT
 oracle, hostname mismatch, untrusted chain, leaf expiring 2026-11-20).
 """
-import copy
 import json
 import re
 import shutil

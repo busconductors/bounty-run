@@ -40,10 +40,13 @@ class TestDedupe(unittest.TestCase):
     def test_collapses_duplicate_template_host_url_triples(self):
         findings = [
             finding(template="t1", host="a.com", severity="high", url="https://a.com/one"),
-            finding(template="t1", host="a.com", severity="low", url="https://a.com/two"),   # same template+host, diff url -> kept
-            finding(template="t1", host="a.com", severity="medium", url="https://a.com/one"),  # identical triple -> dropped
+            # same template+host, diff url -> kept
+            finding(template="t1", host="a.com", severity="low", url="https://a.com/two"),
+            # identical triple -> dropped
+            finding(template="t1", host="a.com", severity="medium", url="https://a.com/one"),
             finding(template="t2", host="a.com", severity="medium", url="https://a.com/one"),
-            finding(template="t1", host="b.com", severity="critical", url="https://a.com/one"),  # same template, diff host
+            # same template, diff host
+            finding(template="t1", host="b.com", severity="critical", url="https://a.com/one"),
         ]
         out = report.dedupe(findings)
         self.assertEqual(len(out), 4)

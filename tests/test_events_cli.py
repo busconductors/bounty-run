@@ -16,10 +16,25 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from runner import (api_endpoints, cli, dork_scan, events, headi_scan,  # noqa: E402
-                    http_headers, metis_check, nikto_scan, nmap_scan, origin_deep,
-                    panel_detect, param_scan, secret_scan, stages, tech_scan,
-                    tls_scan, waf_scan)
+from runner import (  # noqa: E402
+    api_endpoints,
+    cli,
+    dork_scan,
+    events,
+    headi_scan,
+    http_headers,
+    metis_check,
+    nikto_scan,
+    nmap_scan,
+    origin_deep,
+    panel_detect,
+    param_scan,
+    secret_scan,
+    stages,
+    tech_scan,
+    tls_scan,
+    waf_scan,
+)
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "cli_golden_stdout.txt"
 BASE_ARGV = ["a.com", "--no-banner", "--no-track"]

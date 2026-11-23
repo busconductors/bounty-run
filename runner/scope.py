@@ -123,7 +123,7 @@ class Scope:
     def filter_urls(self, urls) -> list:
         return [u for u in urls if self.url_allowed(u)]
 
-    def with_hosts(self, hosts) -> "Scope":
+    def with_hosts(self, hosts) -> Scope:
         """Return a new Scope that also admits ``hosts`` (e.g. origin IPs)."""
         extra = set(self.extra_hosts)
         for h in hosts:

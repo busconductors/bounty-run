@@ -72,33 +72,23 @@ def _finding_rows(findings):
         bounty = f["bounty"] or 0
 
         parts.append(
-            '<tr class="row" data-severity="{}" data-status="{}" '
-            'data-target="{}" data-title="{}" data-url="{}">'
-            '<td class="sev sev-{}">{}</td>'
-            "<td>{}</td>"
-            '<td><span class="pill">{}</span></td>'
-            "<td>{}</td>"
-            '<td class="num">{}</td>'
-            '<td class="url">{}</td>'
-            "</tr>".format(
-                _esc(sev), _esc(status), _esc(target), _esc(title), _esc(url),
-                _esc(sev), _esc(sev),
-                _esc(title),
-                _esc(status),
-                _esc(target),
-                _esc(_fmt_bounty(bounty)),
-                _esc(url),
-            )
+            f'<tr class="row" data-severity="{_esc(sev)}" data-status="{_esc(status)}" '
+            f'data-target="{_esc(target)}" data-title="{_esc(title)}" data-url="{_esc(url)}">'
+            f'<td class="sev sev-{_esc(sev)}">{_esc(sev)}</td>'
+            f"<td>{_esc(title)}</td>"
+            f'<td><span class="pill">{_esc(status)}</span></td>'
+            f"<td>{_esc(target)}</td>"
+            f'<td class="num">{_esc(_fmt_bounty(bounty))}</td>'
+            f'<td class="url">{_esc(url)}</td>'
+            "</tr>"
         )
         parts.append(
             '<tr class="detail"><td colspan="6"><dl>'
-            "<dt>template</dt><dd>{}</dd>"
-            "<dt>url</dt><dd>{}</dd>"
-            "<dt>notes</dt><dd>{}</dd>"
-            "<dt>created</dt><dd>{}</dd>"
-            "</dl></td></tr>".format(
-                _esc(template), _esc(url), _esc(notes), _esc(created),
-            )
+            f"<dt>template</dt><dd>{_esc(template)}</dd>"
+            f"<dt>url</dt><dd>{_esc(url)}</dd>"
+            f"<dt>notes</dt><dd>{_esc(notes)}</dd>"
+            f"<dt>created</dt><dd>{_esc(created)}</dd>"
+            "</dl></td></tr>"
         )
     return "".join(parts)
 
@@ -145,15 +135,16 @@ def _targets_html(targets):
                 _esc(t.get("scope") or ""),
             )
         )
-    return "<table><thead><tr><th>domain</th><th>program</th><th>scope</th></tr></thead><tbody>{}</tbody></table>".format(
-        "".join(rows)
-    )
+    return (
+        "<table><thead><tr><th>domain</th><th>program</th><th>scope</th></tr></thead>"
+        "<tbody>{}</tbody></table>"
+    ).format("".join(rows))
 
 
 def _filter_options(choices):
     opts = ['<option value="">all</option>']
     for c in choices:
-        opts.append('<option value="{}">{}</option>'.format(_esc(c), _esc(c)))
+        opts.append(f'<option value="{_esc(c)}">{_esc(c)}</option>')
     return "".join(opts)
 
 
@@ -165,8 +156,8 @@ def _build_html(outputs_root, findings, stats, targets, summary_text):
 
     metric_cards = _metric_cards(stats, sev_counts)
     metrics_html = "".join(
-        '<div class="card {}"><div class="card-label">{}</div>'
-        '<div class="card-value">{}</div></div>'.format(cls, _esc(label), val)
+        f'<div class="card {cls}"><div class="card-label">{_esc(label)}</div>'
+        f'<div class="card-value">{val}</div></div>'
         for label, val, cls in metric_cards
     )
     status_badges = _status_badges(stats, status_choices)
@@ -174,26 +165,21 @@ def _build_html(outputs_root, findings, stats, targets, summary_text):
     if findings:
         findings_html = (
             '<div class="filters">'
-            '<select id="f-sev">{}</select>'
-            '<select id="f-status">{}</select>'
-            '<select id="f-target">{}</select>'
+            f'<select id="f-sev">{_filter_options(sev_choices)}</select>'
+            f'<select id="f-status">{_filter_options(status_choices)}</select>'
+            f'<select id="f-target">{_filter_options(target_choices)}</select>'
             '<input id="f-search" type="text" placeholder="search title or url…">'
             "</div>"
             '<table id="findings">'
             "<thead><tr><th>sev</th><th>title</th><th>status</th>"
             "<th>target</th><th>bounty</th><th>url</th></tr></thead>"
-            "<tbody>{}</tbody></table>"
-        ).format(
-            _filter_options(sev_choices),
-            _filter_options(status_choices),
-            _filter_options(target_choices),
-            _finding_rows(findings),
+            f"<tbody>{_finding_rows(findings)}</tbody></table>"
         )
     else:
         findings_html = '<p class="empty">no findings yet</p>'
 
     summary_html = (
-        "<pre>{}</pre>".format(_esc(summary_text))
+        f"<pre>{_esc(summary_text)}</pre>"
         if summary_text
         else '<p class="empty">no scans yet</p>'
     )
@@ -439,20 +425,20 @@ def _verdict_line(candidates, origins, cloudflare, subdomains) -> str:
         for sev in _SEVERITY_ORDER:
             n = sev_counts.get(sev, 0)
             if n:
-                bits.append("{} {}".format(n, sev))
+                bits.append(f"{n} {sev}")
         n = len(candidates)
         noun = "candidate" if n == 1 else "candidates"
         if bits:
             clauses.append("{} {} ({})".format(n, noun, ", ".join(bits)))
         else:
-            clauses.append("{} {}".format(n, noun))
+            clauses.append(f"{n} {noun}")
 
         panels = sum(
             1 for f in candidates if categories.classify(f.get("template")).key == "panel")
         if panels:
             clauses.append(
                 "exposed admin panel" if panels == 1
-                else "{} exposed panels".format(panels))
+                else f"{panels} exposed panels")
 
     # Origin-behind-Cloudflare always surfaces when it occurs (WAF-bypass story).
     # Graded rows (ipintel tiers) only claim a leak for a CONFIRMED origin;
@@ -464,20 +450,19 @@ def _verdict_line(candidates, origins, cloudflare, subdomains) -> str:
             clauses.append("origin IP {} leaked behind Cloudflare — WAF bypass likely".format(
                 confirmed[0]["ip"]))
         elif leads:
-            clauses.append("{} unconfirmed origin lead(s) behind Cloudflare — manual "
-                           "review".format(len(leads)))
+            clauses.append(f"{len(leads)} unconfirmed origin lead(s) behind Cloudflare — manual "
+                           "review")
         origins = []
     if origins and cloudflare:
         ip = next((o.get("ip") for o in origins if o.get("ip")), None)
         if ip:
             clauses.append(
-                "origin IP {} leaked behind Cloudflare — WAF bypass likely".format(ip))
+                f"origin IP {ip} leaked behind Cloudflare — WAF bypass likely")
         else:
             clauses.append("origin IP leaked behind Cloudflare — WAF bypass likely")
 
     if not candidates and not clauses:
-        return "No candidates; {} subdomains mapped, nothing exposed.".format(
-            subdomains)
+        return f"No candidates; {subdomains} subdomains mapped, nothing exposed."
     if not candidates:
         # No real candidates but something worth surfacing (e.g. origin leak).
         clauses.insert(0, "No candidates")
@@ -493,8 +478,8 @@ def _summary_hero_cards(live_hosts, open_ports, origin_status) -> str:
         ("origin status", origin_status),
     ]
     return "".join(
-        '<div class="card"><div class="card-label">{}</div>'
-        '<div class="card-value">{}</div></div>'.format(esc(label), esc(value))
+        f'<div class="card"><div class="card-label">{esc(label)}</div>'
+        f'<div class="card-value">{esc(value)}</div></div>'
         for label, value in cards
     )
 
@@ -505,8 +490,7 @@ def _summary_surface_rows(subdomains, live_hosts, cloudflare, technologies,
                           origin_leaked=False) -> str:
     """Attack surface grouped by meaning, as compact key:value rows."""
     groups = [
-        ("Reachability", "{} subdomains · {} live · {} ports".format(
-            subdomains, live_hosts, open_ports)),
+        ("Reachability", f"{subdomains} subdomains · {live_hosts} live · {open_ports} ports"),
         ("Edge", "Cloudflare {} · WAF: {} · origin {}".format(
             "yes" if cloudflare else "no",
             ", ".join(waf) if waf else "none",
@@ -514,12 +498,11 @@ def _summary_surface_rows(subdomains, live_hosts, cloudflare, technologies,
         ("Stack", "{} · {} API endpoints".format(
             ", ".join(technologies) if technologies else "no tech detected",
             api_endpoints)),
-        ("Scanners", "{} tls · {} nikto · {} dork · {} panels".format(
-            tls_issues, nikto, dork_hits, panels)),
+        ("Scanners", f"{tls_issues} tls · {nikto} nikto · {dork_hits} dork · {panels} panels"),
     ]
     return "".join(
-        '<div class="surface-row"><span class="surface-label">{}</span>'
-        '<span class="surface-value">{}</span></div>'.format(esc(label), esc(value))
+        f'<div class="surface-row"><span class="surface-label">{esc(label)}</span>'
+        f'<span class="surface-value">{esc(value)}</span></div>'
         for label, value in groups
     )
 
@@ -548,7 +531,7 @@ def _summary_severity_pills(sev_counts) -> str:
         n = sev_counts.get(s, 0)
         if n:
             pills.append(
-                '<span class="pill sev-{}">{}: {}</span>'.format(s, s, n)
+                f'<span class="pill sev-{s}">{s}: {n}</span>'
             )
     return "".join(pills)
 
@@ -563,21 +546,19 @@ def _summary_finding(f) -> str:
 
     parts = [
         '<article class="finding">',
-        '<div class="finding-title {}">{}</div>'.format(
-            _sev_class(sev), esc(title)
-        ),
+        f'<div class="finding-title {_sev_class(sev)}">{esc(title)}</div>',
     ]
     meta = []
     if url:
-        meta.append('<dt>url</dt><dd class="url">{}</dd>'.format(esc(url)))
+        meta.append(f'<dt>url</dt><dd class="url">{esc(url)}</dd>')
     if template:
-        meta.append('<dt>template</dt><dd>{}</dd>'.format(esc(template)))
+        meta.append(f'<dt>template</dt><dd>{esc(template)}</dd>')
     if host:
-        meta.append('<dt>host</dt><dd>{}</dd>'.format(esc(host)))
+        meta.append(f'<dt>host</dt><dd>{esc(host)}</dd>')
     if meta:
         parts.append('<dl class="finding-meta">{}</dl>'.format("".join(meta)))
     if evidence:
-        parts.append('<pre>{}</pre>'.format(esc(evidence)))
+        parts.append(f'<pre>{esc(evidence)}</pre>')
     parts.append('</article>')
     return "".join(parts)
 
@@ -601,10 +582,10 @@ def _summary_origins_html(origins) -> str:
         sources = ", ".join(o.get("sources") or [])
         cards.append(
             '<div class="card"><dl>'
-            '<dt>ip</dt><dd>{}</dd>'
-            '<dt>status</dt><dd>{}</dd>'
-            '<dt>sources</dt><dd>{}</dd>'
-            '</dl></div>'.format(esc(ip), esc(status), esc(sources))
+            f'<dt>ip</dt><dd>{esc(ip)}</dd>'
+            f'<dt>status</dt><dd>{esc(status)}</dd>'
+            f'<dt>sources</dt><dd>{esc(sources)}</dd>'
+            '</dl></div>'
         )
     return '<section><h2>Origin candidates</h2>{}</section>'.format("".join(cards))
 
@@ -646,16 +627,15 @@ def _top_finding_card(f) -> str:
     host = f.get("host") or ""
     url = f.get("url") or ""
     action = "verify & report" if sev in ("critical", "high") else "review"
-    host_html = '<div class="det">{}</div>'.format(esc(host)) if host else ""
-    url_html = '<div class="url"><b>{}</b></div>'.format(esc(url)) if url else ""
+    host_html = f'<div class="det">{esc(host)}</div>' if host else ""
+    url_html = f'<div class="url"><b>{esc(url)}</b></div>' if url else ""
     return (
         '<article class="f"><div class="sv">'
-        '<div class="n" style="color:{color}">{sev}</div>'
-        '<div class="bar" style="background:{color}"></div></div>'
-        '<div><div class="ttl">{title}</div>{host}{url}</div>'
-        '<div class="act">→ {action}</div></article>'
-    ).format(color=color, sev=esc(sev), title=esc(title),
-             host=host_html, url=url_html, action=esc(action))
+        f'<div class="n" style="color:{color}">{esc(sev)}</div>'
+        f'<div class="bar" style="background:{color}"></div></div>'
+        f'<div><div class="ttl">{esc(title)}</div>{host_html}{url_html}</div>'
+        f'<div class="act">→ {esc(action)}</div></article>'
+    )
 
 
 def _top_findings_html(candidates) -> str:
@@ -674,8 +654,8 @@ def _metric_grid(subdomains, live_hosts, sev_counts, n_origins, cloudflare) -> s
         ("ON" if cloudflare else "off", "cloudflare", "#58a6ff"),
     ]
     return "".join(
-        '<div class="big" style="--b:{c}"><div class="v">{v}</div>'
-        '<div class="k">{k}</div></div>'.format(c=color, v=esc(value), k=esc(label))
+        f'<div class="big" style="--b:{color}"><div class="v">{esc(value)}</div>'
+        f'<div class="k">{esc(label)}</div></div>'
         for value, label, color in tiles
     )
 
@@ -687,8 +667,8 @@ def _heat_bar(sev_counts) -> str:
         n = sev_counts.get(s, 0)
         if n:
             segs.append(
-                '<span class="seg" style="flex:{n};background:{c}" '
-                'title="{s}: {n}"></span>'.format(n=n, c=color, s=s))
+                f'<span class="seg" style="flex:{n};background:{color}" '
+                f'title="{s}: {n}"></span>')
     return '<div class="heat">{}</div>'.format("".join(segs))
 
 
@@ -703,10 +683,9 @@ def _origins_alert_html(origins) -> str:
             status = "{} {}".format(o["tier"], status).strip()
         sources = ", ".join(o.get("sources") or [])
         rows.append(
-            '<div class="orow"><div><div class="ip">{ip}</div>'
-            '<div class="via">{src}</div></div>'
-            '<div class="st">{status}</div></div>'.format(
-                ip=esc(ip), src=esc(sources), status=esc(status)))
+            f'<div class="orow"><div><div class="ip">{esc(ip)}</div>'
+            f'<div class="via">{esc(sources)}</div></div>'
+            f'<div class="st">{esc(status)}</div></div>')
     return (
         '<div class="alert"><h3><span class="dot"></span>'
         'Origin IPs exposed behind Cloudflare</h3>{}</div>'.format("".join(rows))
@@ -718,22 +697,20 @@ def _surface_panels_html(cloudflare, waf, tech, api_count, nmap_count,
     edge = "Cloudflare yes" if cloudflare else "Cloudflare no"
     if waf:
         edge += " · WAF: " + ", ".join(waf)
-    chips = ("".join('<span class="chip">{}</span>'.format(esc(t)) for t in tech)
+    chips = ("".join(f'<span class="chip">{esc(t)}</span>' for t in tech)
              if tech else '<span class="chip">no tech detected</span>')
     return (
         '<div class="panel"><h3>Edge &amp; stack</h3>'
-        '<div class="kv"><span>edge</span><b>{edge}</b></div>'
-        '<div class="kv"><span>api endpoints</span><b>{api}</b></div>'
-        '<div class="kv"><span>open ports</span><b>{ports}</b></div>'
-        '<div class="chips">{chips}</div></div>'
+        f'<div class="kv"><span>edge</span><b>{esc(edge)}</b></div>'
+        f'<div class="kv"><span>api endpoints</span><b>{esc(api_count)}</b></div>'
+        f'<div class="kv"><span>open ports</span><b>{esc(nmap_count)}</b></div>'
+        f'<div class="chips">{chips}</div></div>'
         '<div class="panel"><h3>Scanner coverage</h3>'
-        '<div class="kv"><span>tls</span><b>{tls}</b></div>'
-        '<div class="kv"><span>nikto</span><b>{nikto}</b></div>'
-        '<div class="kv"><span>dork hits</span><b>{dork}</b></div>'
-        '<div class="kv"><span>panels</span><b>{panels}</b></div></div>'
-    ).format(edge=esc(edge), api=esc(api_count), ports=esc(nmap_count),
-             chips=chips, tls=esc(tls_issues), nikto=esc(nikto),
-             dork=esc(dork_hits), panels=esc(panels))
+        f'<div class="kv"><span>tls</span><b>{esc(tls_issues)}</b></div>'
+        f'<div class="kv"><span>nikto</span><b>{esc(nikto)}</b></div>'
+        f'<div class="kv"><span>dork hits</span><b>{esc(dork_hits)}</b></div>'
+        f'<div class="kv"><span>panels</span><b>{esc(panels)}</b></div></div>'
+    )
 
 
 def _detail_line(f) -> str:
@@ -743,13 +720,13 @@ def _detail_line(f) -> str:
     host = f.get("host") or ""
     url = f.get("url") or ""
     evidence = f.get("evidence") or ""
-    ev = '<pre>{}</pre>'.format(esc(evidence)) if evidence else ""
+    ev = f'<pre>{esc(evidence)}</pre>' if evidence else ""
     return (
         '<div class="drow"><div class="dhead">'
-        '<span class="dsev" style="color:{c}">{s}</span> · {t}'
-        '<span class="dhost">{h}</span></div>'
-        '<div class="durl">{u}</div>{ev}</div>'
-    ).format(c=color, s=esc(sev), t=esc(title), h=esc(host), u=esc(url), ev=ev)
+        f'<span class="dsev" style="color:{color}">{esc(sev)}</span> · {esc(title)}'
+        f'<span class="dhost">{esc(host)}</span></div>'
+        f'<div class="durl">{esc(url)}</div>{ev}</div>'
+    )
 
 
 def _details_section(title, items) -> str:
@@ -757,9 +734,9 @@ def _details_section(title, items) -> str:
         return ""
     body = "".join(_detail_line(f) for f in items)
     return (
-        '<details class="drop"><summary>{t} <b>({n})</b></summary>'
-        '<div class="dropinner">{b}</div></details>'
-    ).format(t=esc(title), n=len(items), b=body)
+        f'<details class="drop"><summary>{esc(title)} <b>({len(items)})</b></summary>'
+        f'<div class="dropinner">{body}</div></details>'
+    )
 
 
 def _details_html(candidates, noise, info, content) -> str:
@@ -773,9 +750,8 @@ def _details_html(candidates, noise, info, content) -> str:
     if content:
         body = '<pre>{}</pre>'.format(esc("\n".join(sorted(content))))
         parts.append(
-            '<details class="drop"><summary>Discovered content <b>({n})</b></summary>'
-            '<div class="dropinner">{b}</div></details>'.format(
-                n=len(content), b=body))
+            f'<details class="drop"><summary>Discovered content <b>({len(content)})</b></summary>'
+            f'<div class="dropinner">{body}</div></details>')
     if not parts:
         return ""
     return '<div class="drops">{}</div>'.format("".join(parts))

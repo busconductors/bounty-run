@@ -7,7 +7,6 @@ from unittest import mock
 
 from runner import tech_scan
 
-
 # whatweb --log-json shape: array of per-target result objects.
 WHATWEB_LOG = [
     {

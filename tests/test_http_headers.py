@@ -5,7 +5,6 @@ from unittest import mock
 
 from runner import http_headers
 
-
 SAMPLE_SHCHECK_JSON = (
     '{"https://example.com": {'
     '"present": {"X-Content-Type-Options": "nosniff", '

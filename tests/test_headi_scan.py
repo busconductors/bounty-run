@@ -5,7 +5,6 @@ from unittest import mock
 
 from runner import headi_scan
 
-
 HEADI_OUT = (
     "[+] [https://example.com/] [Host: 127.0.0.1] [Code: 200] [Size: 1532]\n"
     "[-] [https://example.com/] [X-Forwarded-For: 127.0.0.1] [Code: 200] [Size: 992]\n"

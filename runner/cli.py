@@ -6,11 +6,38 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import (__version__, api_endpoints, banner, categories, dashboard, dork_scan,
-               events, evidence, finding, headi_scan, http_headers, httpclient, ipintel,
-               metis_check, nikto_scan, nmap_scan, origin_deep, panel_detect,
-               param_scan, proxy, report, scope, secret_scan, stage_registry, stages,
-               tech_scan, tls_scan, tracker, utils, waf_scan)
+from . import (
+    __version__,
+    api_endpoints,
+    banner,
+    categories,
+    dashboard,
+    dork_scan,
+    events,
+    evidence,
+    finding,
+    headi_scan,
+    http_headers,
+    httpclient,
+    ipintel,
+    metis_check,
+    nikto_scan,
+    nmap_scan,
+    origin_deep,
+    panel_detect,
+    param_scan,
+    proxy,
+    report,
+    scope,
+    secret_scan,
+    stage_registry,
+    stages,
+    tech_scan,
+    tls_scan,
+    tracker,
+    utils,
+    waf_scan,
+)
 
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -81,15 +108,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-hosts", type=_positive_int, default=1000, help="cap on hosts to probe (default 1000)")
     p.add_argument("--wordlist", default="/usr/share/wordlists/dirb/common.txt",
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
-    p.add_argument("--skip", help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,param,secret,headers,cors,tech,api,metis,headi,nmap,panel,waf,dork,tls,nikto")
+    p.add_argument("--skip",
+                   help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,"
+                        "param,secret,headers,cors,tech,api,metis,headi,nmap,panel,waf,dork,tls,nikto")
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
-    p.add_argument("--headi", action="store_true", help="also run the headi header-injection scan (off by default; intrusive)")
+    p.add_argument("--headi", action="store_true",
+                   help="also run the headi header-injection scan (off by default; intrusive)")
     p.add_argument("--nmap", action="store_true", help="also run the nmap port scan (off by default; intrusive)")
     p.add_argument("--tls", action="store_true",
                    help="also run the sslyze TLS/SSL deep scan (off by default; slow)")
     p.add_argument("--nikto", action="store_true",
                    help="also run the nikto web-server scan (off by default; intrusive, slow)")
-    p.add_argument("--nmap-full", action="store_true", help="with --nmap, scan all 65535 ports (-p-) instead of top-1000")
+    p.add_argument("--nmap-full", action="store_true",
+                   help="with --nmap, scan all 65535 ports (-p-) instead of top-1000")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
                    help="cap on sqlmap param URLs (default 50)")
     p.add_argument("--nuclei-severity", default="info,low,medium,high,critical",
@@ -612,12 +643,14 @@ def _finish(args, target: str, outdir: Path, skip: set[str], st: RunState) -> in
         utils.log(f"{n_findings} unique finding(s) -> {outdir / 'FINDINGS.md'}")
     if cf["cloudflare"]:
         if origins:
-            utils.log(f"origin candidates found — check {outdir / 'origin_candidates.txt'} and {outdir / 'origin_deep.txt'}")
+            utils.log(f"origin candidates found — check {outdir / 'origin_candidates.txt'} "
+                      f"and {outdir / 'origin_deep.txt'}")
         else:
             utils.warn("no origin candidates surfaced — try crt.sh history + Shodan next")
 
     utils.log(f"results -> {outdir}")
-    utils.log(f"  subdomains {len(subs)} | live {len([r for r in rows if r['status']])} | findings {n_findings} | content {len(content)}")
+    utils.log(f"  subdomains {len(subs)} | live {len([r for r in rows if r['status']])} "
+              f"| findings {n_findings} | content {len(content)}")
     utils.log("done.")
     return 0
 

@@ -155,9 +155,9 @@ class OriginDeepTests(unittest.TestCase):
         lines = outfile.read_text().splitlines()
         self.assertEqual(len(lines), 2)
         # Format: ip \t status \t sources \t tier \t reason (first three legacy)
-        self.assertTrue(any(l.startswith("5.6.7.8\t200\tdev.example.com,mail.example.com\t")
-                            for l in lines))
-        self.assertTrue(any(l.startswith("9.9.9.10\t200\tother.example.com\t") for l in lines))
+        self.assertTrue(any(line.startswith("5.6.7.8\t200\tdev.example.com,mail.example.com\t")
+                            for line in lines))
+        self.assertTrue(any(line.startswith("9.9.9.10\t200\tother.example.com\t") for line in lines))
 
     def test_empty_crtsh_body_returns_empty(self):
         with mock.patch.object(utils, "run", return_value=""):

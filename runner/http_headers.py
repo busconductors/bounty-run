@@ -13,7 +13,7 @@ from runner import events, evidence, utils
 from runner.stages import _is_global, _resolve
 
 try:
-    import requests
+    import requests  # noqa: F401 - availability probe for HAVE_REQUESTS
     import urllib3
     urllib3.disable_warnings()
     HAVE_REQUESTS = True

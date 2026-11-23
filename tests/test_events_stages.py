@@ -21,7 +21,7 @@ class _EventsBase(unittest.TestCase):
         self.addCleanup(self._td.cleanup)
 
     def _events(self):
-        return [json.loads(l) for l in (self.tmp / "events.jsonl").read_text().splitlines()]
+        return [json.loads(line) for line in (self.tmp / "events.jsonl").read_text().splitlines()]
 
     def _events_of_type(self, t):
         return [e for e in self._events() if e["type"] == t]
@@ -52,8 +52,8 @@ class TestVulnScanLiveFindings(_EventsBase):
         def fake_run(cmd, outfile=None, timeout=180, on_line=None, **kwargs):
             # kwargs absorbs capture=False (nuclei streams stdout without buffering).
             if on_line is not None:
-                for l in lines:
-                    on_line(l)
+                for line in lines:
+                    on_line(line)
             return ""
 
         outdir = Path(tempfile.mkdtemp())

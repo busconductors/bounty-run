@@ -16,7 +16,6 @@ Schema (whatweb --log-json): a JSON array of
        "<Tech>": {"version": [...], "string": [...], "confidence": ..., ...}}}
 """
 import json
-import shlex
 from pathlib import Path
 from urllib.parse import urlsplit
 

@@ -169,7 +169,7 @@ class Finding:
         return d
 
     @classmethod
-    def from_dict(cls, d: Mapping) -> "Finding":
+    def from_dict(cls, d: Mapping) -> Finding:
         """Build a Finding from a (possibly partial) mapping, tolerantly.
 
         A missing ``name`` falls back to ``template``; a non-string
@@ -195,7 +195,7 @@ class Finding:
         )
 
 
-def coerce(x: "Finding | Mapping") -> Finding:
+def coerce(x: Finding | Mapping) -> Finding:
     """Return ``x`` if it is already a :class:`Finding`, else build one."""
     if isinstance(x, Finding):
         return x

@@ -17,8 +17,10 @@ from unittest import mock
 # Make the project root importable regardless of cwd / how the test is invoked.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from runner import stages  # noqa: E402
-from runner import utils  # noqa: E402
+from runner import (
+    stages,  # noqa: E402
+    utils,  # noqa: E402
+)
 
 
 class FakeResp:

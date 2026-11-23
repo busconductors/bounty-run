@@ -34,7 +34,7 @@ class RunCaptureTest(unittest.TestCase):
         cmd = (f"python3 -c \"import sys;"
                f"[sys.stdout.write('x'*{line_len}+chr(10)) for _ in range({n_lines})]\"")
         with redirect_stdout(io.StringIO()):
-            out = utils.run(cmd, timeout=60, on_line=lambda l: got.append(1),
+            out = utils.run(cmd, timeout=60, on_line=lambda _line: got.append(1),
                             capture=False)
         # Every line was still delivered to on_line (streaming intact)...
         self.assertEqual(len(got), n_lines)
@@ -51,7 +51,7 @@ class RunCaptureTest(unittest.TestCase):
         base, _ = tracemalloc.get_traced_memory()
         tracemalloc.reset_peak()
         with redirect_stdout(io.StringIO()):
-            utils.run(cmd, timeout=60, on_line=lambda l: None, capture=False)
+            utils.run(cmd, timeout=60, on_line=lambda _line: None, capture=False)
         _cur, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         # Measure the DELTA above the baseline (tracemalloc peak is absolute, so

@@ -20,10 +20,10 @@ import json
 import os
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 _lock = threading.Lock()
 _fh = None
@@ -268,7 +268,7 @@ def _write_pids_locked() -> None:
     if d is None:
         return
     tmp = d / "pids.tmp"
-    tmp.write_text("".join("%d\n" % p for p in sorted(_children)))
+    tmp.write_text("".join(f"{p}\n" for p in sorted(_children)))
     os.replace(tmp, d / "pids")
 
 

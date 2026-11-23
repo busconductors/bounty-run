@@ -1,7 +1,7 @@
 """C7: --intensity / --no-oast / --allow-auth flags."""
-import argparse
 
-from runner import cli, stage_registry as sr
+from runner import cli
+from runner import stage_registry as sr
 
 
 def _parse(*argv):

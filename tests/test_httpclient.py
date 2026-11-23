@@ -8,7 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.response import HTTPResponse
 
 from runner import httpclient
-from runner.httpclient import Client, HttpConfig, HostRateLimiter, OutOfScope
+from runner.httpclient import Client, HostRateLimiter, HttpConfig, OutOfScope
 
 
 def _make_response(request, status=200, headers=None, body=b"ok"):

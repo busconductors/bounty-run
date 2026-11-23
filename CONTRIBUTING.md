@@ -21,22 +21,27 @@ Requirements: Python 3.10+, and Go (version in `tui/go.mod`) to build the TUI.
 git clone https://github.com/busconductors/bounty-run.git
 cd bounty-run
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt pytest
+.venv/bin/pip install -r requirements-dev.txt
 make tui            # builds bin/bounty-tui
 ```
+
+`requirements-dev.txt` installs the runtime dependencies plus the pinned
+development tools: pytest, ruff, PyInstaller and PySocks, which the proxy tests
+need.
 
 External recon tools are optional for development; the test suite does not
 require them. See the README for the tool list.
 
-## Running tests
+## Running checks
 
 ```
-python -m pytest         # Python engine tests
-make tui                 # build the TUI
-cd tui && go test ./...  # TUI tests
+make lint PYTHON=.venv/bin/python    # ruff, gofmt and go vet
+make test PYTHON=.venv/bin/python    # Python engine and TUI tests
+make engine PYTHON=.venv/bin/python  # build the engine sidecar
+make tui                             # build the TUI
 ```
 
-All three should pass before you open a pull request.
+All four should pass before you open a pull request.
 
 ## Pull requests
 

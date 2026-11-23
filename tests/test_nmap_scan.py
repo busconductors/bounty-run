@@ -6,7 +6,6 @@ from unittest import mock
 
 from runner import nmap_scan
 
-
 # Two hosts: one with an sensitive (ssh) + an info (https) port, one with a
 # closed port that must be ignored.
 NMAP_XML = """<?xml version="1.0"?>

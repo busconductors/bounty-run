@@ -13,8 +13,8 @@ import sys
 import tempfile
 import threading
 import time
-from contextlib import redirect_stdout
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 # Make the project root importable regardless of cwd / how the test is invoked.
@@ -90,7 +90,7 @@ class RunStreamingTest(unittest.TestCase):
     def _events(self):
         if not self.path.exists():
             return []
-        return [json.loads(l) for l in self.path.read_text().splitlines()]
+        return [json.loads(line) for line in self.path.read_text().splitlines()]
 
     def test_run_return_identical_to_communicate(self):
         with redirect_stdout(io.StringIO()):

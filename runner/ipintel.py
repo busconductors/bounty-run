@@ -44,10 +44,10 @@ import threading
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Callable
 
 from . import proxy as proxymod
 from . import utils
@@ -607,7 +607,7 @@ class IpIntel:
 
     @classmethod
     def load(cls, root: Path | None = None, *, proxy=None, offline: bool = False,
-             refresh: bool = False, now: float | None = None) -> "IpIntel":
+             refresh: bool = False, now: float | None = None) -> IpIntel:
         intel = cls(root, proxy=proxy, offline=offline)
         intel._load_feeds(refresh=refresh, now=now or time.time())
         return intel
@@ -1241,7 +1241,9 @@ def classify(ip: str, target: str, intel: IpIntel, baseline: dict | None = None,
     hit = probe.target(ip, target)
     cert = probe.cert(ip, target)
     if cert.get("client_cert_required") and v.prior == OWN_NETWORK:
-        v.tier, v.reason = LIKELY, "TLS demands a client certificate (Authenticated Origin Pulls) on the target's own network"
+        v.tier, v.reason = LIKELY, (
+            "TLS demands a client certificate (Authenticated Origin Pulls) on the target's own network"
+        )
         return v
     bad_base = baseline_invalid(baseline)
     if not ok_status(hit, target):

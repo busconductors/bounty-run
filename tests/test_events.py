@@ -24,7 +24,7 @@ class TestEvents(unittest.TestCase):
         self._td.cleanup()
 
     def _lines(self):
-        return [json.loads(l) for l in self.path.read_text().splitlines()]
+        return [json.loads(line) for line in self.path.read_text().splitlines()]
 
     def test_disabled_is_noop(self):
         events.log("info", "x")
@@ -55,7 +55,7 @@ class TestEvents(unittest.TestCase):
 
         def work():
             for i in range(500):
-                events.output("s", "tool", "stdout", "line é %d" % i)
+                events.output("s", "tool", "stdout", f"line é {i}")
 
         ts = [threading.Thread(target=work) for _ in range(8)]
         for t in ts:
@@ -103,7 +103,7 @@ class TestEvents(unittest.TestCase):
         try:
             events.init(self.path)
             for i in range(200):
-                events.output("vuln", "nuclei", "stdout", "line %d" % i)
+                events.output("vuln", "nuclei", "stdout", f"line {i}")
             events.stage_end("vuln", "ok", 1, {})
             # another stage has its own budget
             events.output("content", "ffuf", "stdout", "after")
@@ -126,7 +126,7 @@ class TestEvents(unittest.TestCase):
             events.init(self.path)
             for st in ("a", "b", "c"):
                 for i in range(50):
-                    events.output(st, "t", "stdout", "l%d" % i)
+                    events.output(st, "t", "stdout", f"l{i}")
         finally:
             events.OUTPUT_BUDGET_RUN = old
         lines = self._lines()
@@ -140,7 +140,7 @@ class TestEvents(unittest.TestCase):
         try:
             events.init(self.path)
             for i in range(20):
-                events.output("s", "t", "stdout", "l%d" % i)
+                events.output("s", "t", "stdout", f"l{i}")
             events.init(self.path)  # new run -> fresh budget
             events.output("s", "t", "stdout", "fresh")
         finally:

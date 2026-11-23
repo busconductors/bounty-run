@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Callable, Mapping
 from urllib.parse import urlsplit
 
 import requests
@@ -41,7 +41,7 @@ class HttpConfig:
     extra_headers: Mapping = field(default_factory=dict)
 
     @classmethod
-    def from_args(cls, args) -> "HttpConfig":
+    def from_args(cls, args) -> HttpConfig:
         headers = {}
         for h in getattr(args, "header", None) or []:
             if ":" in h:
