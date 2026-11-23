@@ -5,6 +5,7 @@ from pathlib import Path
 
 from runner.cli import main as cli_main
 from runner.dashboard import generate as dashboard_generate
+from runner.introspect import main as introspect_main
 from runner.launcher import maybe_exec_tui
 from runner.tracker import main as tracker_main
 
@@ -16,4 +17,8 @@ if __name__ == "__main__":
         outputs_root = Path(__file__).resolve().parent / "outputs"
         print(dashboard_generate(outputs_root))
         sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == "introspect":
+        # Never reaches the TUI (maybe_exec_tui only fires with no arguments) and
+        # a target always contains a dot, so this cannot shadow a valid target.
+        sys.exit(introspect_main(sys.argv[2:]))
     sys.exit(cli_main())
