@@ -390,6 +390,29 @@ describe('monitor', () => {
     expect(api.detach).toHaveBeenLastCalledWith(DIR);
   });
 
+  test('a stale attach resolving late does not detach a newer attach of the same dir', async () => {
+    const bus = makeBus();
+    const releases = [];
+    const api = fakeRuns({ attach: vi.fn(() => new Promise((resolve) => releases.push(resolve))) });
+    const session = new MonitorSession({ api, on: bus.on });
+    const first = session.open({ dir: DIR, id: ID });
+    await settle();
+    session.close();
+    const second = session.open({ dir: DIR, id: ID });
+    await settle();
+    expect(api.attach).toHaveBeenCalledTimes(2);
+    const detaches = api.detach.mock.calls.length;
+    releases[0]({ id: ID, dir: DIR });
+    await first;
+    await settle();
+    expect(api.detach.mock.calls.length).toBe(detaches);
+    releases[1]({ id: ID, dir: DIR });
+    await second;
+    await settle();
+    expect(api.detach.mock.calls.length).toBe(detaches);
+    expect(session.attached).toBe(true);
+  });
+
   test('without a run it lists runs to pick from', async () => {
     const onselect = vi.fn();
     const api = {

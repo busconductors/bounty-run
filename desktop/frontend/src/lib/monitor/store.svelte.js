@@ -319,7 +319,9 @@ export class MonitorSession {
       await this.#api.attach(ref.dir);
       // close() or a newer open() ran while attach was in flight: its detach
       // came first, so this attach would otherwise leak a stream.
-      if (gen !== this.#gen) this.#api.detach(ref.dir)?.catch?.(() => {});
+      // A newer session on the same dir already superseded this attach (the
+      // backend detaches per dir), so detaching would kill it.
+      if (gen !== this.#gen && !(this.attached && this.ref?.dir === ref.dir)) this.#api.detach(ref.dir)?.catch?.(() => {});
     } catch (error) {
       if (gen !== this.#gen) return;
       this.error = errorText(error);
