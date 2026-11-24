@@ -1,0 +1,16 @@
+{
+  "name": "bounty-run-desktop-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/*.test.mjs\"",
+    "lint:tokens": "node scripts/token-lint.mjs",
+    "build:mock": "node scripts/build-mock.mjs"
+  },
+  "devDependencies": {
+    "@fontsource/barlow": "5.3.0",
+    "@fontsource/barlow-semi-condensed": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0"
+  }
+}
