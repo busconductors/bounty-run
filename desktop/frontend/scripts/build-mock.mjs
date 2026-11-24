@@ -41,6 +41,7 @@ const ANSI =
   /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[PX^_][^\u001b]*(?:\u001b\\)?|[\u001b\u009b]\[?[0-?]*[ -/]*[@-~]?/g;
 const CONTROLS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
 const BIDI = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+const FORMAT = /[\u00AD\u180E\u200B-\u200D\u2028\u2029\u2060-\u2064\uFEFF\uFFF9-\uFFFB]|[\u{E0000}-\u{E007F}]/gu;
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 export const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
@@ -51,6 +52,7 @@ export const sanitizeText = (value) =>
     .replace(ANSI, '')
     .replace(CONTROLS, '')
     .replace(BIDI, '')
+    .replace(FORMAT, '')
     .replaceAll('\t', ' ');
 
 export const safeText = (value) => escapeHtml(sanitizeText(value));

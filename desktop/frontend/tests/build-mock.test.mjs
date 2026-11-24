@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
+import { sanitizeText as appSanitizeText } from '../src/lib/monitor/text.js';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -43,6 +44,14 @@ const hostileEvents = () =>
 
 test('escapeHtml neutralises every markup character', () => {
   assert.equal(escapeHtml(`<a href="x" id='y'>&`), '&lt;a href=&quot;x&quot; id=&#39;y&#39;&gt;&amp;');
+});
+
+test('sanitizeText (app and mock) strips zero-width and format characters', () => {
+  const bad = ['\u00ad', '\u180e', '\u200b', '\u200c', '\u200d', '\u2028', '\u2029', '\u2060', '\u2064', '\ufeff', '\ufff9', '\ufffb', '\u{e0000}', '\u{e0041}', '\u{e007f}'];
+  for (const c of bad) assert.equal(appSanitizeText(`a${c}b`), 'ab', `U+${c.codePointAt(0).toString(16)}`);
+  for (const f of [sanitizeText, appSanitizeText]) assert.equal(f('a\u00adb\u{e0041}'), 'ab');
+  assert.equal(appSanitizeText('pay\u200bpal\u202e'), 'paypal');
+  assert.equal(appSanitizeText('caf\u00e9 \u{1f600}'), 'caf\u00e9 \u{1f600}');
 });
 
 test('sanitizeText strips ANSI, controls and bidi overrides', () => {

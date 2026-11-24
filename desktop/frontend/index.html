@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Frames only: a sandboxed report frame may not navigate to another origin
+         (exfiltration). No default-src or script-src, which could break the
+         Wails runtime. -->
+    <meta http-equiv="Content-Security-Policy" content="frame-src 'self'; child-src 'self'" />
     <title>Bounty Runner</title>
   </head>
   <body>

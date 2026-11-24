@@ -6,12 +6,16 @@ const ANSI =
   /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[PX^_][^\u001b]*(?:\u001b\\)?|[\u001b\u009b]\[?[0-?]*[ -/]*[@-~]?/g;
 const CONTROLS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
 const BIDI = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+// Invisible format characters: soft hyphen, Mongolian vowel separator,
+// zero-width space/joiners, line/paragraph separators, word joiner and
+// invisible operators, BOM, interlinear annotation, and Unicode tag characters.
+const FORMAT = /[\u00ad\u180e\u200b-\u200d\u2028\u2029\u2060-\u2064\ufeff\ufff9-\ufffb]|[\u{e0000}-\u{e007f}]/gu;
 
 export function sanitizeText(value) {
   if (value === undefined || value === null) return '';
   let text = String(value);
   if (typeof text.toWellFormed === 'function') text = text.toWellFormed();
-  return text.replace(ANSI, '').replace(CONTROLS, '').replace(BIDI, '').replaceAll('\t', ' ');
+  return text.replace(ANSI, '').replace(CONTROLS, '').replace(BIDI, '').replace(FORMAT, '').replaceAll('\t', ' ');
 }
 
 const pad = (n) => String(n).padStart(2, '0');
