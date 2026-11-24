@@ -27,6 +27,44 @@ tasks:
     cmds:
       - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s" -o bin/{{.APP_NAME}} .
 
+  # Linux packages bundle the frozen engine sidecar from $BOUNTY_ENGINE_DIR
+  # (a PyInstaller onedir: bounty-run + _internal/; `make engine` builds one
+  # at ../dist/bounty-run). Both install it at <prefix>/lib/bounty-run/engine
+  # beside <prefix>/bin/bounty-runner, where runs.EngineBin looks.
+  package:
+    summary: Builds bin/*.AppImage and bin/*.deb (needs BOUNTY_ENGINE_DIR)
+    preconditions: &engine-preconditions
+      - sh: '[ -n "${BOUNTY_ENGINE_DIR:-}" ]'
+        msg: 'BOUNTY_ENGINE_DIR is not set: point it at the frozen engine directory (run `make engine`, then BOUNTY_ENGINE_DIR=<repo>/dist/bounty-run)'
+      - sh: '[ -f "$BOUNTY_ENGINE_DIR/bounty-run" ] && [ -x "$BOUNTY_ENGINE_DIR/bounty-run" ]'
+        msg: 'BOUNTY_ENGINE_DIR={{env "BOUNTY_ENGINE_DIR"}} has no executable bounty-run: point it at the frozen engine directory (`make engine` builds ../dist/bounty-run)'
+    cmds:
+      - task: build
+      - rm -f bin/*.AppImage bin/*.deb
+      - task: package:appimage
+      - task: package:deb
+
+  package:appimage:
+    summary: Builds bin/bounty-runner-<arch>.AppImage from bin/{{.APP_NAME}} and the engine sidecar
+    preconditions: *engine-preconditions
+    cmds:
+      - rm -f bin/*.AppImage
+      - >-
+        ./build/linux/appimage/build.sh bin/{{.APP_NAME}} build/appicon.png
+        build/linux/{{.APP_NAME}}.desktop "$BOUNTY_ENGINE_DIR"
+        build/linux/appimage/work bin
+
+  package:deb:
+    summary: Builds bin/{{.APP_NAME}}.deb from bin/{{.APP_NAME}} and the engine sidecar
+    preconditions: *engine-preconditions
+    env:
+      GOARCH: '{{ARCH}}'
+      BOUNTY_VERSION:
+        sh: sed -n 's/^__version__ = "\(.*\)"$/\1/p' ../runner/__init__.py
+    cmds:
+      - rm -f bin/*.deb
+      - wails3 tool package -name {{.APP_NAME}} -format deb -config build/linux/nfpm/nfpm.yaml -out bin
+
   test:
     summary: Runs Go and frontend tests
     deps: [frontend:deps]

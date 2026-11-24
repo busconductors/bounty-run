@@ -56,3 +56,5 @@ research_notes/
 desktop/frontend/node_modules/
 desktop/frontend/dist/
 desktop/.task/
+# AppImage packaging scratch (Wails AppDir, linuxdeploy cache)
+desktop/build/linux/appimage/work/
