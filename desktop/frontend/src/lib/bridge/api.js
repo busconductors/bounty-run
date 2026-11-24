@@ -39,3 +39,11 @@ export const doctorApi = Object.freeze({
 export const findingsApi = Object.freeze({
   get: (dir) => call('Findings.GetFindings', dir),
 });
+
+// The report viewer's backend: which report files a run has, and opening a
+// Markdown report in the OS default app. summary.html itself is served by the
+// asset server under /reports/ (see lib/reports/ReportFrame.svelte).
+export const reportsApi = Object.freeze({
+  available: (dir) => call('Reports.Available', dir),
+  openExternal: (dir, name) => call('Reports.OpenExternal', dir, name),
+});

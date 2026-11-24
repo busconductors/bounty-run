@@ -20,8 +20,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	app := shell.New(assets)
-	svc, err := runs.New(runs.Config{Emitter: app.Emitter()})
+	root, err := runs.OutputsRoot()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app := shell.New(assets, root)
+	svc, err := runs.New(runs.Config{Root: root, Emitter: app.Emitter()})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -9,6 +9,9 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -16,6 +19,7 @@ import (
 	"bountyrun/desktop/internal/catalog"
 	"bountyrun/desktop/internal/doctor"
 	"bountyrun/desktop/internal/findings"
+	"bountyrun/desktop/internal/reports"
 	"bountyrun/desktop/internal/runs"
 )
 
@@ -71,6 +75,71 @@ type Findings struct {
 // GetFindings returns the findings of the run in dir (a run under the outputs root).
 func (f *Findings) GetFindings(dir string) (findings.FindingsResult, error) {
 	return f.svc.GetFindings(dir)
+}
+
+// ReportInfo says which report files a run has. HTML is summary.html (shown
+// in the sandboxed viewer); Markdown lists the files that can be opened
+// externally.
+type ReportInfo struct {
+	HTML     bool     `json:"html"`
+	Markdown []string `json:"markdown"`
+}
+
+// Reports serves the report viewer's backend.
+type Reports struct {
+	root   string
+	runDir func(dir string) (string, error)
+	open   func(path string) error
+}
+
+// Available returns which report files the run in dir has.
+func (r *Reports) Available(dir string) (ReportInfo, error) {
+	dir, err := r.runDir(dir)
+	if err != nil {
+		return ReportInfo{}, err
+	}
+	info := ReportInfo{Markdown: []string{}}
+	_, herr := reports.SafeFile(r.root, dir, reports.HTMLReport, []string{reports.HTMLReport})
+	info.HTML = herr == nil
+	for _, name := range reports.MarkdownReports {
+		if _, err := reports.SafeFile(r.root, dir, name, reports.MarkdownReports); err == nil {
+			info.Markdown = append(info.Markdown, name)
+		}
+	}
+	return info, nil
+}
+
+// OpenExternal opens FINDINGS.md or SUMMARY.md of the run in dir with the OS
+// default handler. The path is validated like the viewer's; the name is
+// matched against an allowlist and never reaches a shell.
+func (r *Reports) OpenExternal(dir, name string) error {
+	dir, err := r.runDir(dir)
+	if err != nil {
+		return err
+	}
+	path, err := reports.SafeFile(r.root, dir, name, reports.MarkdownReports)
+	if err != nil {
+		return err
+	}
+	return r.open(path)
+}
+
+// openWithOS launches the OS default handler for path without a shell.
+func openWithOS(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", "--", path)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", filepath.Clean(path))
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 // Runs exposes run control and streaming.
@@ -150,6 +219,7 @@ func Bind(svc *runs.Service, cat *catalog.Catalog) []application.Service {
 		application.NewServiceWithOptions(&Launch{cat: cat, runs: svc}, opts),
 		application.NewServiceWithOptions(&Runs{svc: svc}, opts),
 		application.NewServiceWithOptions(&Findings{svc: findings.New(svc.RunDir)}, opts),
+		application.NewServiceWithOptions(&Reports{root: svc.Root(), runDir: svc.RunDir, open: openWithOS}, opts),
 		application.NewServiceWithOptions(&Doctor{svc: doctor.New(cat)}, opts),
 	}
 }

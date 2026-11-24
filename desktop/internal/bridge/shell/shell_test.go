@@ -29,7 +29,7 @@ func TestEmitterForwardsChannelAndSinglePayload(t *testing.T) {
 
 // Binding-call arguments (proxy, headers) are logged by Wails at debug level.
 func TestSystemLogNeverDebug(t *testing.T) {
-	opts := appOptions(fstest.MapFS{"index.html": {Data: []byte("x")}})
+	opts := appOptions(fstest.MapFS{"index.html": {Data: []byte("x")}}, t.TempDir())
 	if opts.Logger != nil || opts.LogLevel < slog.LevelInfo {
 		t.Fatalf("logger %v level %v: binding arguments could be logged", opts.Logger, opts.LogLevel)
 	}

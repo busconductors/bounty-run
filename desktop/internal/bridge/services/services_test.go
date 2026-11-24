@@ -27,7 +27,7 @@ func TestFrontendCallsExist(t *testing.T) {
 	if pkg == nil || string(pkg[1]) != reflect.TypeFor[Launch]().PkgPath() {
 		t.Fatalf("api.js PKG = %q, want %q", pkg, reflect.TypeFor[Launch]().PkgPath())
 	}
-	types := map[string]reflect.Type{"Launch": reflect.TypeFor[*Launch](), "Runs": reflect.TypeFor[*Runs](), "Doctor": reflect.TypeFor[*Doctor](), "Findings": reflect.TypeFor[*Findings]()}
+	types := map[string]reflect.Type{"Launch": reflect.TypeFor[*Launch](), "Runs": reflect.TypeFor[*Runs](), "Doctor": reflect.TypeFor[*Doctor](), "Findings": reflect.TypeFor[*Findings](), "Reports": reflect.TypeFor[*Reports]()}
 	calls := regexp.MustCompile(`call\('(\w+)\.(\w+)'`).FindAllSubmatch(src, -1)
 	if len(calls) < 10 {
 		t.Fatalf("found only %d calls in api.js", len(calls))
@@ -114,3 +114,42 @@ func TestStartRejectsWhatPreviewRejects(t *testing.T) {
 type nop struct{}
 
 func (nop) Emit(string, any) {}
+
+func TestReportsOpenExternalValidates(t *testing.T) {
+	root := t.TempDir()
+	run := filepath.Join(root, "ex.com", "20250101-000000")
+	if err := os.MkdirAll(run, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"FINDINGS.md", "findings.json", "summary.html"} {
+		if err := os.WriteFile(filepath.Join(run, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var opened []string
+	r := &Reports{root: root, open: func(p string) error { opened = append(opened, p); return nil },
+		runDir: func(d string) (string, error) {
+			if filepath.Dir(filepath.Dir(d)) != root {
+				return "", errors.New("not a run dir")
+			}
+			return d, nil
+		}}
+	if err := r.OpenExternal(run, "FINDINGS.md"); err != nil || len(opened) != 1 {
+		t.Fatalf("err %v opened %v", err, opened)
+	}
+	for _, name := range []string{"findings.json", "summary.html", "../FINDINGS.md", "SUMMARY.md"} {
+		if err := r.OpenExternal(run, name); err == nil {
+			t.Errorf("%s opened", name)
+		}
+	}
+	if err := r.OpenExternal(t.TempDir(), "FINDINGS.md"); err == nil {
+		t.Error("foreign dir opened")
+	}
+	if len(opened) != 1 {
+		t.Errorf("opened %v", opened)
+	}
+	info, err := r.Available(run)
+	if err != nil || !info.HTML || len(info.Markdown) != 1 || info.Markdown[0] != "FINDINGS.md" {
+		t.Errorf("available %+v %v", info, err)
+	}
+}
