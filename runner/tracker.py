@@ -4,7 +4,7 @@ Standalone module with its own CLI (``tracker.main(argv)``).  The operator wires
 this into ``bounty_run.py`` as the ``track`` subcommand; this module is self-
 contained and imports nothing but the stdlib.
 
-DB location: ``~/tools/bounty-run/outputs/tracker.db`` (override with ``get_db(path=...)`` or by
+DB location: ``<data root>/tracker.db`` (``$BOUNTY_RUN_DATA``, else ``<repo>/outputs``; override with ``get_db(path=...)`` or by
 repointing ``tracker.DEFAULT_DB`` — used by the unit tests so they never touch the
 real database).
 """
@@ -14,6 +14,8 @@ import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
+
+from runner import paths
 
 #: Canonical finding statuses (single source of truth).
 CANONICAL_STATUSES = (
@@ -27,7 +29,7 @@ CANONICAL_STATUSES = (
 )
 
 #: Default on-disk location.  Reassign for testability.
-DEFAULT_DB = Path(__file__).resolve().parent.parent / "outputs" / "tracker.db"
+DEFAULT_DB: Path | None = None
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS targets (
@@ -62,7 +64,7 @@ def get_db(path=None) -> sqlite3.Connection:
 
     ``path`` overrides ``DEFAULT_DB``; the parent directory is created on demand.
     """
-    p = Path(path) if path else DEFAULT_DB
+    p = Path(path) if path else (DEFAULT_DB or paths.data_root() / "tracker.db")
     p.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(p))
     conn.row_factory = sqlite3.Row

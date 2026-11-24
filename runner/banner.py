@@ -1,7 +1,5 @@
 """Startup banner: Braille face + figlet-`small` wordmark/credit, in red."""
-from pathlib import Path
-
-from runner import utils
+from runner import paths, utils
 
 
 def render() -> str:
@@ -11,7 +9,7 @@ def render() -> str:
     wordmark and the "by busconductors" credit. The plain-prose tagline is
     dimmed red ("2;91") so it sits behind the art. Blank lines stay blank.
     """
-    asset = Path(__file__).resolve().parent.parent / "assets" / "startup_banner.txt"
+    asset = paths.resource("assets/startup_banner.txt")
     try:
         text = asset.read_text()
     except (OSError, FileNotFoundError):

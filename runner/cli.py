@@ -26,6 +26,7 @@ from . import (
     origin_deep,
     panel_detect,
     param_scan,
+    paths,
     proxy,
     report,
     scope,
@@ -39,7 +40,9 @@ from . import (
     waf_scan,
 )
 
+#: Checkout default only (kept for compatibility); runtime code uses paths.data_root().
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
+
 
 # Pipeline stage metadata lives in runner.stage_registry; re-exported here so the
 # existing names (and the Go TUI parity test) keep working unchanged.
@@ -288,7 +291,7 @@ def _resolve_dir(raw: str) -> Path:
     """Empty => <repo>/outputs; otherwise expanduser, relative paths against CWD."""
     raw = (raw or "").strip()
     if not raw:
-        return REPO_OUTPUTS
+        return paths.data_root()
     return Path(os.path.expanduser(raw)).resolve()
 
 
@@ -303,7 +306,7 @@ def _resolve_outdir(target: str, output_dir=None, interactive: bool = False,
         return Path(os.path.expanduser(output_dir))
     ts = ts or time.strftime("%Y%m%d-%H%M%S")
     if not interactive:
-        return REPO_OUTPUTS / target / ts
+        return paths.data_root() / target / ts
     raw_dir, raw_name = "", ""
     try:
         raw_dir = input_fn("Output directory [outputs]: ")
@@ -461,7 +464,7 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
                 resolvers=getattr(args, "resolvers", None),
                 dns_rate=getattr(args, "dns_rate", 500),
                 cache_dir=(None if getattr(args, "no_subs_cache", False)
-                           else REPO_OUTPUTS / target / ".cache"),
+                           else paths.data_root() / target / ".cache"),
             )
             sc.counts["subdomains"] = len(st.subs)
     if ok("panel"):

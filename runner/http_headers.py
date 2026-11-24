@@ -9,7 +9,7 @@ import string
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from runner import events, evidence, utils
+from runner import events, evidence, paths, utils
 from runner.stages import _is_global, _resolve
 
 try:
@@ -20,7 +20,7 @@ try:
 except ImportError:
     HAVE_REQUESTS = False
 
-SHCHECK = Path(__file__).resolve().parent / "vendor" / "shcheck.py"
+SHCHECK = paths.shcheck_script()
 
 # Headers whose absence is a low-severity finding; everything else is info.
 _MISSING_LOW = {
@@ -68,7 +68,7 @@ def security_headers_scan(target: str, outdir: Path, hosts: list[str] | None = N
         return []
 
     urls = [f"https://{h}" for h in live]
-    cmd = f"python3 {SHCHECK} -j -d -g {' '.join(urls)}"
+    cmd = f"{paths.shcheck_command()} -j -d -g {' '.join(urls)}"
     if include_deprecated:
         cmd += " -k"
     from runner import proxy as proxymod
