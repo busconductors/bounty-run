@@ -12,6 +12,9 @@ bypass pooling and hooks.
 """
 from __future__ import annotations
 
+import json
+import os
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -26,6 +29,52 @@ from urllib3.util.retry import Retry
 
 from . import __version__, events
 
+# Extra request headers as a JSON array of "Name: value" strings. The UI passes
+# them here so credentials stay out of world-readable argv.
+HEADERS_ENV_VAR = "BOUNTY_RUN_HEADERS"
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+_HEADER_CTL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
+def headers_from_env() -> dict[str, str]:
+    """Parse and remove :data:`HEADERS_ENV_VAR`; ``{}`` when unset.
+
+    The variable leaves ``os.environ`` even when invalid, so child tools never
+    inherit it. Raises ``ValueError`` with a message that never quotes the value.
+    """
+    raw = os.environ.pop(HEADERS_ENV_VAR, None)
+    if raw is None:
+        return {}
+    try:
+        entries = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise ValueError("not valid JSON") from None
+    if not isinstance(entries, list):
+        raise ValueError("expected a JSON array of \"Name: value\" strings")
+    headers: dict[str, str] = {}
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, str) or not entry.strip():
+            raise ValueError(f"entry {i} is not a non-blank string")
+        if _HEADER_CTL.search(entry):
+            raise ValueError(f"entry {i} contains a control character")
+        name, sep, value = entry.partition(":")
+        name, value = name.strip(), value.strip()
+        if not sep or not _HEADER_NAME.fullmatch(name):
+            raise ValueError(f"entry {i} has no valid header name")
+        try:
+            value.encode("latin-1")
+        except UnicodeEncodeError:
+            raise ValueError(f"entry {i} has a value HTTP cannot carry") from None
+        _set_header(headers, name, value)
+    return headers
+
+
+def _set_header(headers: dict, name: str, value: str) -> None:
+    """Set a header, replacing any other spelling of the same name."""
+    for existing in [k for k in headers if k.lower() == name.lower()]:
+        del headers[existing]
+    headers[name] = value
+
 
 @dataclass(frozen=True)
 class HttpConfig:
@@ -38,15 +87,20 @@ class HttpConfig:
     status_forcelist: tuple = (429, 502, 503, 504)
     rate_per_host: float | None = None     # DEFAULT None: dork test pins exactly 3 sleeps
     pool_maxsize: int = 30                 # = --threads
-    extra_headers: Mapping = field(default_factory=dict)
+    extra_headers: Mapping = field(default_factory=dict, repr=False)
+    # Subset of extra_headers from the environment: masked in evidence and never
+    # sent on scope-exempt (third-party) requests.
+    secret_headers: Mapping = field(default_factory=dict, repr=False)
 
     @classmethod
-    def from_args(cls, args) -> HttpConfig:
+    def from_args(cls, args, secret_headers: Mapping | None = None) -> HttpConfig:
         headers = {}
         for h in getattr(args, "header", None) or []:
             if ":" in h:
                 k, v = h.split(":", 1)
                 headers[k.strip()] = v.strip()
+        for k, v in (secret_headers or {}).items():
+            _set_header(headers, k, v)
         return cls(
             user_agent=getattr(args, "user_agent", None) or cls.user_agent,
             proxy=getattr(args, "proxy", None),
@@ -55,6 +109,7 @@ class HttpConfig:
             rate_per_host=getattr(args, "rate_limit", None),
             pool_maxsize=int(getattr(args, "threads", 30) or 30),
             extra_headers=headers,
+            secret_headers=dict(secret_headers or {}),
         )
 
 
@@ -176,6 +231,9 @@ class Client:
 
     def request(self, method, url, *, timeout=None, headers=None, retries=None,
                 scope_exempt=False, purpose="target", **kw) -> requests.Response:
+        if scope_exempt and self.cfg.secret_headers:
+            # A None value makes requests drop the session-level header.
+            headers = {**(headers or {}), **dict.fromkeys(self.cfg.secret_headers)}
         sess = self._session_for(retries)
         ctx = {"scope_exempt": scope_exempt, "purpose": purpose,
                "stage": events.current_stage()}

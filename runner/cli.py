@@ -669,6 +669,14 @@ def _totals(findings: list[dict]) -> dict:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    # Parsed first: the variable must leave os.environ on every path, and a bad
+    # value must stop the run before anything is created.
+    try:
+        env_headers = httpclient.headers_from_env()
+    except ValueError as e:
+        print(f"error: invalid {httpclient.HEADERS_ENV_VAR}: {e}",
+              file=__import__("sys").stderr)
+        return 2
     target = _normalize_target(args.target)
     if not target:
         print("error: invalid target — use a bare domain (e.g. example.com)",
@@ -700,9 +708,10 @@ def main(argv=None) -> int:
         print(f"error: invalid {proxy.ENV_VAR}: {e}", file=stderr)
         scope.reset()
         return 2
+    # set_secrets replaces the registered set, so this is the one registration.
+    utils.set_secrets((*(pcfg.secrets if pcfg is not None else ()), *env_headers.values()))
     if pcfg is not None:
         args.proxy = pcfg.url
-        utils.set_secrets(pcfg.secrets)
         if pcfg.kind == "socks5" and not proxy.have_socks():
             print("error: SOCKS5 needs PySocks: pip install 'requests[socks]' "
                   "(Kali: apt install python3-socks)", file=stderr)
@@ -724,28 +733,30 @@ def main(argv=None) -> int:
 
     # Configure the process-wide HTTP client (no network I/O here) and enforce
     # scope on every request hop (redirects included).
-    httpclient.configure(httpclient.HttpConfig.from_args(args))
+    httpclient.configure(httpclient.HttpConfig.from_args(args, env_headers))
     httpclient.client().add_request_hook(scope.request_hook)
 
-    if not args.no_banner:
-        banner.print_banner()
-
-    outdir = _resolve_outdir(target, args.output_dir, args.interactive)
-    outdir.mkdir(parents=True, exist_ok=True)
-    skip = set(x.strip() for x in (args.skip or "").split(",") if x.strip())
-
-    if args.events:
-        events_path = Path(args.events)
-        events_path.parent.mkdir(parents=True, exist_ok=True)
-        events.init(events_path)
-        flags = _redact_flags({k: v for k, v in vars(args).items() if k != "events"})
-        events.write_run_json(target, flags, __version__)
-        events.run_start(target, flags, PLANNED_STAGES(args, skip))
-
     try:
+        if not args.no_banner:
+            banner.print_banner()
+
+        outdir = _resolve_outdir(target, args.output_dir, args.interactive)
+        outdir.mkdir(parents=True, exist_ok=True)
+        skip = set(x.strip() for x in (args.skip or "").split(",") if x.strip())
+
+        if args.events:
+            events_path = Path(args.events)
+            events_path.parent.mkdir(parents=True, exist_ok=True)
+            events.init(events_path)
+            flags = _redact_flags({k: v for k, v in vars(args).items() if k != "events"})
+            events.write_run_json(target, flags, __version__)
+            events.run_start(target, flags, PLANNED_STAGES(args, skip))
+
         return _run(args, target, outdir, skip)
     finally:
         httpclient.client().close()
+        if env_headers:  # the process-wide client must not keep them past this run
+            httpclient.configure(httpclient.HttpConfig())
         evidence.reset()
         scope.reset()
         utils.set_secrets(())
@@ -766,7 +777,8 @@ def _run(args, target: str, outdir: Path, skip: set[str]) -> int:
     st = RunState(target, start=time.monotonic())
     evidence.activate(evidence.EvidenceStore(
         outdir, redact=not args.evidence_unredacted,
-        max_body=args.evidence_max_body, enabled=not args.no_evidence))
+        max_body=args.evidence_max_body, enabled=not args.no_evidence,
+        secret_headers=httpclient.client().cfg.secret_headers))
     httpclient.client().add_response_hook(evidence.response_hook)
     report_path, summary_path = str(outdir / "FINDINGS.md"), str(outdir / "SUMMARY.md")
     try:
@@ -779,7 +791,8 @@ def _run(args, target: str, outdir: Path, skip: set[str]) -> int:
             return 130
         rc = _finish(args, target, outdir, skip, st)
     except BaseException as e:  # incl. Ctrl-C / SystemExit: no partial report
-        events.run_end("failed", _totals(st.findings), report_path, summary_path, error=repr(e))
+        events.run_end("failed", _totals(st.findings), report_path, summary_path,
+                       error=utils._redact(repr(e)))
         raise
     events.run_end("ok", _totals(st.findings), report_path, summary_path)
     return rc

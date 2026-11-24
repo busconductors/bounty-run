@@ -22,6 +22,9 @@ REDACT = {
     "proxy-authorization", "x-api-key", "x-auth-token",
 }
 
+MASK = "<redacted>"
+SHELL_MASK = "REDACTED"  # repro lines can be unquoted: no shell metacharacters
+
 _TEXT_CONTENT_HINTS = ("text/", "json", "xml", "javascript", "html", "csv", "x-www-form")
 
 
@@ -86,17 +89,40 @@ def _as_bytes(data) -> bytes:
 
 class EvidenceStore:
     def __init__(self, run_dir, *, redact: bool = True, max_body: int = 256_000,
-                 enabled: bool = True):
+                 enabled: bool = True, secret_headers: Mapping | None = None):
         self.run_dir = Path(run_dir)
         self.root = self.run_dir / "evidence"
         self.redact = redact
         self.max_body = max_body
         self.enabled = enabled
+        # Env-supplied headers: masked by name and by value unless unredacted.
+        secret_headers = secret_headers if redact else None
+        self._secret_names = {str(k).lower() for k in secret_headers or ()}
+        self._secret_values = sorted(
+            {str(v) for v in (secret_headers or {}).values() if v}, key=len, reverse=True)
         self._index: dict[str, list[str]] = {}
         self._counts: dict[str, int] = {}
         self._lock = threading.Lock()
 
     # -- helpers ----------------------------------------------------------------
+
+    def _scrub(self, text: str, mask: str = MASK) -> str:
+        for value in self._secret_values:
+            text = text.replace(value, mask)
+        return text
+
+    def _scrub_bytes(self, data: bytes) -> bytes:
+        for value in self._secret_values:  # sent as latin-1, often reflected as UTF-8
+            for raw in (value.encode("utf-8"), value.encode("latin-1", "replace")):
+                data = data.replace(raw, MASK.encode())
+        return data
+
+    def _safe_headers(self, headers) -> list[tuple[str, str]]:
+        return [(k, MASK if k.lower() in self._secret_names else self._scrub(v))
+                for k, v in redact_headers(headers, self.redact)]
+
+    def _redacted_names(self) -> list[str]:
+        return sorted(REDACT | self._secret_names) if self.redact else []
 
     def _next_dir(self, fp: str) -> tuple[str, Path]:
         with self._lock:
@@ -130,7 +156,7 @@ class EvidenceStore:
 
     def _write_repro(self, directory: Path, curl: str) -> Path:
         repro = directory / "repro.sh"
-        repro.write_text("#!/bin/sh\nset -eu\n" + curl + "\n")
+        repro.write_text("#!/bin/sh\nset -eu\n" + self._scrub(curl, SHELL_MASK) + "\n")
         os.chmod(repro, 0o700)
         return repro
 
@@ -147,11 +173,13 @@ class EvidenceStore:
         host = f.get("host")
         fp = finding_fp(f) if finding else fp_from_url(template, host, url)
         evidence_id, directory = self._next_dir(fp)
+        if url and self._secret_values:
+            url = self._scrub(str(url))
 
         # request.http
-        req_headers = redact_headers(getattr(request, "headers", {}), self.redact)
+        req_headers = self._safe_headers(getattr(request, "headers", {}))
         method = getattr(request, "method", "GET") or "GET"
-        req_body = _as_bytes(getattr(request, "body", None))
+        req_body = self._scrub_bytes(_as_bytes(getattr(request, "body", None)))
         req_lines = [f"{method} {url}"]
         req_lines += [f"{k}: {v}" for k, v in req_headers]
         req_text = "\r\n".join(req_lines) + "\r\n\r\n"
@@ -160,13 +188,13 @@ class EvidenceStore:
         (directory / "request.http").write_text(req_text)
 
         # response.http
-        resp_headers = redact_headers(getattr(response, "headers", {}), self.redact)
+        resp_headers = self._safe_headers(getattr(response, "headers", {}))
         status = getattr(response, "status_code", "")
         ctype = ""
         for k, v in resp_headers:
             if k.lower() == "content-type":
                 ctype = v
-        body = _read_body(response)
+        body = self._scrub_bytes(_read_body(response))
         body_meta, body = self._write_body(directory, "response", body, ctype)
         resp_lines = [f"HTTP {status}"]
         resp_lines += [f"{k}: {v}" for k, v in resp_headers]
@@ -175,14 +203,13 @@ class EvidenceStore:
             resp_text += body.decode("utf-8", "replace")
         (directory / "response.http").write_text(resp_text)
 
-        curl = build_curl(method, url, getattr(request, "headers", {}), req_body,
-                          redact=self.redact)
+        curl = build_curl(method, url, req_headers, req_body, redact=self.redact)
         self._write_repro(directory, curl)
 
         meta = {
             "evidence_id": evidence_id, "fingerprint": fp, "template": template,
             "host": host, "url": url, "status": status, "source": "inprocess",
-            "redacted": sorted(REDACT) if self.redact else [], "note": note,
+            "redacted": self._redacted_names(), "note": note,
             "artifacts": [], **body_meta,
         }
         (directory / "meta.json").write_text(json.dumps(meta, indent=2))
@@ -195,15 +222,17 @@ class EvidenceStore:
             return None
         fp = finding_fp(finding)
         evidence_id, directory = self._next_dir(fp)
-        (directory / "request.http").write_text(_redact_text(request_text, self.redact))
-        (directory / "response.http").write_text(_redact_text(response_text, self.redact))
+        (directory / "request.http").write_text(
+            self._scrub(_redact_text(request_text, self.redact)))
+        (directory / "response.http").write_text(
+            self._scrub(_redact_text(response_text, self.redact)))
         if curl:
             self._write_repro(directory, curl)
         meta = {
             "evidence_id": evidence_id, "fingerprint": fp,
             "template": finding.get("template") or "", "host": finding.get("host"),
-            "url": finding.get("url") or "", "source": source,
-            "redacted": sorted(REDACT) if self.redact else [], "artifacts": [],
+            "url": self._scrub(finding.get("url") or ""), "source": source,
+            "redacted": self._redacted_names(), "artifacts": [],
         }
         (directory / "meta.json").write_text(json.dumps(meta, indent=2))
         return evidence_id
@@ -228,7 +257,7 @@ class EvidenceStore:
         meta = {
             "evidence_id": evidence_id, "fingerprint": fp,
             "template": finding.get("template") or "", "host": finding.get("host"),
-            "url": finding.get("url") or "", "source": "tool",
+            "url": self._scrub(finding.get("url") or ""), "source": "tool",
             "artifacts": rels, "note": note,
         }
         (directory / "meta.json").write_text(json.dumps(meta, indent=2))

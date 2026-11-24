@@ -1,5 +1,6 @@
 """Findings dedupe + report generation."""
 import json
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -122,6 +123,21 @@ def render_overview(metrics: list[tuple[str, str]]) -> list[str]:
     return lines
 
 
+def _index_fp(f: dict) -> str | None:
+    """A finding's evidence fingerprint; ``None`` if its URL cannot be normalized."""
+    try:
+        return finding.fingerprint_of(f.get("template"), f.get("host"), f.get("url"))
+    except ValueError:
+        return None
+
+
+def _write_findings_index(outdir: Path, findings: list[dict]) -> None:
+    """Write fingerprints parallel to findings.json, atomically."""
+    tmp = outdir / "findings.index.json.tmp"
+    tmp.write_text(json.dumps([_index_fp(f) for f in findings]))
+    os.replace(tmp, outdir / "findings.index.json")
+
+
 def write_findings_report(outdir: Path, target: str, findings: list[dict], content: list[str],
                           origins: list[dict] | None = None, *,
                           metrics: list[tuple[str, str]] | None = None) -> int:
@@ -129,6 +145,7 @@ def write_findings_report(outdir: Path, target: str, findings: list[dict], conte
     findings = dedupe(findings)
     findings.sort(key=lambda f: finding.severity_rank(f.get("severity", "unknown")))
     (outdir / "findings.json").write_text(json.dumps(findings, indent=2))
+    _write_findings_index(outdir, findings)
 
     sev = Counter(f.get("severity", "unknown") for f in findings)
     lines = [f"# Findings — {target}", ""]
