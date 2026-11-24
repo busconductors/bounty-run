@@ -6,11 +6,18 @@
   "scripts": {
     "test": "node --test \"tests/*.test.mjs\"",
     "lint:tokens": "node scripts/token-lint.mjs",
-    "build:mock": "node scripts/build-mock.mjs"
+    "build:mock": "node scripts/build-mock.mjs",
+    "build": "vite build"
   },
   "devDependencies": {
     "@fontsource/barlow": "5.3.0",
     "@fontsource/barlow-semi-condensed": "5.3.0",
-    "@fontsource/jetbrains-mono": "5.3.0"
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.2",
+    "svelte": "5.59.1",
+    "vite": "8.3.8"
+  },
+  "dependencies": {
+    "@wailsio/runtime": "3.1.0"
   }
 }

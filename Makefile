@@ -1,4 +1,4 @@
-.PHONY: tui banner engine lint test
+.PHONY: tui desktop banner engine lint test
 PYTHON ?= python3
 
 # The TUI embeds the startup banner (go:embed cannot reach outside the module),
@@ -8,6 +8,9 @@ banner:
 
 tui: banner
 	cd tui && go build -o ../bin/bounty-tui ./cmd/bounty-tui
+
+desktop:
+	cd desktop && wails3 task build
 
 # Engine sidecar. Always --onedir: --onefile unpacks to a temp dir at startup.
 engine:

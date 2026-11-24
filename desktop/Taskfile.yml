@@ -1,0 +1,36 @@
+version: '3'
+
+vars:
+  APP_NAME: bounty-runner
+
+tasks:
+  frontend:deps:
+    dir: frontend
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+    cmds:
+      - npm ci
+
+  frontend:build:
+    dir: frontend
+    deps: [frontend:deps]
+    cmds:
+      - npm run lint:tokens
+      - npm run build
+
+  build:
+    summary: Builds the production binary into bin/
+    deps: [frontend:build]
+    cmds:
+      - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s" -o bin/{{.APP_NAME}} .
+
+  test:
+    summary: Runs Go and frontend tests
+    deps: [frontend:deps]
+    cmds:
+      - go test ./...
+      - npm --prefix frontend test
+      - npm --prefix frontend run lint:tokens

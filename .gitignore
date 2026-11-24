@@ -55,3 +55,4 @@ research_notes/
 # Desktop frontend dependencies and build output
 desktop/frontend/node_modules/
 desktop/frontend/dist/
+desktop/.task/

@@ -1,0 +1,16 @@
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; overflow: hidden; }
+body {
+  background: var(--bg-1);
+  color: var(--tx);
+  font: var(--w-body) var(--fs-body)/var(--lh-body) var(--font-body);
+  font-variant-numeric: tabular-nums lining-nums;
+  user-select: none;
+}
+button { margin: 0; padding: 0; border: 0; border-radius: var(--radius); background: none; color: inherit; font: inherit; }
+:focus { outline: none; }
+:focus-visible { outline: 1px solid var(--red-400); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
