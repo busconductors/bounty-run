@@ -30,3 +30,11 @@ test('only src/lib/bridge imports the Wails runtime', () => {
     .filter((path) => readFileSync(join(root, path), 'utf8').includes('@wailsio/runtime'));
   assert.deepEqual(offenders, []);
 });
+
+test('title bar is the frameless drag handle and its controls stay clickable', () => {
+  const source = readFileSync(join(root, 'lib/shell/TitleBar.svelte'), 'utf8');
+  const rule = (selector) =>
+    new RegExp(`(?:^|\\n)\\s*${selector}\\s*\\{([^}]*)\\}`).exec(source)?.[1] ?? '';
+  assert.match(rule('header'), /--wails-draggable:\s*drag\s*;/);
+  assert.match(rule('\\.controls'), /--wails-draggable:\s*no-drag\s*;/);
+});
