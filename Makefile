@@ -14,13 +14,9 @@ desktop:
 
 # Engine sidecar. Always --onedir: --onefile unpacks to a temp dir at startup.
 engine:
-	$(PYTHON) -m PyInstaller --noconfirm --clean --onedir --name bounty-run \
-		--distpath dist --workpath build/pyinstaller --specpath build/pyinstaller \
-		--add-data "$(CURDIR)/assets:assets" \
-		--add-data "$(CURDIR)/runner/vendor/shcheck.py:runner/vendor" \
-		--hidden-import socks --hidden-import urllib3.contrib.socks \
-		bounty_run.py
-	dist/bounty-run/bounty-run --help > /dev/null
+	$(PYTHON) -m PyInstaller --noconfirm --clean --distpath dist --workpath build/pyinstaller \
+		packaging/bounty-run.spec
+	$(PYTHON) packaging/smoke_sidecar.py dist/bounty-run
 
 lint:
 	$(PYTHON) -m ruff check .
