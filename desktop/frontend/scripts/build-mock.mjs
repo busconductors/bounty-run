@@ -40,7 +40,7 @@ const SUBDOMAINS = ['api', 'app', 'auth', 'cdn', 'dev', 'mail', 'portal', 'stagi
 const ANSI =
   /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[PX^_][^\u001b]*(?:\u001b\\)?|[\u001b\u009b]\[?[0-?]*[ -/]*[@-~]?/g;
 const CONTROLS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
-const BIDI = /[؜‎‏‪-‮⁦-⁩]/g;
+const BIDI = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 export const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
