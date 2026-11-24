@@ -290,7 +290,7 @@ func startTailCap(t *testing.T, path string, maxLine int) <-chan any {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	out := make(chan any, 16)
-	go tail(ctx, path, out, maxLine)
+	go tail(ctx, path, out, maxLine, false)
 	return out
 }
 
@@ -330,4 +330,36 @@ func TestTailLineJustUnderCapDecodes(t *testing.T) {
 	if !ok || len(m.Ev.Msg) != pad {
 		t.Fatalf("got %#v", m)
 	}
+}
+
+func TestTailWithEOFReportsConsumedOffset(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	first := logLine("a") + logLine("b")
+	appendFile(t, p, first)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ch := make(chan any, 16)
+	go TailWithEOF(ctx, p, ch)
+	wantMsg(t, next(t, ch), "a")
+	wantMsg(t, next(t, ch), "b")
+	eof, ok := next(t, ch).(EOFMsg)
+	if !ok || eof.Offset != int64(len(first)) {
+		t.Fatalf("got %#v, want EOFMsg{Offset: %d}", eof, len(first))
+	}
+	// A partial trailing line counts as consumed: it is all there is to read.
+	appendFile(t, p, `{"v":1,`)
+	for {
+		m := next(t, ch).(EOFMsg)
+		if m.Offset == int64(len(first)+len(`{"v":1,`)) {
+			break
+		}
+	}
+}
+
+func TestTailSendsNoEOFMsg(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "events.jsonl")
+	appendFile(t, p, logLine("a"))
+	ch := startTail(t, p)
+	wantMsg(t, next(t, ch), "a")
+	expectNone(t, ch, 300*time.Millisecond)
 }

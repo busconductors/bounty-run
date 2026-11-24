@@ -40,10 +40,18 @@ const fingerprintLen = 64
 // that is briefly missing is polled until it reappears. Lines longer than
 // maxEventLine are skipped with one WarnMsg.
 func Tail(ctx context.Context, path string, out chan<- any) {
-	tail(ctx, path, out, maxEventLine)
+	tail(ctx, path, out, maxEventLine, false)
 }
 
-func tail(ctx context.Context, path string, out chan<- any, maxLine int) {
+// TailWithEOF is Tail that also sends EOFMsg each time it reaches the end of
+// the file (about every poll interval while idle). Because it travels on out
+// in order, every message before it has been received by then; Offset is the
+// number of bytes of the current file consumed so far.
+func TailWithEOF(ctx context.Context, path string, out chan<- any) {
+	tail(ctx, path, out, maxEventLine, true)
+}
+
+func tail(ctx context.Context, path string, out chan<- any, maxLine int, eof bool) {
 	runDir := filepath.Dir(path)
 	var f *os.File
 	for f == nil {
@@ -158,6 +166,9 @@ func tail(ctx context.Context, path string, out chan<- any, maxLine int) {
 		}
 		if !errors.Is(err, io.EOF) {
 			send(ctx, out, WarnMsg{RunDir: runDir, Text: fmt.Sprintf("read error: %v", err)})
+			return
+		}
+		if eof && !send(ctx, out, EOFMsg{Offset: offset}) {
 			return
 		}
 		if !wait(ctx) {

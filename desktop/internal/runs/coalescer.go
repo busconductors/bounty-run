@@ -20,6 +20,7 @@ import (
 const (
 	FlushInterval     = 75 * time.Millisecond
 	FlushEvents       = 1000
+	FlushBytes        = 4 << 20
 	MaxOutputPerFlush = 2000
 	MaxLineBytes      = 64 << 10
 	outputBufLines    = 5000
@@ -72,6 +73,8 @@ func (r realTicker) Stop()                         { r.t.Stop() }
 // coalescer accumulates tail messages between flushes.
 type coalescer struct {
 	events   []map[string]any
+	sizes    []int          // approximate wire size of each entry in events
+	bytes    int            // sum of sizes
 	progress map[string]int // stage -> index of its progress event in events
 	out      *logbuf.Bounded
 	nOut     int // lines pushed into out since the last flush
@@ -82,8 +85,14 @@ func newCoalescer() *coalescer {
 	return &coalescer{progress: map[string]int{}, out: logbuf.NewBounded(outputBufLines, outputBufBytes)}
 }
 
+func (c *coalescer) push(w map[string]any, size int) {
+	c.events = append(c.events, w)
+	c.sizes = append(c.sizes, size)
+	c.bytes += size
+}
+
 // add applies one message from events.Tail and reports whether enough events
-// are pending to flush now.
+// (FlushEvents) or bytes of them (FlushBytes) are pending to flush now.
 func (c *coalescer) add(m any) bool {
 	switch m := m.(type) {
 	case events.Msg:
@@ -93,26 +102,29 @@ func (c *coalescer) add(m any) bool {
 			c.out.Push(encodeOutput(ev))
 			c.nOut++
 		case "progress":
-			w := wireEvent(ev)
+			w, size := wireEvent(ev)
 			if i, ok := c.progress[ev.Stage]; ok {
 				c.events[i] = w // keep only the latest count per stage
+				c.bytes += size - c.sizes[i]
+				c.sizes[i] = size
 			} else {
 				c.progress[ev.Stage] = len(c.events)
-				c.events = append(c.events, w)
+				c.push(w, size)
 			}
 		default:
-			c.events = append(c.events, wireEvent(ev))
+			c.push(wireEvent(ev))
 		}
 	case events.WarnMsg:
-		c.events = append(c.events, map[string]any{"v": 1, "type": "log", "level": "warn", "msg": display(m.Text)})
+		msg := display(m.Text)
+		c.push(map[string]any{"v": 1, "type": "log", "level": "warn", "msg": msg}, len(msg)+64)
 	case events.VersionMsg:
-		c.events = append(c.events, map[string]any{"v": 1, "type": "log", "level": "error",
-			"msg": "this run was written by an incompatible engine version; it cannot be shown"})
+		c.push(map[string]any{"v": 1, "type": "log", "level": "error",
+			"msg": "this run was written by an incompatible engine version; it cannot be shown"}, 128)
 	case events.ResetMsg:
 		*c = *newCoalescer()
 		c.reset = true
 	}
-	return len(c.events) >= FlushEvents
+	return len(c.events) >= FlushEvents || c.bytes >= FlushBytes
 }
 
 func (c *coalescer) pending() bool { return c.reset || len(c.events) > 0 || c.nOut > 0 }
@@ -137,13 +149,34 @@ func (c *coalescer) flush() Batch {
 }
 
 // pump feeds messages from in through a coalescer and emits a batch whenever
-// FlushEvents events are pending or flushC ticks with anything pending. It
-// returns when ctx is done or in is closed. lv, when set, watches the engine.
+// FlushEvents events or FlushBytes of them are pending, or flushC ticks with
+// anything pending. Without lv it returns when ctx is done or in is closed.
+// With lv it also watches the engine and reports it dead exactly once, after
+// the final batch: once the process is gone and the tail has consumed the
+// whole events file (an events.EOFMsg at or past its final size), or the tail
+// has stopped. It then runs until ctx is done.
 func pump(ctx context.Context, in <-chan any, flushC <-chan time.Time, emit func(Batch), lv *liveness) {
 	c := newCoalescer()
 	var liveC <-chan time.Time
 	if lv != nil {
 		liveC = lv.c
+	}
+	var (
+		gone      bool  // the engine process has ended
+		finalSize int64 // events file size seen after it ended; -1: no file
+		consumed  int64 = -1
+		tailEnded bool
+		reported  bool
+	)
+	maybeDead := func() {
+		if reported || !gone || !(tailEnded || finalSize < 0 || consumed >= finalSize) {
+			return
+		}
+		if c.pending() {
+			emit(c.flush())
+		}
+		lv.report()
+		reported = true
 	}
 	for {
 		select {
@@ -154,7 +187,22 @@ func pump(ctx context.Context, in <-chan any, flushC <-chan time.Time, emit func
 				if c.pending() {
 					emit(c.flush())
 				}
-				return
+				if lv == nil {
+					return
+				}
+				in, tailEnded = nil, true
+				maybeDead()
+				continue
+			}
+			switch m := m.(type) {
+			case events.EOFMsg:
+				consumed = m.Offset
+				if lv != nil {
+					maybeDead()
+				}
+				continue
+			case events.ResetMsg:
+				consumed = -1
 			}
 			if c.add(m) {
 				emit(c.flush())
@@ -164,45 +212,43 @@ func pump(ctx context.Context, in <-chan any, flushC <-chan time.Time, emit func
 				emit(c.flush())
 			}
 		case <-liveC:
-			// The engine is reported dead on the second consecutive tick
-			// that finds it gone, so the tail has read its last lines; the
-			// final batch goes out before the dead notice.
-			if lv.check() {
-				if c.pending() {
-					emit(c.flush())
-				}
-				lv.report()
-				liveC = nil
+			if lv.alive() {
+				continue
 			}
+			// The process is gone, so the file has its final size: dead is
+			// reported once the tail has read up to it.
+			gone, liveC = true, nil
+			if size, ok := lv.size(); ok {
+				finalSize = size
+			} else {
+				finalSize = -1
+			}
+			maybeDead()
 		}
 	}
 }
 
-// liveness polls the engine on c; check reports when it is confirmed dead.
+// liveness polls the engine on c. alive reports whether the engine process
+// still runs; size returns the events file's size (false if it is missing);
+// report announces the engine dead.
 type liveness struct {
-	c       <-chan time.Time
-	alive   func() bool
-	report  func()
-	missing int
-}
-
-func (l *liveness) check() bool {
-	if l.alive() {
-		l.missing = 0
-		return false
-	}
-	l.missing++
-	return l.missing >= 2
+	c      <-chan time.Time
+	alive  func() bool
+	size   func() (int64, bool)
+	report func()
 }
 
 // wireEvent converts a decoded event back to the events v1 wire shape, so the
 // client sees the contract's field names. Zero-valued fields are omitted,
 // except progress counts, which are meaningful at zero.
-func wireEvent(ev events.Event) map[string]any {
+func wireEvent(ev events.Event) (map[string]any, int) {
 	w := map[string]any{"v": ev.V, "t": ev.T, "type": ev.Type}
+	size := 64
 	str := func(k, v string) {
 		if v != "" {
+			v = clip(v)
 			w[k] = v
+			size += len(k) + len(v) + 8
 		}
 	}
 	str("target", ev.Target)
@@ -226,16 +272,24 @@ func wireEvent(ev events.Event) map[string]any {
 		str("summary", ev.Summary)
 	}
 	if ev.Stages != nil {
-		w["stages"] = ev.Stages
+		stages := make([]string, len(ev.Stages))
+		for i, st := range ev.Stages {
+			stages[i] = clip(st)
+			size += len(stages[i]) + 4
+		}
+		w["stages"] = stages
 	}
 	if ev.Flags != nil {
 		w["flags"] = ev.Flags
+		size += approxSize(ev.Flags)
 	}
-	if ev.Counts != nil {
-		w["counts"] = ev.Counts
-	}
-	if ev.Totals != nil {
-		w["totals"] = ev.Totals
+	for k, m := range map[string]map[string]int{"counts": ev.Counts, "totals": ev.Totals} {
+		if m != nil {
+			w[k] = m
+			for name := range m {
+				size += len(name) + 24
+			}
+		}
 	}
 	if ev.DurationMs != 0 {
 		w["duration_ms"] = ev.DurationMs
@@ -243,7 +297,29 @@ func wireEvent(ev events.Event) map[string]any {
 	if ev.Type == "progress" {
 		w["done"], w["total"] = ev.Done, ev.Total
 	}
-	return w
+	return w, size
+}
+
+// approxSize estimates the JSON size of a decoded value (run_start flags).
+func approxSize(v any) int {
+	switch v := v.(type) {
+	case string:
+		return len(v) + 8
+	case map[string]any:
+		n := 8
+		for k, e := range v {
+			n += len(k) + 8 + approxSize(e)
+		}
+		return n
+	case []any:
+		n := 8
+		for _, e := range v {
+			n += approxSize(e) + 2
+		}
+		return n
+	default:
+		return 24
+	}
 }
 
 // Output lines are held in the Bounded buffer as one string so its byte
@@ -265,6 +341,20 @@ func decodeOutput(s string) OutputLine {
 	}
 	t, _ := strconv.ParseInt(f[0], 10, 64)
 	return OutputLine{T: t, Stage: f[1], Tool: f[2], Stream: f[3], Line: f[4]}
+}
+
+// clip cuts a structural event field to MaxLineBytes on a rune boundary,
+// ending it with truncMarker. Fields are not sanitized: the client renders
+// them as text.
+func clip(s string) string {
+	if len(s) <= MaxLineBytes {
+		return s
+	}
+	i := MaxLineBytes - len(truncMarker)
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i] + truncMarker
 }
 
 // display sanitizes engine-supplied text for display and cuts it to

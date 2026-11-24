@@ -69,7 +69,8 @@ type Snapshot struct {
 }
 
 // DeadInfo is the payload of run:<id>:dead, sent once when an attached run's
-// engine process is gone. Status is the run's final status (ok, failed,
+// engine process is gone and every batch of its events (replay included) has
+// been emitted; no batch follows it. Status is the run's final status (ok, failed,
 // cancelled, crashed, incompatible).
 type DeadInfo struct {
 	Status string `json:"status"`
@@ -287,11 +288,15 @@ func (s *Service) Attach(dir string) (Snapshot, error) {
 // follow tails the run's events into the coalescer until ctx is done.
 func (s *Service) follow(ctx context.Context, a *attachment, dir, id string, info runstore.RunInfo) {
 	defer close(a.done)
-	ch := make(chan any, 256)
+	// A tiny buffer: queued messages are not yet clipped for display, and an
+	// event line can be up to 16 MiB.
+	ch := make(chan any, 1)
+	path := filepath.Join(dir, "events.jsonl")
 	tailDone := make(chan struct{})
 	go func() {
 		defer close(tailDone)
-		events.Tail(ctx, filepath.Join(dir, "events.jsonl"), ch)
+		defer close(ch) // tells pump the tail stopped (e.g. incompatible version)
+		events.TailWithEOF(ctx, path, ch)
 	}()
 	defer func() { <-tailDone }()
 
@@ -303,6 +308,13 @@ func (s *Service) follow(ctx context.Context, a *attachment, dir, id string, inf
 	lv := &liveness{
 		c:     live.C(),
 		alive: func() bool { return runstore.Alive(info.PID, info.PIDStart) },
+		size: func() (int64, bool) {
+			fi, err := os.Stat(path)
+			if err != nil {
+				return 0, false
+			}
+			return fi.Size(), true
+		},
 		report: func() {
 			st := string(runstore.Crashed)
 			if r, ok := s.findRun(dir); ok && r.Status != runstore.Running {

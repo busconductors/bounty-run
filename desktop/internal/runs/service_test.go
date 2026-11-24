@@ -469,36 +469,76 @@ func TestEngineLogTailSanitized(t *testing.T) {
 	}
 }
 
-// countingEmitter keeps no payloads, so memory measured is the service's own.
-type countingEmitter struct {
-	mu      sync.Mutex
-	batches int
-	ended   chan struct{}
-	once    sync.Once
+// replayEmitter keeps no payloads, so memory measured is the service's own.
+// It records what the replay tests assert on: ordering of dead against the
+// batches, batch sizes, and how many findings arrived and how long their
+// fields were.
+type replayEmitter struct {
+	delay time.Duration // per batch: a slow client
+
+	mu            sync.Mutex
+	batches       int
+	findings      int
+	maxBatchBytes int
+	maxField      int
+	runEnd        bool
+	dead          int
+	batchesAtDead int
+	runEndAtDead  bool
+	deadCh        chan struct{}
+	once          sync.Once
 }
 
-func (c *countingEmitter) Emit(channel string, payload any) {
-	b, ok := payload.(Batch)
-	if !ok {
-		return
-	}
-	c.mu.Lock()
-	c.batches++
-	c.mu.Unlock()
-	for _, ev := range b.Events {
-		if ev["type"] == "run_end" {
-			c.once.Do(func() { close(c.ended) })
+func newReplayEmitter(delay time.Duration) *replayEmitter {
+	return &replayEmitter{delay: delay, deadCh: make(chan struct{})}
+}
+
+func (c *replayEmitter) Emit(channel string, payload any) {
+	switch p := payload.(type) {
+	case DeadInfo:
+		c.mu.Lock()
+		c.dead++
+		c.batchesAtDead, c.runEndAtDead = c.batches, c.runEnd
+		c.mu.Unlock()
+		c.once.Do(func() { close(c.deadCh) })
+	case Batch:
+		if c.delay > 0 {
+			time.Sleep(c.delay)
+		}
+		j, err := json.Marshal(p)
+		if err != nil {
+			panic(err)
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.batches++
+		c.maxBatchBytes = max(c.maxBatchBytes, len(j))
+		for _, ev := range p.Events {
+			switch ev["type"] {
+			case "run_end":
+				c.runEnd = true
+			case "finding":
+				c.findings++
+			}
+			for _, k := range []string{"summary", "msg", "url"} {
+				if v, ok := ev[k].(string); ok {
+					c.maxField = max(c.maxField, len(v))
+				}
+			}
 		}
 	}
 }
 
-func TestReplay128MiBBoundedMemory(t *testing.T) {
+// replay writes events.jsonl with write for a run whose engine is gone
+// (pid 0), attaches, and waits for run:<id>:dead. It returns the emitter and
+// the peak heap growth during the replay.
+func replay(t *testing.T, em *replayEmitter, write func(w *bufio.Writer)) int64 {
+	t.Helper()
 	root := filepath.Join(t.TempDir(), "outputs")
 	dir := filepath.Join(root, "example.com", "20260101-000000")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// pid 0 is never alive: the run reads as finished, as for a replay.
 	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(`{"pid":0,"pgid":0,"pid_start":0,"target":"example.com","flags":{},"started":1}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -507,25 +547,7 @@ func TestReplay128MiBBoundedMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := bufio.NewWriterSize(f, 1<<20)
-	const size = 128 << 20
-	pad := strings.Repeat("x", 4000)
-	fmt.Fprintln(w, `{"v":1,"t":1,"type":"run_start","target":"example.com","flags":{},"stages":["a"]}`)
-	fmt.Fprintln(w, `{"v":1,"t":1,"type":"stage_start","stage":"a"}`)
-	written, i := 0, 0
-	for written < size {
-		n, _ := fmt.Fprintf(w, `{"v":1,"t":2,"type":"output","stage":"a","tool":"t","stream":"stdout","line":"%d %s"}`+"\n", i, pad)
-		written += n
-		if i%50 == 0 {
-			n, _ = fmt.Fprintf(w, `{"v":1,"t":2,"type":"progress","stage":"a","done":%d,"total":1}`+"\n", i)
-			written += n
-		}
-		if i%500 == 0 {
-			n, _ = fmt.Fprintf(w, `{"v":1,"t":2,"type":"finding","severity":"info","template":"t%d","host":"h","url":"u","summary":"s"}`+"\n", i)
-			written += n
-		}
-		i++
-	}
-	fmt.Fprintln(w, `{"v":1,"t":3,"type":"run_end","status":"ok","totals":{},"report":"","summary":""}`)
+	write(w)
 	if err := w.Flush(); err != nil {
 		t.Fatal(err)
 	}
@@ -533,8 +555,7 @@ func TestReplay128MiBBoundedMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	em := &countingEmitter{ended: make(chan struct{})}
-	s, err := New(Config{Root: root, EngineBin: "/nonexistent", Emitter: em})
+	s, err := New(Config{Root: root, EngineBin: "/nonexistent", Emitter: em, LivenessInterval: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,26 +569,92 @@ func TestReplay128MiBBoundedMemory(t *testing.T) {
 	if _, err := s.Attach(dir); err != nil {
 		t.Fatal(err)
 	}
-	timeout := time.After(90 * time.Second)
-	tick := time.NewTicker(10 * time.Millisecond)
+	timeout := time.After(120 * time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
 	defer tick.Stop()
 loop:
 	for {
 		select {
-		case <-em.ended:
+		case <-em.deadCh:
 			break loop
 		case <-timeout:
-			t.Fatal("replay did not reach run_end")
+			t.Fatal("replay did not end with run:<id>:dead")
 		case <-tick.C:
 			runtime.ReadMemStats(&ms)
 			peak = max(peak, ms.HeapAlloc)
 		}
 	}
-	runtime.ReadMemStats(&ms)
-	peak = max(peak, ms.HeapAlloc)
+	time.Sleep(300 * time.Millisecond) // anything after dead would show up now
 	s.Detach(dir)
-	growth := int64(peak) - int64(base)
+
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if !em.runEndAtDead {
+		t.Errorf("dead emitted before the run_end batch (after %d batches)", em.batchesAtDead)
+	}
+	if em.batches != em.batchesAtDead || em.dead != 1 {
+		t.Errorf("%d batches after dead; dead emitted %d times", em.batches-em.batchesAtDead, em.dead)
+	}
+	return int64(peak) - int64(base)
+}
+
+func TestReplay128MiBBoundedMemory(t *testing.T) {
+	const size = 128 << 20
+	em := newReplayEmitter(0)
+	growth := replay(t, em, func(w *bufio.Writer) {
+		pad := strings.Repeat("x", 4000)
+		fmt.Fprintln(w, `{"v":1,"t":1,"type":"run_start","target":"example.com","flags":{},"stages":["a"]}`)
+		fmt.Fprintln(w, `{"v":1,"t":1,"type":"stage_start","stage":"a"}`)
+		written, i := 0, 0
+		for written < size {
+			n, _ := fmt.Fprintf(w, `{"v":1,"t":2,"type":"output","stage":"a","tool":"t","stream":"stdout","line":"%d %s"}`+"\n", i, pad)
+			written += n
+			if i%50 == 0 {
+				n, _ = fmt.Fprintf(w, `{"v":1,"t":2,"type":"progress","stage":"a","done":%d,"total":1}`+"\n", i)
+				written += n
+			}
+			if i%500 == 0 {
+				n, _ = fmt.Fprintf(w, `{"v":1,"t":2,"type":"finding","severity":"info","template":"t%d","host":"h","url":"u","summary":"s"}`+"\n", i)
+				written += n
+			}
+			i++
+		}
+		fmt.Fprintln(w, `{"v":1,"t":3,"type":"run_end","status":"ok","totals":{},"report":"","summary":""}`)
+	})
 	t.Logf("replayed %d MiB in %d batches; heap growth peak %.1f MiB", size>>20, em.batches, float64(growth)/(1<<20))
+	if growth >= 64<<20 {
+		t.Fatalf("heap grew %.1f MiB during replay, limit 64 MiB", float64(growth)/(1<<20))
+	}
+}
+
+// Engine event lines can carry ~1 MiB strings (log msg, finding summary).
+// Structural events are never dropped, so they must be bounded by size: cut
+// for display and flushed by pending bytes, even with a slow client.
+func TestReplayHugeStructuralLinesBounded(t *testing.T) {
+	const n = 48                         // ~1 MiB lines each; few, since decoding them is slow under -race
+	huge := strings.Repeat("é", 512<<10) // 1 MiB of UTF-8
+	em := newReplayEmitter(5 * time.Millisecond)
+	growth := replay(t, em, func(w *bufio.Writer) {
+		fmt.Fprintln(w, `{"v":1,"t":1,"type":"run_start","target":"example.com","flags":{},"stages":["a"]}`)
+		for i := range n {
+			if i%2 == 0 {
+				fmt.Fprintf(w, `{"v":1,"t":2,"type":"finding","severity":"high","template":"t%d","host":"h","url":"%s","summary":"%s"}`+"\n", i, huge, huge)
+			} else {
+				fmt.Fprintf(w, `{"v":1,"t":2,"type":"log","level":"info","msg":"%s"}`+"\n", huge)
+			}
+		}
+		fmt.Fprintln(w, `{"v":1,"t":3,"type":"run_end","status":"ok","totals":{},"report":"","summary":""}`)
+	})
+	t.Logf("heap growth peak %.1f MiB; largest batch %.1f MiB in %d batches", float64(growth)/(1<<20), float64(em.maxBatchBytes)/(1<<20), em.batches)
+	if em.findings != n/2 {
+		t.Fatalf("%d findings delivered, want %d", em.findings, n/2)
+	}
+	if em.maxField > MaxLineBytes {
+		t.Fatalf("a structural field of %d bytes reached the client, limit %d", em.maxField, MaxLineBytes)
+	}
+	if limit := FlushBytes + 1<<20; em.maxBatchBytes > limit {
+		t.Fatalf("batch of %d bytes, limit %d", em.maxBatchBytes, limit)
+	}
 	if growth >= 64<<20 {
 		t.Fatalf("heap grew %.1f MiB during replay, limit 64 MiB", float64(growth)/(1<<20))
 	}

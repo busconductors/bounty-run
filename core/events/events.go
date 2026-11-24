@@ -119,3 +119,7 @@ type VersionMsg struct{ RunDir string }
 // ResetMsg reports that the event file was replaced or truncated; the tail
 // restarts at offset 0 and consumers should discard state derived from the old stream.
 type ResetMsg struct{}
+
+// EOFMsg is sent by TailWithEOF when it has consumed the whole file: Offset
+// bytes of the current file (a held-back partial line included).
+type EOFMsg struct{ Offset int64 }

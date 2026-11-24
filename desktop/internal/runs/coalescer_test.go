@@ -257,3 +257,107 @@ func TestNoEmptyFlush(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestStructuralBytesBoundFlush(t *testing.T) {
+	h := newPump(t)
+	big := strings.Repeat("s", 300<<10)
+	const n = 200
+	for i := range n {
+		h.ev(events.Event{Type: "finding", Severity: "high", Template: fmt.Sprint(i), Summary: big, URL: big, Host: big})
+	}
+	bs := h.drain() // no tick: the byte threshold alone must flush
+	if len(bs) == 0 {
+		t.Fatal("no byte-triggered flush")
+	}
+	bs = append(bs, h.tick())
+	got := 0
+	for _, b := range bs {
+		size := 0
+		for _, ev := range b.Events {
+			got++
+			for _, k := range []string{"summary", "url", "host"} {
+				l := len(ev[k].(string))
+				if l > MaxLineBytes {
+					t.Fatalf("%s is %d bytes, over %d", k, l, MaxLineBytes)
+				}
+				size += l
+			}
+		}
+		if size > FlushBytes+3*MaxLineBytes {
+			t.Fatalf("batch holds %d bytes of strings, over %d", size, FlushBytes)
+		}
+	}
+	if got != n {
+		t.Fatalf("got %d findings, want %d", got, n)
+	}
+}
+
+// deadHarness runs pump with a liveness check that always finds the engine
+// gone and an events file of finalSize bytes.
+func deadHarness(t *testing.T, finalSize int64, exists bool) (h *pumpHarness, live Ticker, dead chan struct{}) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	h = &pumpHarness{t: t, clk: newFakeClock(), in: make(chan any), out: make(chan Batch, 1024), stop: cancel, ended: make(chan struct{})}
+	flush := h.clk.NewTicker(FlushInterval)
+	live = h.clk.NewTicker(time.Second)
+	dead = make(chan struct{}, 4)
+	lv := &liveness{
+		c:      live.C(),
+		alive:  func() bool { return false },
+		size:   func() (int64, bool) { return finalSize, exists },
+		report: func() { dead <- struct{}{} },
+	}
+	go func() {
+		defer close(h.ended)
+		pump(ctx, h.in, flush.C(), func(b Batch) { h.out <- b }, lv)
+	}()
+	t.Cleanup(func() { cancel(); <-h.ended })
+	return h, live, dead
+}
+
+func expectDead(t *testing.T, dead chan struct{}, want bool) {
+	t.Helper()
+	select {
+	case <-dead:
+		if !want {
+			t.Fatal("dead reported before the tail drained the file")
+		}
+	case <-time.After(150 * time.Millisecond):
+		if want {
+			t.Fatal("dead not reported")
+		}
+	}
+}
+
+func TestDeadWaitsForTailToDrain(t *testing.T) {
+	h, _, dead := deadHarness(t, 1000, true)
+	h.send(events.EOFMsg{Offset: 400}) // caught up with a file still growing
+	h.clk.Advance(time.Second)         // engine found gone; 600 bytes unread
+	expectDead(t, dead, false)
+	h.clk.Advance(5 * time.Second)
+	expectDead(t, dead, false)
+	h.ev(events.Event{Type: "run_end", Status: "ok"})
+	h.send(events.EOFMsg{Offset: 1000})
+	b := h.next() // the final batch is flushed before dead
+	if len(b.Events) != 1 || b.Events[0]["type"] != "run_end" {
+		t.Fatalf("final batch = %+v", b)
+	}
+	expectDead(t, dead, true)
+	h.send(events.EOFMsg{Offset: 1000})
+	h.clk.Advance(time.Second)
+	expectDead(t, dead, false) // once only
+}
+
+func TestDeadWithoutEventsFile(t *testing.T) {
+	h, _, dead := deadHarness(t, 0, false)
+	h.clk.Advance(time.Second)
+	expectDead(t, dead, true)
+}
+
+func TestDeadAfterTailEnds(t *testing.T) {
+	h, _, dead := deadHarness(t, 1000, true)
+	h.send(events.VersionMsg{RunDir: "/x"}) // Tail stops after this
+	close(h.in)
+	h.clk.Advance(time.Second)
+	expectDead(t, dead, true)
+}
