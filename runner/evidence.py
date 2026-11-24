@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from . import finding
+from .httpclient import scrubbable
 
 REDACT = {
     "authorization", "cookie", "set-cookie",
@@ -23,7 +24,8 @@ REDACT = {
 }
 
 MASK = "<redacted>"
-SHELL_MASK = "REDACTED"  # repro lines can be unquoted: no shell metacharacters
+# Replaces a command holding a secret value: editing it could change its target.
+WITHHELD_REPRO = "echo 'repro withheld: the command contained a secret header value'\nexit 1"
 
 _TEXT_CONTENT_HINTS = ("text/", "json", "xml", "javascript", "html", "csv", "x-www-form")
 
@@ -99,17 +101,23 @@ class EvidenceStore:
         secret_headers = secret_headers if redact else None
         self._secret_names = {str(k).lower() for k in secret_headers or ()}
         self._secret_values = sorted(
-            {str(v) for v in (secret_headers or {}).values() if v}, key=len, reverse=True)
+            set(scrubbable(str(v) for v in (secret_headers or {}).values())),
+            key=len, reverse=True)
         self._index: dict[str, list[str]] = {}
         self._counts: dict[str, int] = {}
         self._lock = threading.Lock()
 
     # -- helpers ----------------------------------------------------------------
 
-    def _scrub(self, text: str, mask: str = MASK) -> str:
+    def _scrub(self, text: str) -> str:
         for value in self._secret_values:
-            text = text.replace(value, mask)
+            text = text.replace(value, MASK)
         return text
+
+    def _holds_secret(self, command: str) -> bool:
+        """True if a value is in ``command``, verbatim or single-quoted by shlex."""
+        return any(form in command for value in self._secret_values
+                   for form in (value, value.replace("'", "'\"'\"'")))
 
     def _scrub_bytes(self, data: bytes) -> bytes:
         for value in self._secret_values:  # sent as latin-1, often reflected as UTF-8
@@ -117,8 +125,8 @@ class EvidenceStore:
                 data = data.replace(raw, MASK.encode())
         return data
 
-    def _safe_headers(self, headers) -> list[tuple[str, str]]:
-        return [(k, MASK if k.lower() in self._secret_names else self._scrub(v))
+    def _name_masked(self, headers) -> list[tuple[str, str]]:
+        return [(k, MASK if k.lower() in self._secret_names else v)
                 for k, v in redact_headers(headers, self.redact)]
 
     def _redacted_names(self) -> list[str]:
@@ -156,7 +164,8 @@ class EvidenceStore:
 
     def _write_repro(self, directory: Path, curl: str) -> Path:
         repro = directory / "repro.sh"
-        repro.write_text("#!/bin/sh\nset -eu\n" + self._scrub(curl, SHELL_MASK) + "\n")
+        command = WITHHELD_REPRO if self._holds_secret(curl) else curl
+        repro.write_text("#!/bin/sh\nset -eu\n" + command + "\n")
         os.chmod(repro, 0o700)
         return repro
 
@@ -173,13 +182,16 @@ class EvidenceStore:
         host = f.get("host")
         fp = finding_fp(f) if finding else fp_from_url(template, host, url)
         evidence_id, directory = self._next_dir(fp)
+        raw_url = url
         if url and self._secret_values:
             url = self._scrub(str(url))
 
-        # request.http
-        req_headers = self._safe_headers(getattr(request, "headers", {}))
+        # request.http: secret headers are masked by name, whatever their length
+        named = self._name_masked(getattr(request, "headers", {}))
+        req_headers = [(k, self._scrub(v)) for k, v in named]
         method = getattr(request, "method", "GET") or "GET"
-        req_body = self._scrub_bytes(_as_bytes(getattr(request, "body", None)))
+        raw_req_body = _as_bytes(getattr(request, "body", None))
+        req_body = self._scrub_bytes(raw_req_body)
         req_lines = [f"{method} {url}"]
         req_lines += [f"{k}: {v}" for k, v in req_headers]
         req_text = "\r\n".join(req_lines) + "\r\n\r\n"
@@ -188,10 +200,11 @@ class EvidenceStore:
         (directory / "request.http").write_text(req_text)
 
         # response.http
-        resp_headers = self._safe_headers(getattr(response, "headers", {}))
+        raw_resp_headers = redact_headers(getattr(response, "headers", {}), self.redact)
+        resp_headers = [(k, self._scrub(v)) for k, v in raw_resp_headers]
         status = getattr(response, "status_code", "")
         ctype = ""
-        for k, v in resp_headers:
+        for k, v in raw_resp_headers:  # classify before any value is masked
             if k.lower() == "content-type":
                 ctype = v
         body = self._scrub_bytes(_read_body(response))
@@ -203,7 +216,8 @@ class EvidenceStore:
             resp_text += body.decode("utf-8", "replace")
         (directory / "response.http").write_text(resp_text)
 
-        curl = build_curl(method, url, req_headers, req_body, redact=self.redact)
+        # Built from the unscrubbed URL and body so _write_repro can withhold it.
+        curl = build_curl(method, raw_url, named, raw_req_body, redact=self.redact)
         self._write_repro(directory, curl)
 
         meta = {

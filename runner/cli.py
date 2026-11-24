@@ -3,6 +3,7 @@ import argparse
 import os
 import re
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -709,7 +710,8 @@ def main(argv=None) -> int:
         scope.reset()
         return 2
     # set_secrets replaces the registered set, so this is the one registration.
-    utils.set_secrets((*(pcfg.secrets if pcfg is not None else ()), *env_headers.values()))
+    utils.set_secrets((*(pcfg.secrets if pcfg is not None else ()),
+                       *httpclient.scrubbable(env_headers.values())))
     if pcfg is not None:
         args.proxy = pcfg.url
         if pcfg.kind == "socks5" and not proxy.have_socks():
@@ -753,6 +755,13 @@ def main(argv=None) -> int:
             events.run_start(target, flags, PLANNED_STAGES(args, skip))
 
         return _run(args, target, outdir, skip)
+    except Exception:
+        if not env_headers:
+            raise
+        # An uncaught traceback reaches engine.log unscrubbed: print it here,
+        # while the secrets are still registered, with the same exit code.
+        stderr.write(utils._redact(traceback.format_exc()))
+        return 1
     finally:
         httpclient.client().close()
         if env_headers:  # the process-wide client must not keep them past this run

@@ -34,6 +34,14 @@ from . import __version__, events
 HEADERS_ENV_VAR = "BOUNTY_RUN_HEADERS"
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _HEADER_CTL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+# Shorter values are too common to replace in free text (logs, URLs, bodies,
+# commands) without corrupting it; they stay masked under their header name.
+MIN_SCRUB_LEN = 8
+
+
+def scrubbable(values) -> tuple[str, ...]:
+    """The header values long enough to scrub from free text."""
+    return tuple(v for v in values if len(v) >= MIN_SCRUB_LEN)
 
 
 def headers_from_env() -> dict[str, str]:
