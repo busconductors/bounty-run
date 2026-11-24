@@ -15,6 +15,7 @@ import (
 	"bountyrun/core/runstore"
 	"bountyrun/desktop/internal/catalog"
 	"bountyrun/desktop/internal/doctor"
+	"bountyrun/desktop/internal/findings"
 	"bountyrun/desktop/internal/runs"
 )
 
@@ -61,6 +62,16 @@ func (d *Doctor) Report() (doctor.Report, error) { return d.svc.Report() }
 
 // Recheck re-runs the toolchain check.
 func (d *Doctor) Recheck() (doctor.Report, error) { return d.svc.Recheck() }
+
+// Findings serves the Findings view.
+type Findings struct {
+	svc *findings.Service
+}
+
+// GetFindings returns the findings of the run in dir (a run under the outputs root).
+func (f *Findings) GetFindings(dir string) (findings.FindingsResult, error) {
+	return f.svc.GetFindings(dir)
+}
 
 // Runs exposes run control and streaming.
 type Runs struct {
@@ -138,6 +149,7 @@ func Bind(svc *runs.Service, cat *catalog.Catalog) []application.Service {
 	return []application.Service{
 		application.NewServiceWithOptions(&Launch{cat: cat, runs: svc}, opts),
 		application.NewServiceWithOptions(&Runs{svc: svc}, opts),
+		application.NewServiceWithOptions(&Findings{svc: findings.New(svc.RunDir)}, opts),
 		application.NewServiceWithOptions(&Doctor{svc: doctor.New(cat)}, opts),
 	}
 }

@@ -431,6 +431,9 @@ func sanitizedTail(dir string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// RunDir validates dir as runDir does, for services that read a run's files.
+func (s *Service) RunDir(dir string) (string, error) { return s.runDir(dir) }
+
 // runDir checks that dir is a run directory root/<target>/<stamp> (not a
 // symlink) and returns it cleaned. Every control goes through it, so the
 // frontend cannot point the service at arbitrary paths.

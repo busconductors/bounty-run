@@ -34,3 +34,8 @@ export const doctorApi = Object.freeze({
   report: () => call('Doctor.Report'),
   recheck: () => call('Doctor.Recheck'),
 });
+
+// The Findings view's backend: a run's findings, with evidence links when the run has an index.
+export const findingsApi = Object.freeze({
+  get: (dir) => call('Findings.GetFindings', dir),
+});
