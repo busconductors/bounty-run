@@ -123,10 +123,10 @@
   --col-template: 200px;
   --col-host: 220px;
   --col-summary: 280px;
-  --col-time: 76px;
+  --col-time: 88px;
   --col-index: 20px;
-  --col-duration: 32px;
-  --col-count: 28px;
+  --col-duration: 40px;
+  --col-count: 40px;
   --col-log-ts: 72px;
   --col-log-tag: 80px;
   --col-log-level: 44px;

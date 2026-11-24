@@ -138,13 +138,13 @@
       <div class="space" use:px={['height', rowH > 0 ? rows.length * rowH : null]}>
         <div class="rows" use:px={['top', rowH > 0 ? range.start * rowH : null]}>
           {#each slice as f (f.seq)}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- Keys go to the grid (onkeydown above), so rows take no focus. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
             <div
               class="tr row sev-{f.sev}"
               class:selected={f.seq === selected}
               class:flash={f.sev === 'critical' && now - f.t < 400}
               role="row"
-              tabindex="-1"
               aria-selected={f.seq === selected}
               data-finding={f.seq}
               onclick={() => onselect(f.seq)}
