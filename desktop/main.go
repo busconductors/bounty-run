@@ -9,7 +9,10 @@ package main
 import (
 	"log"
 
+	"bountyrun/desktop/internal/bridge/services"
 	"bountyrun/desktop/internal/bridge/shell"
+	"bountyrun/desktop/internal/catalog"
+	"bountyrun/desktop/internal/runs"
 )
 
 func main() {
@@ -17,7 +20,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := shell.New(assets).Run(); err != nil {
+	app := shell.New(assets)
+	svc, err := runs.New(runs.Config{Emitter: app.Emitter()})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// The services' shutdown hook detaches runs; engines keep running.
+	app.Register(services.Bind(svc, catalog.New(catalog.Config{Root: svc.Root()}))...)
+	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
 }

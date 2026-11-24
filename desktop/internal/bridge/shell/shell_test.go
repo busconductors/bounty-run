@@ -1,8 +1,10 @@
 package shell
 
 import (
+	"log/slog"
 	"reflect"
 	"testing"
+	"testing/fstest"
 )
 
 type recordingSink struct {
@@ -22,5 +24,13 @@ func TestEmitterForwardsChannelAndSinglePayload(t *testing.T) {
 		if sink.name != "run:event" || !reflect.DeepEqual(sink.data, []any{payload}) {
 			t.Fatalf("got %q %#v, want one payload %#v", sink.name, sink.data, payload)
 		}
+	}
+}
+
+// Binding-call arguments (proxy, headers) are logged by Wails at debug level.
+func TestSystemLogNeverDebug(t *testing.T) {
+	opts := appOptions(fstest.MapFS{"index.html": {Data: []byte("x")}})
+	if opts.Logger != nil || opts.LogLevel < slog.LevelInfo {
+		t.Fatalf("logger %v level %v: binding arguments could be logged", opts.Logger, opts.LogLevel)
 	}
 }

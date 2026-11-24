@@ -5,6 +5,7 @@ package shell
 
 import (
 	"io/fs"
+	"log/slog"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -30,11 +31,7 @@ type Shell struct {
 
 // New builds the application and its window around the given frontend assets.
 func New(assets fs.FS) *Shell {
-	app := application.New(application.Options{
-		Name:   appName,
-		Assets: application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
-		Linux:  application.LinuxOptions{ProgramName: programName},
-	})
+	app := application.New(appOptions(assets))
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            appName,
 		Width:            windowWidth,
@@ -48,9 +45,29 @@ func New(assets fs.FS) *Shell {
 	return &Shell{app: app}
 }
 
+// appOptions configures the application. Wails logs every binding call's
+// arguments at debug level, and launch requests carry the proxy and headers,
+// so the system log never goes below info (and is discarded entirely in
+// production builds).
+func appOptions(assets fs.FS) application.Options {
+	return application.Options{
+		Name:     appName,
+		Assets:   application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
+		Linux:    application.LinuxOptions{ProgramName: programName},
+		LogLevel: slog.LevelInfo,
+	}
+}
+
 // Emitter returns the event channel services use to reach the frontend.
 func (s *Shell) Emitter() bridge.Emitter {
 	return emitter{events: s.app.Event}
+}
+
+// Register binds services to the frontend. Call it before Run.
+func (s *Shell) Register(services ...application.Service) {
+	for _, svc := range services {
+		s.app.RegisterService(svc)
+	}
 }
 
 // Run blocks until the last window closes.

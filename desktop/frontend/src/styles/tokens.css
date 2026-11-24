@@ -111,6 +111,13 @@
   --brand-bar-w: 3px;
   --brand-bar-h: 14px;
 
+  /* Launch form */
+  --form-label-w: 160px;
+  --field-w: 480px;
+  --stage-id-w: 96px;
+  --stage-col-min: 440px;
+  --log-tail-h: 240px;
+
   /* Column widths */
   --col-sev: 84px;
   --col-template: 200px;
