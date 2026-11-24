@@ -1,0 +1,53 @@
+# nfpm config for the .deb, built by `wails3 task package:deb` from desktop/.
+# Relative src paths resolve against desktop/. ${GOARCH}, ${BOUNTY_VERSION} and
+# ${BOUNTY_ENGINE_DIR} come from the Taskfile environment.
+#
+# Layout: the app at /usr/bin/bounty-runner finds the engine sidecar at
+# <exe dir>/../lib/bounty-run/engine/bounty-run (runs.EngineBin), so the
+# installed app needs no BOUNTY_ENGINE_DIR.
+
+name: "bounty-runner"
+arch: "${GOARCH}"
+platform: "linux"
+version: "${BOUNTY_VERSION}"
+section: "net"
+priority: "optional"
+maintainer: "busconductors <88984914+busconductors@users.noreply.github.com>"
+description: |-
+  Bounty Runner desktop app
+  Desktop front end for the bounty-run recon orchestrator. Bundles the
+  frozen bounty-run engine; the external scan tools it drives are not
+  included.
+vendor: "busconductors"
+homepage: "https://github.com/busconductors/bounty-run"
+license: "MIT"
+release: "1"
+
+contents:
+  - src: "./bin/bounty-runner"
+    dst: "/usr/bin/bounty-runner"
+    file_info:
+      mode: 0755
+  # The whole PyInstaller onedir (bounty-run + _internal/), unmodified.
+  - src: "${BOUNTY_ENGINE_DIR}"
+    dst: "/usr/lib/bounty-run/engine"
+    type: tree
+  - src: "./build/appicon.png"
+    dst: "/usr/share/icons/hicolor/256x256/apps/bounty-runner.png"
+    file_info:
+      mode: 0644
+  - src: "./build/linux/bounty-runner.desktop"
+    dst: "/usr/share/applications/bounty-runner.desktop"
+    file_info:
+      mode: 0644
+
+# GTK4 + WebKitGTK 6.0 stack the binary links (Ubuntu 24.04+ / Debian 13+).
+depends:
+  - libgtk-4-1
+  - libwebkitgtk-6.0-4
+  - libjavascriptcoregtk-6.0-1
+  - libsoup-3.0-0
+
+scripts:
+  postinstall: "./build/linux/nfpm/scripts/postinstall.sh"
+  postremove: "./build/linux/nfpm/scripts/postremove.sh"

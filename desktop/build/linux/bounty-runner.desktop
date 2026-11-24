@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Bounty Runner
+Comment=Recon orchestrator for bug bounty workflows
+Exec=bounty-runner
+Icon=bounty-runner
+Categories=Development;Network;
+Keywords=recon;security;bug bounty;
+Terminal=false
+StartupNotify=false
