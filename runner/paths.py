@@ -39,3 +39,22 @@ def shcheck_command() -> str:
     if is_frozen():
         return f"{shlex.quote(sys.executable)} _shcheck"
     return f"python3 {shcheck_script()}"
+
+
+def child_env(base: dict | None = None) -> dict | None:
+    """Environment for external tools, or None (inherit) outside a frozen build.
+
+    The PyInstaller bootloader prepends its bundle dir to ``LD_LIBRARY_PATH`` so
+    the frozen interpreter finds its libraries; system tools (curl, nmap, ...)
+    must not load those bundled copies. Restore the caller's original value
+    (saved as ``LD_LIBRARY_PATH_ORIG``), or drop the variable if there was none.
+    """
+    if not is_frozen():
+        return None
+    env = dict(os.environ if base is None else base)
+    orig = env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if orig is None:
+        env.pop("LD_LIBRARY_PATH", None)
+    else:
+        env["LD_LIBRARY_PATH"] = orig
+    return env

@@ -26,7 +26,7 @@ import threading
 import time
 from pathlib import Path
 
-from runner import events, utils
+from runner import events, paths, utils
 
 SHIM_NAME = "metis-autocheck"
 
@@ -61,6 +61,7 @@ def _run_managed(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
     """
     proc = subprocess.Popen(
         cmd,
+        env=paths.child_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
@@ -185,6 +186,7 @@ def metis_check(target: str, outdir: Path, hosts: list[str],
             # plain blocking call with the same wall-clock timeout is enough.
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout,
+                env=paths.child_env(),
             )
     except subprocess.TimeoutExpired:
         utils.warn(f"metis: sweep timed out after {timeout}s — skipping")

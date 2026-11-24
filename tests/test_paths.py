@@ -8,9 +8,9 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
-from runner import cli, events, paths, tracker
-
 import test_events_cli as ec
+
+from runner import cli, events, paths, tracker
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -97,3 +97,23 @@ def test_fake_run_with_data_env_writes_nothing_under_repo(monkeypatch, tmp_path)
     assert snapshot() == before
     assert list(data.glob("a.com/*/findings.json"))
     assert (data / "tracker.db").exists()
+
+
+def test_ipintel_cache_follows_data_root(monkeypatch, tmp_path):
+    from runner import ipintel
+    monkeypatch.delenv("BOUNTY_RUN_IPINTEL_DIR", raising=False)
+    monkeypatch.delenv("BOUNTY_RUN_DATA", raising=False)
+    assert ipintel.cache_dir() == ipintel.DEFAULT_CACHE_DIR
+    monkeypatch.setenv("BOUNTY_RUN_DATA", str(tmp_path))
+    assert ipintel.cache_dir() == tmp_path / ".cache" / "ipintel"
+    monkeypatch.setenv("BOUNTY_RUN_IPINTEL_DIR", str(tmp_path / "x"))
+    assert ipintel.cache_dir() == tmp_path / "x"
+
+
+def test_child_env_only_rewrites_when_frozen(monkeypatch):
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert paths.child_env() is None
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    base = {"LD_LIBRARY_PATH": "/bundle", "LD_LIBRARY_PATH_ORIG": "/orig", "X": "1"}
+    assert paths.child_env(base) == {"LD_LIBRARY_PATH": "/orig", "X": "1"}
+    assert paths.child_env({"LD_LIBRARY_PATH": "/bundle"}) == {}

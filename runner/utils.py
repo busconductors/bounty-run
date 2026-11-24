@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from runner import events
+from runner import events, paths
 
 
 def _color_enabled() -> bool:
@@ -175,6 +175,8 @@ def run(cmd: str, outfile: str = None, timeout: int = 180,
     """
     extra = tuple(proxy.secrets) if proxy is not None else ()
     env = {**os.environ, **proxy.env()} if proxy is not None else None
+    if paths.is_frozen():  # frozen: child tools must not inherit the bundle's library path
+        env = paths.child_env(env)
     log(f"  $ {_redact(cmd, extra)}")
     try:
         proc = subprocess.Popen(

@@ -4,8 +4,8 @@ import re
 import shutil
 from pathlib import Path
 
+from runner import paths, utils
 from runner import proxy as proxymod
-from runner import utils
 from runner.stages import _is_global, _resolve
 
 # Each line: [+-] [url] [Header: payload] [Code: N] [Size: N]
@@ -36,7 +36,7 @@ def _resolve_binary() -> str | None:
     which = shutil.which("headi")
     if which:
         return which
-    vendored = Path(__file__).resolve().parent / "vendor" / "bin" / "headi"
+    vendored = paths.resource("runner/vendor/bin/headi")
     if vendored.exists():
         return str(vendored)
     return None

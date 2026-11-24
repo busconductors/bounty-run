@@ -49,8 +49,8 @@ from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from . import paths, utils
 from . import proxy as proxymod
-from . import utils
 
 CONFIRMED = "CONFIRMED"
 LIKELY = "LIKELY"
@@ -77,7 +77,12 @@ MAX_BODY = 512_000
 
 def cache_dir() -> Path:
     env = os.environ.get("BOUNTY_RUN_IPINTEL_DIR")
-    return Path(env).expanduser() if env else DEFAULT_CACHE_DIR
+    if env:
+        return Path(env).expanduser()
+    if os.environ.get(paths.ENV_DATA, "").strip():
+        # Packaged/desktop runs keep every write under the data root, not ~/.cache.
+        return paths.data_root() / ".cache" / "ipintel"
+    return DEFAULT_CACHE_DIR
 
 
 # --------------------------------------------------------------------------

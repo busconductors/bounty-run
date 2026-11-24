@@ -4,7 +4,8 @@ Standalone module with its own CLI (``tracker.main(argv)``).  The operator wires
 this into ``bounty_run.py`` as the ``track`` subcommand; this module is self-
 contained and imports nothing but the stdlib.
 
-DB location: ``<data root>/tracker.db`` (``$BOUNTY_RUN_DATA``, else ``<repo>/outputs``; override with ``get_db(path=...)`` or by
+DB location: ``<data root>/tracker.db`` (``$BOUNTY_RUN_DATA``, else ``<repo>/outputs``; override with
+``get_db(path=...)`` or by
 repointing ``tracker.DEFAULT_DB`` — used by the unit tests so they never touch the
 real database).
 """

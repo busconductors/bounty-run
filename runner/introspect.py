@@ -19,7 +19,6 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 from . import __version__, headi_scan, stage_registry
 from .http_headers import SHCHECK
