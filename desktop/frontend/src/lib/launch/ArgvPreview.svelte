@@ -12,7 +12,7 @@
   {#if envNames.length}
     <p class="env">
       <span class="key">env</span>
-      {#each envNames as name (name)}<span class="name">{name}</span>{/each}
+      {#each envNames as name, i (i)}<span class="name">{name}</span>{/each}
       <span class="hint">values hidden</span>
     </p>
   {/if}

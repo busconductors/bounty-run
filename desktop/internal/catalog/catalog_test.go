@@ -2,12 +2,14 @@ package catalog
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -421,3 +423,99 @@ func TestPreviewEqualsSpawnedArgv(t *testing.T) {
 type nopEmitter struct{}
 
 func (nopEmitter) Emit(string, any) {}
+
+func TestPreviewDedupesScopeRules(t *testing.T) {
+	c, _ := newTestCatalog(t)
+	r := req("example.com", "subs")
+	r.Options.ScopeAllow = []string{"api.example.com", " api.example.com ", "b.example.com", "api.example.com"}
+	r.Options.ScopeDeny = []string{"x.example.com", "x.example.com"}
+	p, err := c.Preview(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.Scope.Allow, []string{"api.example.com", "b.example.com"}) || !slices.Equal(p.Scope.Deny, []string{"x.example.com"}) {
+		t.Fatalf("scope not deduped in order: %+v", p.Scope)
+	}
+	n := 0
+	for _, a := range p.Argv {
+		if a == "--scope-allow=api.example.com" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("argv has %d copies of the rule: %v", n, p.Argv)
+	}
+	o, err := c.Resolve(r) // what StartRun spawns: the same deduped rules
+	if err != nil || !slices.Equal(o.ScopeAllow, p.Scope.Allow) || !slices.Equal(o.ScopeDeny, p.Scope.Deny) {
+		t.Fatalf("Resolve %+v / %v differs from preview scope %+v", o, err, p.Scope)
+	}
+}
+
+// hangingDoctor answers stages at once but never finishes `introspect
+// doctor` until the test ends; it counts doctor runs.
+func hangingDoctor(t *testing.T) (*Catalog, *atomic.Int32) {
+	t.Helper()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var runs atomic.Int32
+	return New(Config{Root: t.TempDir(), EngineBin: "/fake/bounty-run", Exec: func(_ string, args ...string) ([]byte, error) {
+		switch args[1] {
+		case "stages":
+			return []byte(stagesJSON), nil
+		case "doctor":
+			runs.Add(1)
+			<-release
+			return nil, errors.New("killed")
+		}
+		return nil, errors.New("unexpected " + args[1])
+	}}), &runs
+}
+
+func TestPreviewDoesNotWaitForHangingToolCheck(t *testing.T) {
+	c, runs := hangingDoctor(t)
+	for i := 0; i < 3; i++ {
+		start := time.Now()
+		p, err := c.Preview(req("example.com", "subs", "tech"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := time.Since(start); d > doctorPreviewWait+time.Second {
+			t.Fatalf("preview %d took %s with a hanging tool check", i, d)
+		}
+		if !slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.HasPrefix(w, WarnToolsUnavailable) }) {
+			t.Fatalf("preview %d: no tool-status warning in %q", i, p.Warnings)
+		}
+	}
+	if n := runs.Load(); n != 1 {
+		t.Fatalf("tool check ran %d times; want a single flight", n)
+	}
+}
+
+func TestFailedToolCheckIsCachedBriefly(t *testing.T) {
+	var runs atomic.Int32
+	c := New(Config{Root: t.TempDir(), EngineBin: "/fake/bounty-run", Exec: func(_ string, args ...string) ([]byte, error) {
+		if args[1] == "doctor" {
+			runs.Add(1)
+			return nil, errors.New("doctor broke")
+		}
+		return []byte(stagesJSON), nil
+	}})
+	for i := 0; i < 3; i++ {
+		p, err := c.Preview(req("example.com", "subs"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, "doctor broke") }) {
+			t.Fatalf("warnings %q lack the tool-check failure", p.Warnings)
+		}
+	}
+	if _, err := c.Doctor(); err == nil {
+		t.Fatal("Doctor hid the cached failure")
+	}
+	if n := runs.Load(); n != 1 {
+		t.Fatalf("failing tool check ran %d times within the retry window", n)
+	}
+	if _, err := c.RecheckDoctor(); err == nil || runs.Load() != 2 {
+		t.Fatalf("RecheckDoctor did not rerun: err=%v runs=%d", err, runs.Load())
+	}
+}

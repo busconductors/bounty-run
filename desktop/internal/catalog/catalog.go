@@ -40,6 +40,9 @@ const (
 	WarnScopeAllow = "--scope-allow set: it replaces the default target-plus-subdomains scope."
 	WarnUnredacted = "--evidence-unredacted set: stored evidence may contain secrets."
 	WarnMissing    = "Selected stage has a missing tool"
+	// WarnToolsUnavailable prefixes the warning shown while the tool check is
+	// still running or has failed: missing-tool warnings cannot be given then.
+	WarnToolsUnavailable = "Tool status unavailable"
 )
 
 const (
@@ -49,6 +52,13 @@ const (
 	introspectLimit = 30 * time.Second
 	doctorLimit     = 120 * time.Second // ~20 tools, each probe capped at 3 s
 	maxTitleBytes   = 120
+
+	// doctorPreviewWait is the longest Preview waits for a running tool check
+	// before answering without it.
+	doctorPreviewWait = 1500 * time.Millisecond
+	// doctorRetryAfter is how long a failed tool check is reported as is
+	// before the next Preview or Doctor call tries again.
+	doctorRetryAfter = 30 * time.Second
 )
 
 // Tiers in ceiling order (runner/stage_registry.py Tier).
@@ -169,8 +179,14 @@ type Catalog struct {
 
 	stagesMu sync.Mutex
 	stages   []Stage
-	doctorMu sync.Mutex
-	doctor   *Doctor
+	// The tool check runs at most once at a time (single flight) and never
+	// under a lock a caller waits on, so a hanging `introspect doctor` cannot
+	// stall Preview.
+	doctorMu       sync.Mutex
+	doctor         *Doctor       // last successful report
+	doctorErr      error         // error of the last run, nil if it succeeded
+	doctorErrAt    time.Time     // when doctorErr was recorded
+	doctorInflight chan struct{} // closed when the running check ends
 }
 
 // New returns a Catalog.
@@ -312,12 +328,91 @@ func (c *Catalog) Doctor() (Doctor, error) { return c.loadDoctor(false) }
 // RecheckDoctor re-runs the engine's tool report.
 func (c *Catalog) RecheckDoctor() (Doctor, error) { return c.loadDoctor(true) }
 
+// errToolsPending means the tool check is still running.
+var errToolsPending = errors.New("still checking tools")
+
+// loadDoctor returns the cached report, or the failure of a check that ended
+// less than doctorRetryAfter ago; otherwise (or when fresh) it joins or starts
+// a check and waits for it.
 func (c *Catalog) loadDoctor(fresh bool) (Doctor, error) {
 	c.doctorMu.Lock()
-	defer c.doctorMu.Unlock()
-	if c.doctor != nil && !fresh {
-		return *c.doctor, nil
+	if !fresh {
+		if d, err, ok := c.doctorCachedLocked(); ok {
+			c.doctorMu.Unlock()
+			return d, err
+		}
 	}
+	done := c.startDoctorLocked()
+	c.doctorMu.Unlock()
+	<-done
+	return c.doctorResult()
+}
+
+// doctorWithin is loadDoctor(false) for Preview: it waits at most wait for a
+// running check and then reports errToolsPending.
+func (c *Catalog) doctorWithin(wait time.Duration) (Doctor, error) {
+	c.doctorMu.Lock()
+	if d, err, ok := c.doctorCachedLocked(); ok {
+		c.doctorMu.Unlock()
+		return d, err
+	}
+	done := c.startDoctorLocked()
+	c.doctorMu.Unlock()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return c.doctorResult()
+	case <-timer.C:
+		return Doctor{}, errToolsPending
+	}
+}
+
+// doctorCachedLocked reports a usable cached outcome: the last check's
+// success, or its failure while that is recent. Requires doctorMu.
+func (c *Catalog) doctorCachedLocked() (Doctor, error, bool) {
+	switch {
+	case c.doctorInflight != nil:
+		return Doctor{}, nil, false
+	case c.doctorErr != nil && time.Since(c.doctorErrAt) < doctorRetryAfter:
+		return Doctor{}, c.doctorErr, true
+	case c.doctorErr == nil && c.doctor != nil:
+		return *c.doctor, nil, true
+	}
+	return Doctor{}, nil, false
+}
+
+// startDoctorLocked joins the running check or starts one. Requires doctorMu.
+func (c *Catalog) startDoctorLocked() <-chan struct{} {
+	if c.doctorInflight != nil {
+		return c.doctorInflight
+	}
+	done := make(chan struct{})
+	c.doctorInflight = done
+	go func() {
+		d, err := c.runDoctor()
+		c.doctorMu.Lock()
+		if err == nil {
+			c.doctor = &d
+		}
+		c.doctorErr, c.doctorErrAt = err, time.Now()
+		c.doctorInflight = nil
+		close(done)
+		c.doctorMu.Unlock()
+	}()
+	return done
+}
+
+func (c *Catalog) doctorResult() (Doctor, error) {
+	c.doctorMu.Lock()
+	defer c.doctorMu.Unlock()
+	if c.doctorErr != nil || c.doctor == nil {
+		return Doctor{}, c.doctorErr
+	}
+	return *c.doctor, nil
+}
+
+func (c *Catalog) runDoctor() (Doctor, error) {
 	var rep struct {
 		Schema int `json:"schema"`
 		Tools  []struct {
@@ -350,7 +445,6 @@ func (c *Catalog) loadDoctor(fresh bool) (Doctor, error) {
 		d.Tools = append(d.Tools, t)
 	}
 	d.MissingByStage = missingByStage(d.Tools, stages)
-	c.doctor = &d
 	return d, nil
 }
 
@@ -539,9 +633,11 @@ func (c *Catalog) Preview(r Request) (PreviewResult, error) {
 	if o.EvidenceUnredacted {
 		p.Warnings = append(p.Warnings, WarnUnredacted)
 	}
-	d, err := c.Doctor()
+	// Never block a preview on the tool check: answer without missing-tool
+	// warnings (and say so) while it is running or has failed.
+	d, err := c.doctorWithin(doctorPreviewWait)
 	if err != nil {
-		p.Warnings = append(p.Warnings, "Tool check unavailable: "+textsafe.OneLine(err.Error()))
+		p.Warnings = append(p.Warnings, WarnToolsUnavailable+": "+textsafe.OneLine(err.Error())+".")
 	}
 	for _, id := range sel.active {
 		if tools := d.MissingByStage[id]; len(tools) > 0 {
@@ -572,11 +668,14 @@ func cleanHeaders(hs []string) ([]string, error) {
 	return out, nil
 }
 
+// cleanList trims xs and drops blank and repeated entries, keeping the first
+// occurrence's order. Preview and StartRun both use the result, so the argv
+// and the shown scope stay identical.
 func cleanList(what string, xs []string) ([]string, error) {
 	var out []string
 	for _, x := range xs {
 		x = strings.TrimSpace(x)
-		if x == "" {
+		if x == "" || slices.Contains(out, x) {
 			continue
 		}
 		if hasControl(x) {

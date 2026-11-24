@@ -54,7 +54,7 @@
           <span class="title">{row.title}</span>
           <span class="marks">
             {#if row.opt_in}<span class="chip">OPT-IN</span>{/if}
-            {#each row.caps ?? [] as cap (cap)}<span class="chip cap">{cap}</span>{/each}
+            {#each row.caps ?? [] as cap, i (i)}<span class="chip cap">{cap}</span>{/each}
             {#if missing[row.id]?.length}
               <span class="missing">⚠ {missing[row.id].join(', ')} missing</span>
             {/if}

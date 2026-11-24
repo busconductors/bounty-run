@@ -29,6 +29,8 @@
   let engineVersion = $state('');
   let catalogError = $state('');
   let toolsError = $state('');
+  // Bumped when the tool check ends, so the preview is redone with its warnings.
+  let toolsChecked = $state(0);
   let ready = $state(false);
 
   let preview = $state(null);
@@ -65,8 +67,14 @@
     }
     api.version().then((v) => (engineVersion = v?.engine_version ?? ''), () => {});
     api.doctor().then(
-      (d) => (missing = d?.missing_by_stage ?? {}),
-      (error) => (toolsError = messageOf(error)),
+      (d) => {
+        missing = d?.missing_by_stage ?? {};
+        toolsChecked += 1;
+      },
+      (error) => {
+        toolsError = messageOf(error);
+        toolsChecked += 1;
+      },
     );
   }
   load();
@@ -83,6 +91,7 @@
   // Preview every settled change; a stale answer never replaces a newer one.
   $effect(() => {
     const key = requestKey;
+    void toolsChecked;
     if (!ready || blocked) {
       preview = null;
       previewError = '';
@@ -255,8 +264,8 @@
       {#if preview}
         <p class="hint">{preview.scope.default ? 'Target and its subdomains (engine default)' : 'Custom rules (replace the default)'}</p>
         <ul class="scope">
-          {#each preview.scope.allow as rule (rule)}<li><span class="tag">allow</span><span class="mono">{rule}</span></li>{/each}
-          {#each preview.scope.deny as rule (rule)}<li><span class="tag">deny</span><span class="mono">{rule}</span></li>{/each}
+          {#each preview.scope.allow as rule, i (i)}<li><span class="tag">allow</span><span class="mono">{rule}</span></li>{/each}
+          {#each preview.scope.deny as rule, i (i)}<li><span class="tag">deny</span><span class="mono">{rule}</span></li>{/each}
           {#if preview.scope.file}<li><span class="tag">file</span><span class="mono">{preview.scope.file}</span></li>{/if}
         </ul>
       {:else}
@@ -269,7 +278,7 @@
     <section class="field" aria-label="Warnings">
       <span class="label">Warnings</span>
       <ul class="control warnings">
-        {#each preview.warnings as warning (warning)}<li><span class="glyph" aria-hidden="true">⚠</span>{warning}</li>{/each}
+        {#each preview.warnings as warning, i (i)}<li><span class="glyph" aria-hidden="true">⚠</span>{warning}</li>{/each}
       </ul>
     </section>
   {/if}

@@ -178,6 +178,37 @@ describe('launch screen', () => {
   });
 });
 
+describe('launch screen robustness', () => {
+  test('duplicate scope rules and warnings render without breaking the form', async () => {
+    const api = fakeApi({
+      preview: vi.fn(async () => ({
+        target: 'example.com', argv: ['/opt/bounty-run', 'example.com'], env_names: ['BOUNTY_RUN_DATA', 'BOUNTY_RUN_DATA'],
+        warnings: ['Same warning.', 'Same warning.'],
+        scope: { default: false, allow: ['api.example.com', 'api.example.com'], deny: ['x.example.com', 'x.example.com'] },
+        run_dir: '/o/x',
+      })),
+    });
+    await renderForm(api);
+    await fireEvent.input(screen.getByLabelText(/target/i), { target: { value: 'example.com' } });
+    const scope = await screen.findByRole('region', { name: /effective scope/i });
+    await waitFor(() => expect(within(scope).getAllByText('api.example.com')).toHaveLength(2));
+    expect(within(scope).getAllByText('x.example.com')).toHaveLength(2);
+    expect(screen.getAllByText('Same warning.')).toHaveLength(2);
+    await waitFor(() => expect(launchButton().disabled).toBe(false));
+  });
+
+  test('preview is refreshed once the tool check finishes', async () => {
+    let finish;
+    const api = fakeApi({ doctor: vi.fn(() => new Promise((resolve) => (finish = resolve))) });
+    await renderForm(api);
+    await fireEvent.input(screen.getByLabelText(/target/i), { target: { value: 'example.com' } });
+    await waitFor(() => expect(api.preview).toHaveBeenCalled());
+    const before = api.preview.mock.calls.length;
+    finish(DOCTOR);
+    await waitFor(() => expect(api.preview.mock.calls.length).toBeGreaterThan(before));
+  });
+});
+
 describe('launch model', () => {
   test('normalizeTarget mirrors engine.NormalizeTarget', () => {
     expect(normalizeTarget('  HTTPS://Sub.Example.COM:8443/path ')).toBe('sub.example.com');
