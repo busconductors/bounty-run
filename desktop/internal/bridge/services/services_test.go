@@ -137,11 +137,22 @@ func TestReportsOpenExternalValidates(t *testing.T) {
 	if err := r.OpenExternal(run, "FINDINGS.md"); err != nil || len(opened) != 1 {
 		t.Fatalf("err %v opened %v", err, opened)
 	}
-	for _, name := range []string{"findings.json", "summary.html", "../FINDINGS.md", "SUMMARY.md"} {
+	for _, name := range []string{"findings.json", "summary.html", "../FINDINGS.md", "/etc/passwd"} {
 		if err := r.OpenExternal(run, name); err == nil {
 			t.Errorf("%s opened", name)
 		}
 	}
+	// SUMMARY.md is allowlisted: refused only while the file is missing.
+	if err := r.OpenExternal(run, "SUMMARY.md"); err == nil {
+		t.Error("missing SUMMARY.md opened")
+	}
+	if err := os.WriteFile(filepath.Join(run, "SUMMARY.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.OpenExternal(run, "SUMMARY.md"); err != nil {
+		t.Errorf("present SUMMARY.md: %v", err)
+	}
+	opened = opened[:1]
 	if err := r.OpenExternal(t.TempDir(), "FINDINGS.md"); err == nil {
 		t.Error("foreign dir opened")
 	}
@@ -149,7 +160,7 @@ func TestReportsOpenExternalValidates(t *testing.T) {
 		t.Errorf("opened %v", opened)
 	}
 	info, err := r.Available(run)
-	if err != nil || !info.HTML || len(info.Markdown) != 1 || info.Markdown[0] != "FINDINGS.md" {
+	if err != nil || !info.HTML || !slices.Equal(info.Markdown, []string{"FINDINGS.md", "SUMMARY.md"}) {
 		t.Errorf("available %+v %v", info, err)
 	}
 }

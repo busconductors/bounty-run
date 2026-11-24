@@ -29,8 +29,12 @@ const HTMLReport = "summary.html"
 var MarkdownReports = []string{"FINDINGS.md", "SUMMARY.md"}
 
 // CSP is sent with every report response. The report needs its inline script
-// and style; everything else (network, frames, forms, base) is denied.
-const CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+// and style; everything else (network, forms, base) is denied. The sandbox
+// directive gives the document an opaque origin even when loaded top-level.
+// frame-ancestors is deliberately absent: 'self' may not match the Wails
+// custom-scheme origin in WebKit and would blank the iframe; the iframe's
+// sandbox attribute plus this directive already contain the report.
+const CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; sandbox allow-scripts"
 
 // ErrNotFound covers every rejection, so callers cannot tell a missing file
 // from a forbidden one.
