@@ -117,3 +117,52 @@ def test_child_env_only_rewrites_when_frozen(monkeypatch):
     base = {"LD_LIBRARY_PATH": "/bundle", "LD_LIBRARY_PATH_ORIG": "/orig", "X": "1"}
     assert paths.child_env(base) == {"LD_LIBRARY_PATH": "/orig", "X": "1"}
     assert paths.child_env({"LD_LIBRARY_PATH": "/bundle"}) == {}
+
+
+def _capture_popen(monkeypatch, module_subprocess):
+    seen = {}
+
+    class Boom(Exception):
+        pass
+
+    def fake(*a, **kw):
+        seen.update(kw)
+        raise Boom
+
+    monkeypatch.setattr(module_subprocess, "Popen", fake)
+    return seen
+
+
+def test_introspect_probe_uses_child_env_when_frozen(monkeypatch):
+    from runner import introspect
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/bundle")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/orig")
+    seen = _capture_popen(monkeypatch, introspect.subprocess)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    with contextlib.suppress(Exception):
+        introspect._probe_output(["/bin/true"])
+    assert seen["env"]["LD_LIBRARY_PATH"] == "/orig"
+    assert "LD_LIBRARY_PATH_ORIG" not in seen["env"]
+    monkeypatch.delattr(sys, "frozen")
+    seen.clear()
+    with contextlib.suppress(Exception):
+        introspect._probe_output(["/bin/true"])
+    assert seen["env"] is None
+
+
+def test_wafw00f_socks_probe_uses_child_env_when_frozen(monkeypatch, tmp_path):
+    script = tmp_path / "wafw00f"
+    script.write_text("#!/usr/bin/env python3\n")
+    monkeypatch.setattr("shutil.which", lambda _n: str(script))
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/bundle")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/orig")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert cli._wafw00f_has_socks() is True
+    assert seen["env"]["LD_LIBRARY_PATH"] == "/orig"

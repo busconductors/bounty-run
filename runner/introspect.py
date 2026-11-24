@@ -20,7 +20,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 
-from . import __version__, headi_scan, stage_registry
+from . import __version__, headi_scan, paths, stage_registry
 from .http_headers import SHCHECK
 
 SCHEMA = 1
@@ -115,7 +115,7 @@ def _probe_output(argv: list[str]) -> str | None:
     proc = None
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, cwd=sandbox,
+                                stderr=subprocess.STDOUT, cwd=sandbox, env=paths.child_env(),
                                 start_new_session=True)
         deadline = time.monotonic() + PROBE_TIMEOUT_S
         chunks: list[bytes] = []

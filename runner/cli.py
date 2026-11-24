@@ -605,7 +605,7 @@ def _wafw00f_has_socks() -> bool:
     interp = first[2:].strip().split()
     try:
         return subprocess.run([*interp, "-c", "import socks"], capture_output=True,
-                              timeout=10).returncode == 0
+                              timeout=10, env=paths.child_env()).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return True
 

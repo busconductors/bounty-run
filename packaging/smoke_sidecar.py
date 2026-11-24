@@ -89,7 +89,9 @@ def run_smoke(sidecar: Path) -> None:
         ld_probe = tmp / "child-ld-library-path"
         # Records what a spawned tool sees: the bundle's own libs must not leak to system tools.
         write_shim(shims / "subfinder", f"echo \"$LD_LIBRARY_PATH\" > '{ld_probe}'\necho www.{TARGET}\n")
-        write_shim(shims / "curl", "echo 'curl 8.0.0 (fake)'\nexit 0\n")
+        doctor_ld = tmp / "doctor-ld-library-path"
+        # `introspect doctor` probes curl --version: it must not see the bundle libs either.
+        write_shim(shims / "curl", f"echo \"$LD_LIBRARY_PATH\" > '{doctor_ld}'\necho 'curl 8.0.0 (fake)'\nexit 0\n")
         write_shim(shims / "dig", "exit 0\n")
 
         env = {"PATH": str(shims), "HOME": str(home), "BOUNTY_RUN_DATA": str(data),
@@ -102,6 +104,9 @@ def run_smoke(sidecar: Path) -> None:
         shcheck = [t for t in doctor.get("tools", []) if t.get("name") == "shcheck"]
         check(shcheck and shcheck[0].get("path") and shcheck[0].get("status") != "missing",
               f"introspect doctor: shcheck not present: {shcheck}")
+        check(doctor_ld.exists(), "introspect doctor never probed the curl shim")
+        check(str(sidecar) not in doctor_ld.read_text(),
+              f"doctor probes inherited the bundle LD_LIBRARY_PATH: {doctor_ld.read_text().strip()}")
         check(Path(shcheck[0]["path"]).exists(), "introspect doctor: shcheck path does not exist")
         sys.path.insert(0, str(ROOT))
         from runner import __version__
