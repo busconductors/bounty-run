@@ -5,7 +5,7 @@
 const ANSI =
   /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[PX^_][^\u001b]*(?:\u001b\\)?|[\u001b\u009b]\[?[0-?]*[ -/]*[@-~]?/g;
 const CONTROLS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
-const BIDI = /[؜‎‏‪-‮⁦-⁩]/g;
+const BIDI = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 export function sanitizeText(value) {
   if (value === undefined || value === null) return '';

@@ -380,11 +380,27 @@ export class MonitorSession {
   }
 
   #onDead(info) {
-    this.dead = { status: sanitizeText(info?.status) || 'crashed' };
+    const status = sanitizeText(info?.status) || 'crashed';
+    this.dead = { status };
     this.confirm = null;
     this.#acked();
     this.#teardown(true);
     this.rev += 1;
+    // The engine died without a clean end: show why, from engine.log.
+    if (!this.run.ended && status !== 'ok' && status !== 'cancelled') this.#engineTail(this.#gen);
+  }
+
+  async #engineTail(gen) {
+    try {
+      const tail = await this.#api.engineLogTail?.(this.ref.dir, 20);
+      if (gen !== this.#gen || typeof tail !== 'string' || !tail.trim()) return;
+      const t = this.run.lastT;
+      pushLog(this.run, { t, tag: 'engine.log', tool: '', level: 'NOTE', text: `engine exited (${this.dead?.status ?? 'crashed'}); engine.log tail:`, notice: true });
+      for (const line of tail.split('\n')) pushLog(this.run, { t, tag: 'engine.log', tool: '', level: 'LOG', text: sanitizeText(line) });
+      this.rev += 1;
+    } catch {
+      // the tail is a courtesy; the dead state is already shown
+    }
   }
 
   #acked() {

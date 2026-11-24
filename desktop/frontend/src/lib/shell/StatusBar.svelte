@@ -1,14 +1,26 @@
+<script>
+  // 22px telemetry row: LIVE state, stage x/N, elapsed, ev/s and C/H/M/L/I.
+  import { runStatus as s } from './status.svelte.js';
+
+  const SEV = [
+    ['critical', 'C'],
+    ['high', 'H'],
+    ['medium', 'M'],
+    ['low', 'L'],
+    ['info', 'I'],
+  ];
+  const label = $derived(s.live ? 'LIVE' : (s.label || 'idle').toUpperCase());
+</script>
+
 <footer>
-  <span class="state"><span class="dot" aria-hidden="true"></span>IDLE</span>
-  <span>STAGE --/--</span>
-  <span>--:--:--</span>
-  <span>-- ev/s</span>
+  <span class="state"><span class="dot" class:is-live={s.live} aria-hidden="true"></span>{label}</span>
+  <span>STAGE {s.stage || '--/--'}</span>
+  <span>{s.elapsed || '--:--:--'}</span>
+  <span>{s.rate === null ? '--' : s.rate} ev/s</span>
   <span class="counts">
-    <span><b class="critical">C</b>--</span>
-    <span><b class="high">H</b>--</span>
-    <span><b class="medium">M</b>--</span>
-    <span><b class="low">L</b>--</span>
-    <span><b class="info">I</b>--</span>
+    {#each SEV as [key, letter] (key)}
+      <span><b class={key}>{letter}</b>{s.counts ? s.counts[key] : '--'}</span>
+    {/each}
   </span>
   <span class="health">engine · tools</span>
 </footer>
@@ -37,6 +49,7 @@
     letter-spacing: var(--tr-label);
   }
   .dot { width: var(--live-dot); height: var(--live-dot); border: 1px solid var(--tx-off); }
+  .dot.is-live { border-color: var(--red-400); background: var(--red-400); box-shadow: var(--glow); }
   .counts { display: flex; gap: var(--s3); }
   b { margin-right: var(--s1); font-weight: var(--w-body); }
   .critical { color: var(--sev-critical); }

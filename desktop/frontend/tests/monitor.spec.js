@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
@@ -8,7 +9,8 @@ import StageList from '../src/lib/monitor/StageList.svelte';
 import SeverityChip from '../src/lib/ui/SeverityChip.svelte';
 import { applyBatch, createRunState, stageRows } from '../src/lib/monitor/store.svelte.js';
 
-const REPO = new URL('../../../', import.meta.url);
+// Vitest runs from desktop/frontend.
+const REPO = new URL('../../', pathToFileURL(`${process.cwd()}/`));
 const FULL_RUN = new URL('tui/internal/ui/testdata/full_run.jsonl', REPO);
 const CAPPED = new URL('contract/testdata/capped_output.jsonl', REPO);
 const DIR = '/out/acme.com/20251108-110600';
@@ -299,6 +301,35 @@ describe('monitor', () => {
     expect(container.textContent).toContain(hostile);
     const inspector = screen.getByRole('complementary', { name: /inspector/i });
     expect(inspector.textContent).toContain(hostile);
+  });
+
+  test('ANSI, control and bidi sequences are stripped before display', async () => {
+    const ansi = '\u001b[31mred\u001b[0m\u001b]8;;http://x\u0007link\u001b]8;;\u0007\u202Eevil\u2066x\u0000\u0008';
+    const { send, container } = await renderMonitor();
+    await send(batch([
+      runStart(ansi, ['subs']),
+      stageStart('subs'),
+      { v: 1, t: 1762600001500, type: 'finding', severity: 'high', template: ansi, host: ansi, url: ansi, summary: ansi },
+      { v: 1, t: 1762600001600, type: 'log', level: 'info', msg: ansi },
+    ], { output: [{ t: 1762600001700, stage: 'subs', tool: 'x', stream: 'stdout', line: ansi }] }));
+    await fireEvent.click(findingRows()[0]);
+    const text = container.textContent;
+    expect(text).toContain('redlinkevilx');
+    expect(text).not.toMatch(/[\u0000-\u0008\u001b\u009b\u202A-\u202E\u2066-\u2069]/);
+  });
+
+  test('a large replay keeps the DOM bounded', async () => {
+    const { send } = await renderMonitor();
+    const findings = [];
+    const output = [];
+    for (let i = 0; i < 20000; i += 1) {
+      findings.push({ v: 1, t: 1762600001000 + i, type: 'finding', severity: 'low', template: `t${i}`, host: 'h', url: 'u', summary: 's' });
+      output.push({ t: 1762600001000 + i, stage: 'subs', tool: 'x', stream: 'stdout', line: `line ${i}` });
+    }
+    await send(batch([runStart(), stageStart('subs'), ...findings], { output }));
+    expect(screen.getByRole('tab', { name: /all\s*20,000/i })).toBeTruthy();
+    expect(findingRows().length).toBeLessThanOrEqual(100);
+    expect(logLines().length).toBeLessThanOrEqual(100);
   });
 
   test('autoscroll lock shows new-line count', async () => {

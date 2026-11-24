@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test \"tests/*.test.mjs\" && vitest run",
+    "check": "svelte-check --threshold warning",
     "lint:tokens": "node scripts/token-lint.mjs",
     "build:mock": "node scripts/build-mock.mjs",
     "build": "vite build"
