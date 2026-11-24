@@ -49,3 +49,9 @@ def _hermetic_ipintel(request, tmp_path_factory, monkeypatch):
         monkeypatch.setattr(stages, "_resolve_all", _resolve_all_via_resolve)
     yield
     ipintel.reset()
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_data_root(monkeypatch):
+    """Tests see the checkout default data root unless they set BOUNTY_RUN_DATA."""
+    monkeypatch.delenv("BOUNTY_RUN_DATA", raising=False)

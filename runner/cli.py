@@ -43,7 +43,6 @@ from . import (
 #: Checkout default only (kept for compatibility); runtime code uses paths.data_root().
 REPO_OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
-
 # Pipeline stage metadata lives in runner.stage_registry; re-exported here so the
 # existing names (and the Go TUI parity test) keep working unchanged.
 TOTAL_STAGES = stage_registry.TOTAL_STAGES
