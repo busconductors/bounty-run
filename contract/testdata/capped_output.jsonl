@@ -1,0 +1,5 @@
+{"v": 1, "t": 1762600001000, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "example.com line 0"}
+{"v": 1, "t": 1762600001001, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "example.com line 1"}
+{"v": 1, "t": 1762600001002, "type": "output", "stage": "vuln", "tool": "nuclei", "stream": "stdout", "line": "example.com line 2"}
+{"v": 1, "t": 1762600001010, "type": "log", "level": "warn", "msg": "stage vuln output events capped at 16777216 bytes; further tool output omitted from events (see engine.log and the tool's output files)"}
+{"v": 1, "t": 1762600002000, "type": "stage_end", "stage": "vuln", "status": "ok", "duration_ms": 1000, "counts": {"findings": 0}}

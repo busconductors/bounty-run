@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bounty-run.local/contract/events.v1.schema.json",
+  "title": "Bounty Runner events.jsonl, schema v1 (one JSON object per line)",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/run_start"
+    },
+    {
+      "$ref": "#/$defs/stage_start"
+    },
+    {
+      "$ref": "#/$defs/stage_end"
+    },
+    {
+      "$ref": "#/$defs/progress"
+    },
+    {
+      "$ref": "#/$defs/log"
+    },
+    {
+      "$ref": "#/$defs/output"
+    },
+    {
+      "$ref": "#/$defs/finding"
+    },
+    {
+      "$ref": "#/$defs/run_end"
+    }
+  ],
+  "$defs": {
+    "run_start": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "target",
+        "flags",
+        "stages"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "run_start"
+        },
+        "target": {
+          "type": "string"
+        },
+        "flags": {
+          "type": "object"
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "stage_start": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "stage"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "stage_start"
+        },
+        "stage": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "stage_end": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "stage",
+        "status",
+        "duration_ms",
+        "counts"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "stage_end"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "progress": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "stage",
+        "done",
+        "total"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "progress"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "log": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "level",
+        "msg"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "log"
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "msg": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "stage",
+        "tool",
+        "stream",
+        "line"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "output"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "stream": {
+          "enum": [
+            "stdout",
+            "stderr"
+          ]
+        },
+        "line": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "severity",
+        "template",
+        "host",
+        "url",
+        "summary"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "finding"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "template": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "run_end": {
+      "type": "object",
+      "required": [
+        "v",
+        "t",
+        "type",
+        "status",
+        "totals",
+        "report",
+        "summary"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "t": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "run_end"
+        },
+        "status": {
+          "type": "string"
+        },
+        "totals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "report": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
