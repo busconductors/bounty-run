@@ -51,9 +51,20 @@ func TestRunsBindsNoLifecycleMethods(t *testing.T) {
 	for i := range typ.NumMethod() {
 		names = append(names, typ.Method(i).Name)
 	}
-	want := []string{"Attach", "Cancel", "Detach", "EngineLogTail", "HardKill", "ListRuns", "ServiceShutdown", "Skip"}
+	want := []string{"Attach", "Cancel", "Detach", "EngineLogTail", "HardKill", "ListRuns", "RunID", "ServiceShutdown", "Skip"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("Runs methods = %v, want %v", names, want)
+	}
+}
+
+// TestRunIDNamesTheBatchChannel: the frontend subscribes to run:<id>:batch
+// before it attaches, so it needs the id Attach will emit on.
+func TestRunIDNamesTheBatchChannel(t *testing.T) {
+	r := &Runs{}
+	for _, dir := range []string{"/o/a.com/20250101-000000", "/o/a.com/20250101-000000/", "/o/./a.com/x"} {
+		if got, want := r.RunID(dir), runs.RunID(dir); got != want {
+			t.Errorf("RunID(%q) = %q, want %q", dir, got, want)
+		}
 	}
 }
 

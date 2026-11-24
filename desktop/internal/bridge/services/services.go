@@ -61,6 +61,10 @@ func (r *Runs) ListRuns() ([]runstore.Run, error) { return r.svc.ListRuns() }
 // Attach starts streaming the run in dir.
 func (r *Runs) Attach(dir string) (runs.Snapshot, error) { return r.svc.Attach(dir) }
 
+// RunID returns the id in the run's channel names (run:<id>:batch and
+// run:<id>:dead), so the frontend can subscribe before it attaches.
+func (r *Runs) RunID(dir string) string { return runs.RunID(dir) }
+
 // Detach stops streaming dir; the engine keeps running.
 func (r *Runs) Detach(dir string) { r.svc.Detach(dir) }
 

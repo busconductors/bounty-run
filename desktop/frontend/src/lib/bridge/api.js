@@ -20,6 +20,7 @@ export const launchApi = Object.freeze({
 
 export const runsApi = Object.freeze({
   list: () => call('Runs.ListRuns'),
+  runId: (dir) => call('Runs.RunID', dir),
   attach: (dir) => call('Runs.Attach', dir),
   detach: (dir) => call('Runs.Detach', dir),
   skip: (dir, stage) => call('Runs.Skip', dir, stage),
