@@ -27,7 +27,7 @@ func TestFrontendCallsExist(t *testing.T) {
 	if pkg == nil || string(pkg[1]) != reflect.TypeFor[Launch]().PkgPath() {
 		t.Fatalf("api.js PKG = %q, want %q", pkg, reflect.TypeFor[Launch]().PkgPath())
 	}
-	types := map[string]reflect.Type{"Launch": reflect.TypeFor[*Launch](), "Runs": reflect.TypeFor[*Runs]()}
+	types := map[string]reflect.Type{"Launch": reflect.TypeFor[*Launch](), "Runs": reflect.TypeFor[*Runs](), "Doctor": reflect.TypeFor[*Doctor]()}
 	calls := regexp.MustCompile(`call\('(\w+)\.(\w+)'`).FindAllSubmatch(src, -1)
 	if len(calls) < 10 {
 		t.Fatalf("found only %d calls in api.js", len(calls))

@@ -14,6 +14,7 @@ import (
 
 	"bountyrun/core/runstore"
 	"bountyrun/desktop/internal/catalog"
+	"bountyrun/desktop/internal/doctor"
 	"bountyrun/desktop/internal/runs"
 )
 
@@ -49,6 +50,17 @@ func (l *Launch) Start(r catalog.Request) (runs.RunRef, error) {
 	}
 	return l.runs.StartRun(o)
 }
+
+// Doctor serves the Doctor screen.
+type Doctor struct {
+	svc *doctor.Service
+}
+
+// Report returns the toolchain report (cached).
+func (d *Doctor) Report() (doctor.Report, error) { return d.svc.Report() }
+
+// Recheck re-runs the toolchain check.
+func (d *Doctor) Recheck() (doctor.Report, error) { return d.svc.Recheck() }
 
 // Runs exposes run control and streaming.
 type Runs struct {
@@ -126,5 +138,6 @@ func Bind(svc *runs.Service, cat *catalog.Catalog) []application.Service {
 	return []application.Service{
 		application.NewServiceWithOptions(&Launch{cat: cat, runs: svc}, opts),
 		application.NewServiceWithOptions(&Runs{svc: svc}, opts),
+		application.NewServiceWithOptions(&Doctor{svc: doctor.New(cat)}, opts),
 	}
 }

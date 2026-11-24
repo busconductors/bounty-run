@@ -28,3 +28,9 @@ export const runsApi = Object.freeze({
   hardKill: (dir) => call('Runs.HardKill', dir),
   engineLogTail: (dir, n) => call('Runs.EngineLogTail', dir, n),
 });
+
+// The Doctor screen's backend: tool rows with status, guidance and affected stages.
+export const doctorApi = Object.freeze({
+  report: () => call('Doctor.Report'),
+  recheck: () => call('Doctor.Recheck'),
+});

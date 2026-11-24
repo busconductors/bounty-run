@@ -4,6 +4,7 @@
   import { DEFAULT_VIEW, VIEWS } from './lib/shell/views.js';
   import Launch from './views/Launch.svelte';
   import Monitor from './views/Monitor.svelte';
+  import Doctor from './views/Doctor.svelte';
 
   let active = $state(DEFAULT_VIEW);
   // The run Monitor follows: the last one launched, or one picked there.
@@ -22,6 +23,8 @@
       <Launch onlaunched={launched} />
     {:else if view.id === 'monitor'}
       <Monitor {run} onselect={(ref) => (run = ref)} />
+    {:else if view.id === 'doctor'}
+      <Doctor />
     {:else}
       <PlaceholderView title={view.label} />
     {/if}

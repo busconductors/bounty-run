@@ -519,3 +519,39 @@ func TestFailedToolCheckIsCachedBriefly(t *testing.T) {
 		t.Fatalf("RecheckDoctor did not rerun: err=%v runs=%d", err, runs.Load())
 	}
 }
+
+// A recheck that arrives while a check is running must not return that
+// check's (possibly stale) result: it reports a run started after the request.
+func TestRecheckDoctorStartsFreshRunWhenOneIsInFlight(t *testing.T) {
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := New(Config{Root: t.TempDir(), EngineBin: "/fake/bounty-run", Exec: func(_ string, args ...string) ([]byte, error) {
+		if args[1] != "doctor" {
+			return []byte(stagesJSON), nil
+		}
+		if calls.Add(1) == 1 {
+			close(started)
+			<-release
+			return []byte(`{"schema":1,"tools":[{"name":"old","status":"ok"}]}`), nil
+		}
+		return []byte(`{"schema":1,"tools":[{"name":"new","status":"ok"}]}`), nil
+	}})
+	go c.Doctor()
+	<-started
+	got := make(chan Doctor, 1)
+	go func() {
+		d, _ := c.RecheckDoctor()
+		got <- d
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	select {
+	case d := <-got:
+		if len(d.Tools) != 1 || d.Tools[0].Name != "new" || calls.Load() != 2 {
+			t.Fatalf("recheck returned %+v after %d runs; want the fresh run", d.Tools, calls.Load())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("recheck did not finish")
+	}
+}

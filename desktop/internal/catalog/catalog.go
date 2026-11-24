@@ -342,6 +342,15 @@ func (c *Catalog) loadDoctor(fresh bool) (Doctor, error) {
 			return d, err
 		}
 	}
+	// A recheck must report a run that began after the request, so it waits
+	// out a check already in flight (its probes may predate the request) and
+	// then joins or starts the next one.
+	for fresh && c.doctorInflight != nil {
+		running := c.doctorInflight
+		c.doctorMu.Unlock()
+		<-running
+		c.doctorMu.Lock()
+	}
 	done := c.startDoctorLocked()
 	c.doctorMu.Unlock()
 	<-done
