@@ -103,6 +103,25 @@ describe('FindingsScreen', () => {
     }
   });
 
+  test('gives up on a findings file that stays pending and offers Retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const api = { get: vi.fn().mockResolvedValue({ findings: [], pending: true }) };
+      render(FindingsScreen, { dir: '/out/a/1', api, retryMs: 10, maxRetries: 2 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(api.get).toHaveBeenCalledTimes(3);
+      expect(screen.queryByText(/still being written/i)).toBeNull();
+      expect(screen.getByText('findings.json is incomplete or unreadable')).toBeTruthy();
+      api.get.mockResolvedValue(RESULT);
+      await fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+      await vi.advanceTimersByTimeAsync(0);
+      await waitFor(() => expect(document.querySelectorAll('[data-finding]').length).toBe(2));
+      expect(screen.queryByText(/incomplete or unreadable/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('no dir asks to pick a run', () => {
     render(FindingsScreen, { dir: '', api: { get: vi.fn() } });
     expect(screen.getByText(/pick a run/i)).toBeTruthy();

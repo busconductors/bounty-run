@@ -3,6 +3,7 @@ package findings
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -148,5 +149,39 @@ func TestGetFindingsRejectsDirsOutsideRoot(t *testing.T) {
 	s := New(func(string) (string, error) { return "", os.ErrPermission })
 	if _, err := s.GetFindings("/etc"); err == nil {
 		t.Fatal("expected an error for a dir the resolver rejects")
+	}
+}
+
+func TestFindingsUnreadableFailsFast(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read any file")
+	}
+	s, dir := newRun(t)
+	write(t, dir, "findings.json", twoFindings)
+	if err := os.Chmod(filepath.Join(dir, "findings.json"), 0); err != nil {
+		t.Fatal(err)
+	}
+	s.retries, s.delay = 1000, time.Second
+	start := time.Now()
+	res, err := s.GetFindings(dir)
+	if err == nil || res.Pending {
+		t.Fatalf("res = %+v, err = %v, want an error and not pending", res, err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("took %v: an unreadable file must not be retried", time.Since(start))
+	}
+}
+
+func TestFindingsWrongShapeIsAnError(t *testing.T) {
+	s, dir := newRun(t)
+	write(t, dir, "findings.json", `{"severity":"high"}`)
+	s.retries, s.delay = 1000, time.Second
+	start := time.Now()
+	res, err := s.GetFindings(dir)
+	if err == nil || res.Pending || !strings.Contains(err.Error(), "unexpected format") {
+		t.Fatalf("res = %+v, err = %v, want an unexpected-format error", res, err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("took %v: a wrong shape must not be retried", time.Since(start))
 	}
 }

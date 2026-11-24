@@ -31,6 +31,16 @@ describe('Doctor', () => {
     expect(within(ok).getByText('2.6.0')).toBeTruthy();
   });
 
+  test('tool output is sanitized before display', async () => {
+    const rows = [{ name: 'x', status: 'error', version: '1.0\u001b[31m.0\u200b', path: '/bin/\u202ex', optional: false, guidance: 'do\u200b it\u0000', affects: [] }];
+    render(DoctorScreen, { api: { report: vi.fn(async () => ({ rows, missing: 0 })), recheck: vi.fn() } });
+    const row = await waitFor(() => document.querySelector('[data-tool="x"]') ?? expect.fail('no row'));
+    expect(row.textContent).toContain('1.0.0');
+    expect(row.textContent).toContain('do it');
+    expect(row.textContent).not.toMatch(/[\u200b\u202e\u0000\u001b]/);
+    expect(row.querySelector('.path').getAttribute('title')).toBe('/bin/x');
+  });
+
   test('recheck refreshes', async () => {
     const fixed = { rows: [{ ...REPORT.rows[1], status: 'ok', version: '0.5.5', path: '/usr/bin/whatweb' }], missing: 0 };
     const api = { report: vi.fn(async () => REPORT), recheck: vi.fn(async () => fixed) };

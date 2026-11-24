@@ -317,6 +317,9 @@ export class MonitorSession {
       this.attached = true;
       this.#startClock();
       await this.#api.attach(ref.dir);
+      // close() or a newer open() ran while attach was in flight: its detach
+      // came first, so this attach would otherwise leak a stream.
+      if (gen !== this.#gen) this.#api.detach(ref.dir)?.catch?.(() => {});
     } catch (error) {
       if (gen !== this.#gen) return;
       this.error = errorText(error);

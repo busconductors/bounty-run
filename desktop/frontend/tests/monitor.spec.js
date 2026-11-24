@@ -7,7 +7,7 @@ import LogConsole from '../src/lib/monitor/LogConsole.svelte';
 import MonitorScreen from '../src/lib/monitor/MonitorScreen.svelte';
 import StageList from '../src/lib/monitor/StageList.svelte';
 import SeverityChip from '../src/lib/ui/SeverityChip.svelte';
-import { applyBatch, createRunState, stageRows } from '../src/lib/monitor/store.svelte.js';
+import { MonitorSession, applyBatch, createRunState, stageRows } from '../src/lib/monitor/store.svelte.js';
 
 // Vitest runs from desktop/frontend.
 const REPO = new URL('../../', pathToFileURL(`${process.cwd()}/`));
@@ -371,6 +371,23 @@ describe('monitor', () => {
     again.unmount();
     expect(again.api.detach.mock.calls.length).toBe(calls + 1);
     expect(again.bus.listeners(`run:${ID}:batch`)).toBe(0);
+  });
+
+  test('an attach that resolves after close is detached again', async () => {
+    const bus = makeBus();
+    let release;
+    const api = fakeRuns({ attach: vi.fn(() => new Promise((resolve) => { release = resolve; })) });
+    const session = new MonitorSession({ api, on: bus.on });
+    const opened = session.open({ dir: DIR, id: ID });
+    await settle();
+    expect(api.attach).toHaveBeenCalledTimes(1);
+    session.close();
+    const detaches = api.detach.mock.calls.length;
+    release({ id: ID, dir: DIR });
+    await opened;
+    await settle();
+    expect(api.detach.mock.calls.length).toBeGreaterThan(detaches);
+    expect(api.detach).toHaveBeenLastCalledWith(DIR);
   });
 
   test('without a run it lists runs to pick from', async () => {

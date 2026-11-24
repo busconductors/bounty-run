@@ -7,6 +7,7 @@
   import FindingsTable from '../monitor/FindingsTable.svelte';
   import { sevKey } from '../monitor/store.svelte.js';
   import { sanitizeText } from '../monitor/text.js';
+  import Button from '../ui/Button.svelte';
 
   let { dir = '', api, report = undefined, retryMs = 1000, maxRetries = 30 } = $props();
 
@@ -15,10 +16,14 @@
   let loading = $state(false);
   let selected = $state(0);
   let density = $state('comfortable');
+  let gaveUp = $state(false);
+  let attempt = $state(0);
 
   $effect(() => {
     const target = dir;
+    attempt; // Retry re-runs this effect
     result = null;
+    gaveUp = false;
     error = '';
     selected = 0;
     if (!target) return;
@@ -33,7 +38,10 @@
         result = next;
         error = '';
         if (next?.pending && tries++ < maxRetries) timer = setTimeout(load, retryMs);
-        else loading = false;
+        else {
+          gaveUp = !!next?.pending;
+          loading = false;
+        }
       } catch (e) {
         if (!live) return;
         error = sanitizeText(e?.cause?.message ?? e?.message ?? e);
@@ -76,7 +84,10 @@
   {:else}
     <header class="bar">
       <span class="stamp mono">{stamp}</span>
-      {#if result?.pending}<span class="note" role="status">Findings are still being written…</span>{/if}
+      {#if result?.pending && gaveUp}
+        <span class="error" role="alert">findings.json is incomplete or unreadable</span>
+        <Button onclick={() => (attempt += 1)}>Retry</Button>
+      {:else if result?.pending}<span class="note" role="status">Findings are still being written…</span>{/if}
       {#if result?.missing}<span class="note" role="status">This run wrote no findings file.</span>{/if}
       {#if result && !result.pending && !result.missing && !result.indexAvailable}
         <span class="note" role="status">Evidence link unavailable: this run has no findings index.</span>

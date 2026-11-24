@@ -1,5 +1,6 @@
 <script>
   // One row per tool: status, version, path, what it affects and how to get it.
+  import { sanitizeText } from '../monitor/text.js';
   let { rows } = $props();
   const LABEL = { ok: 'OK', missing: 'Missing', error: 'Error' };
 </script>
@@ -13,10 +14,10 @@
       <tr data-tool={row.name} data-status={row.status}>
         <td class="name">{row.name}{#if row.optional}<span class="opt">optional</span>{/if}</td>
         <td><span class="status {row.status}">{LABEL[row.status] ?? row.status}</span></td>
-        <td class="mono">{row.version}</td>
-        <td class="mono path" title={row.path}>{row.path}</td>
+        <td class="mono">{sanitizeText(row.version)}</td>
+        <td class="mono path" title={sanitizeText(row.path)}>{sanitizeText(row.path)}</td>
         <td class="affects">{#each row.affects as id (id)}<span class="tag">{id}</span>{/each}</td>
-        <td class="guide">{row.status === 'ok' ? '' : row.guidance}</td>
+        <td class="guide">{row.status === 'ok' ? '' : sanitizeText(row.guidance)}</td>
       </tr>
     {/each}
   </tbody>

@@ -82,13 +82,18 @@ func (s *Service) GetFindings(dir string) (FindingsResult, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return FindingsResult{Findings: []Finding{}, Missing: true}, nil
 		}
-		if i >= s.retries {
-			var syn *json.SyntaxError
-			var typ *json.UnmarshalTypeError
-			if errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &syn) || errors.As(err, &typ) {
-				return FindingsResult{Findings: []Finding{}, Pending: true}, nil
-			}
+		var typ *json.UnmarshalTypeError
+		if errors.As(err, &typ) {
+			return FindingsResult{}, errors.New("findings.json has an unexpected format")
+		}
+		// Only a partly written file is worth waiting for; anything else
+		// (permissions, I/O) will not fix itself.
+		var syn *json.SyntaxError
+		if !errors.As(err, &syn) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			return FindingsResult{}, err
+		}
+		if i >= s.retries {
+			return FindingsResult{Findings: []Finding{}, Pending: true}, nil
 		}
 		time.Sleep(s.delay)
 	}
