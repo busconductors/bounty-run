@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -396,6 +397,11 @@ func TestStartRunRejectsBadInput(t *testing.T) {
 	}
 	if _, err := s.StartRun(engine.Options{Target: "example.com", Proxy: "ftp://x"}); err == nil {
 		t.Fatal("invalid proxy accepted")
+	}
+	for _, rl := range []float64{math.Inf(1), math.NaN(), -1, 0.01, 1e6} {
+		if _, err := s.StartRun(engine.Options{Target: "example.com", RateLimit: rl}); err == nil || !strings.Contains(err.Error(), "rate limit") {
+			t.Fatalf("rate limit %v: err = %v, want a rate limit error", rl, err)
+		}
 	}
 	if _, err := s.StartRun(engine.Options{Target: "example.com"}); err == nil {
 		t.Fatal("missing engine binary accepted")

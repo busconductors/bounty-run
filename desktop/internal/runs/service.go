@@ -166,20 +166,11 @@ func RunID(dir string) string {
 // to the outputs root) and waits for run_start. It returns ErrCapReached when
 // the cap is taken and a *LaunchError when the engine never started.
 func (s *Service) StartRun(opts engine.Options) (RunRef, error) {
-	target, err := engine.NormalizeTarget(opts.Target)
+	opts, err := Prepare(opts)
 	if err != nil {
 		return RunRef{}, err
 	}
-	opts.Target = target
-	if strings.TrimSpace(opts.Proxy) != "" {
-		p, err := engine.ParseProxy(opts.Proxy)
-		if err != nil {
-			return RunRef{}, fmt.Errorf("invalid proxy: %w", err)
-		}
-		opts.Proxy = p
-	} else {
-		opts.Proxy = ""
-	}
+	target := opts.Target
 	bin := s.bin
 	if bin == "" {
 		if bin, err = EngineBin(); err != nil {
@@ -201,8 +192,7 @@ func (s *Service) StartRun(opts engine.Options) (RunRef, error) {
 	if err != nil {
 		return RunRef{}, err
 	}
-	env := append(engine.SpawnEnvFor(opts), "BOUNTY_RUN_DATA="+s.root)
-	pid, err := engine.SpawnEnv(bin, engine.Argv(opts, dir), dir, env)
+	pid, err := engine.SpawnEnv(bin, engine.Argv(opts, dir), dir, SpawnEnv(opts, s.root))
 	if err != nil {
 		_ = os.RemoveAll(dir) // the leaf just made; no phantom run
 		return RunRef{}, err
@@ -226,6 +216,37 @@ func (s *Service) StartRun(opts engine.Options) (RunRef, error) {
 	}
 	s.em.Emit(ChannelRunsChanged, nil)
 	return RunRef{ID: RunID(dir), Dir: dir}, nil
+}
+
+// Prepare validates opts and returns them normalized exactly as StartRun
+// spawns them: the target normalized, the proxy trimmed and checked (or
+// cleared when blank) and the rate limit within engine.CheckRateLimit's range.
+// A launch preview must build its argv from Prepare's result.
+func Prepare(opts engine.Options) (engine.Options, error) {
+	target, err := engine.NormalizeTarget(opts.Target)
+	if err != nil {
+		return engine.Options{}, err
+	}
+	opts.Target = target
+	if strings.TrimSpace(opts.Proxy) != "" {
+		p, err := engine.ParseProxy(opts.Proxy)
+		if err != nil {
+			return engine.Options{}, fmt.Errorf("invalid proxy: %w", err)
+		}
+		opts.Proxy = p
+	} else {
+		opts.Proxy = ""
+	}
+	if err := engine.CheckRateLimit(opts.RateLimit); err != nil {
+		return engine.Options{}, err
+	}
+	return opts, nil
+}
+
+// SpawnEnv is the extra environment StartRun gives an engine launched with
+// opts under root: the secrets (engine.SpawnEnvFor) and BOUNTY_RUN_DATA.
+func SpawnEnv(opts engine.Options, root string) []string {
+	return append(engine.SpawnEnvFor(opts), "BOUNTY_RUN_DATA="+root)
 }
 
 // reserve takes a launch slot if running plus launching runs leave room.
