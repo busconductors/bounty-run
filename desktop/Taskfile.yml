@@ -63,7 +63,11 @@ tasks:
         sh: sed -n 's/^__version__ = "\(.*\)"$/\1/p' ../runner/__init__.py
     cmds:
       - rm -f bin/*.deb
-      - wails3 tool package -name {{.APP_NAME}} -format deb -config build/linux/nfpm/nfpm.yaml -out bin
+      # nfpm does not expand env vars in a `type: tree` src, so resolve the
+      # engine path into a throwaway config under bin/.
+      - sed "s|\${BOUNTY_ENGINE_DIR}|$BOUNTY_ENGINE_DIR|" build/linux/nfpm/nfpm.yaml > bin/.nfpm.resolved.yaml
+      - wails3 tool package -name {{.APP_NAME}} -format deb -config bin/.nfpm.resolved.yaml -out bin
+      - rm -f bin/.nfpm.resolved.yaml
 
   test:
     summary: Runs Go and frontend tests
