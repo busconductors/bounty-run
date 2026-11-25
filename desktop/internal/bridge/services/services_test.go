@@ -164,3 +164,46 @@ func TestReportsOpenExternalValidates(t *testing.T) {
 		t.Errorf("available %+v %v", info, err)
 	}
 }
+
+func pdfReports(t *testing.T) (*Reports, string, *[]string) {
+	t.Helper()
+	root := t.TempDir()
+	run := filepath.Join(root, "ex.com", "20250101-000000")
+	if err := os.MkdirAll(run, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	opened := &[]string{}
+	r := &Reports{root: root, open: func(p string) error { *opened = append(*opened, p); return nil },
+		runDir: func(d string) (string, error) { return d, nil }}
+	return r, run, opened
+}
+
+func TestAvailableReportsPDF(t *testing.T) {
+	r, run, _ := pdfReports(t)
+	info, err := r.Available(run)
+	if err != nil || info.PDF {
+		t.Fatalf("absent: %+v %v", info, err)
+	}
+	if err := os.WriteFile(filepath.Join(run, "report.pdf"), []byte("%PDF"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err = r.Available(run)
+	if err != nil || !info.PDF {
+		t.Fatalf("present: %+v %v", info, err)
+	}
+}
+
+func TestOpenExternalAllowsPDFRejectsOther(t *testing.T) {
+	r, run, opened := pdfReports(t)
+	for _, n := range []string{"report.pdf", "findings.json"} {
+		if err := os.WriteFile(filepath.Join(run, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.OpenExternal(run, "report.pdf"); err != nil || len(*opened) != 1 {
+		t.Fatalf("err %v opened %v", err, *opened)
+	}
+	if err := r.OpenExternal(run, "findings.json"); err == nil {
+		t.Error("findings.json opened")
+	}
+}

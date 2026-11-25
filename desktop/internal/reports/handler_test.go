@@ -168,3 +168,21 @@ func TestMountRoutesPrefix(t *testing.T) {
 		t.Error("report not routed")
 	}
 }
+
+func TestSafeFileAllowsPDF(t *testing.T) {
+	root, _ := fixture(t)
+	run := filepath.Join(root, "ex.com", "20250101-000000")
+	if err := os.WriteFile(filepath.Join(run, PDFReport), []byte("%PDF-1.4"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allowed := []string{PDFReport}
+	p, err := SafeFile(root, run, PDFReport, allowed)
+	if err != nil || filepath.Base(p) != "report.pdf" {
+		t.Fatalf("path %q err %v", p, err)
+	}
+	for _, name := range []string{"../report.pdf", "../../secret.txt", "/etc/passwd"} {
+		if _, err := SafeFile(root, run, name, allowed); err == nil {
+			t.Errorf("%s resolved", name)
+		}
+	}
+}

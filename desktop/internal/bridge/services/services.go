@@ -83,6 +83,7 @@ func (f *Findings) GetFindings(dir string) (findings.FindingsResult, error) {
 type ReportInfo struct {
 	HTML     bool     `json:"html"`
 	Markdown []string `json:"markdown"`
+	PDF      bool     `json:"pdf"`
 }
 
 // Reports serves the report viewer's backend.
@@ -101,6 +102,8 @@ func (r *Reports) Available(dir string) (ReportInfo, error) {
 	info := ReportInfo{Markdown: []string{}}
 	_, herr := reports.SafeFile(r.root, dir, reports.HTMLReport, []string{reports.HTMLReport})
 	info.HTML = herr == nil
+	_, perr := reports.SafeFile(r.root, dir, reports.PDFReport, []string{reports.PDFReport})
+	info.PDF = perr == nil
 	for _, name := range reports.MarkdownReports {
 		if _, err := reports.SafeFile(r.root, dir, name, reports.MarkdownReports); err == nil {
 			info.Markdown = append(info.Markdown, name)
@@ -109,7 +112,7 @@ func (r *Reports) Available(dir string) (ReportInfo, error) {
 	return info, nil
 }
 
-// OpenExternal opens FINDINGS.md or SUMMARY.md of the run in dir with the OS
+// OpenExternal opens FINDINGS.md, SUMMARY.md or report.pdf of the run in dir with the OS
 // default handler. The path is validated like the viewer's; the name is
 // matched against an allowlist and never reaches a shell.
 func (r *Reports) OpenExternal(dir, name string) error {
@@ -117,7 +120,7 @@ func (r *Reports) OpenExternal(dir, name string) error {
 	if err != nil {
 		return err
 	}
-	path, err := reports.SafeFile(r.root, dir, name, reports.MarkdownReports)
+	path, err := reports.SafeFile(r.root, dir, name, append(append([]string{}, reports.MarkdownReports...), reports.PDFReport))
 	if err != nil {
 		return err
 	}

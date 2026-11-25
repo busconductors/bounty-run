@@ -25,6 +25,11 @@ const Prefix = "/reports/"
 // style and script, no linked assets), so nothing else needs serving.
 const HTMLReport = "summary.html"
 
+// PDFReport is the rendered engagement report. It is opened externally with
+// the OS handler, never served in the sandboxed viewer, so it is deliberately
+// outside the served-HTML path.
+const PDFReport = "report.pdf"
+
 // MarkdownReports are the files that may be opened with the OS handler.
 var MarkdownReports = []string{"FINDINGS.md", "SUMMARY.md"}
 
