@@ -47,6 +47,9 @@ secrets.*
 credentials*
 .netrc
 
+# Branding / logo kit (kept locally, never published)
+assets/STRASSER-logo-kit/
+
 # OS / editor
 .DS_Store
 *.swp
