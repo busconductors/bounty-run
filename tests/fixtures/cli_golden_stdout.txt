@@ -1,4 +1,4 @@
-[+] Bounty Runner v1.3.0 — target: a.com
+[+] Bounty Runner v1.4.0 — target: a.com
 [+] output dir: <OUT>
 ────────────────────────────────────────────────────────────────
                STAGE 1/20 - SUBDOMAIN ENUMERATION               
