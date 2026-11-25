@@ -146,6 +146,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-track", action="store_true", help="do not ingest findings into the tracker DB")
     p.add_argument("--events", metavar="PATH",
                    help="write a JSON-lines event log to PATH (for monitoring the run)")
+    p.add_argument("--client", metavar="NAME", default=None,
+                   help="client/organization name shown on the report cover")
+    p.add_argument("--engagement", metavar="NAME", default=None,
+                   help="engagement/assessment name shown on the report cover")
+    p.add_argument("--prepared-by", metavar="NAME", default=None,
+                   help="report author shown on the report cover")
+    p.add_argument("--team", metavar="NAME", default=None,
+                   help="team/firm name on the report (default: STRASSER)")
     return p
 
 
@@ -633,7 +641,9 @@ def _finish(args, target: str, outdir: Path, skip: set[str], st: RunState) -> in
                                 run_time=time.strftime('%Y-%m-%d %H:%M:%S'),
                                 subdomains=len(subs),
                                 live_hosts=len([r for r in rows if r['status']]),
-                                cloudflare=cf['cloudflare'])
+                                cloudflare=cf['cloudflare'],
+                                client=args.client, engagement=args.engagement,
+                                prepared_by=args.prepared_by, team=args.team)
 
     print_findings_table(findings)
 
