@@ -1,5 +1,6 @@
 """Bounty Runner CLI — orchestrate the recon pipeline."""
 import argparse
+import collections
 import os
 import re
 import time
@@ -22,6 +23,7 @@ from . import (
     httpclient,
     ipintel,
     metis_check,
+    narrative as narrative_mod,
     nikto_scan,
     nmap_scan,
     origin_deep,
@@ -637,13 +639,27 @@ def _finish(args, target: str, outdir: Path, skip: set[str], st: RunState) -> in
     duration_s = time.monotonic() - st.start
     m = report.build_metrics(target, subs, rows, cf, origins, findings, content, duration_s, skip)
     n_findings = report.write_findings_report(outdir, target, findings, content, origins=origins, metrics=m)
+    meta = narrative_mod.extract_nuclei_narrative(outdir)
+    narrative = {}
+    for f in findings:
+        fp = finding.fingerprint_of(f.get("template"), f.get("host"), f.get("url"))
+        narrative[fp] = narrative_mod.narrative_for(f, meta.get(fp))
+    out_of_scope = [{"target": it["value"],
+                     "reason": it.get("stage") or it.get("kind") or "out of scope"}
+                    for it in scope.log().items()]
     dashboard.write_run_summary(outdir, target, findings, content, origins,
                                 run_time=time.strftime('%Y-%m-%d %H:%M:%S'),
                                 subdomains=len(subs),
                                 live_hosts=len([r for r in rows if r['status']]),
                                 cloudflare=cf['cloudflare'],
                                 client=args.client, engagement=args.engagement,
-                                prepared_by=args.prepared_by, team=args.team)
+                                prepared_by=args.prepared_by, team=args.team,
+                                narrative=narrative,
+                                provenance=collections.Counter(st.provenance.values()),
+                                out_of_scope=out_of_scope,
+                                evidence_index=store.index() if store is not None else None,
+                                stages=[sid for sid in STAGE_IDS if sid not in skip],
+                                metrics=m)
 
     print_findings_table(findings)
 
