@@ -252,3 +252,17 @@ func TestArgvFlagsExistInEngineParser(t *testing.T) {
 		t.Fatalf("engine parser check failed: %v\n%s", err, out)
 	}
 }
+
+func TestOptionsArgvIncludesEngagementIdentity(t *testing.T) {
+	got := Argv(Options{Target: "a.com", Client: "acme", Engagement: "ext web", PreparedBy: "me", Team: "STRASSER"}, "/d")
+	for _, w := range []string{"--client=acme", "--engagement=ext web", "--prepared-by=me", "--team=STRASSER"} {
+		if !slices.Contains(got, w) {
+			t.Errorf("argv %v missing %q", got, w)
+		}
+	}
+	for _, a := range Argv(Options{Target: "a.com"}, "/d") {
+		if strings.HasPrefix(a, "--client") || strings.HasPrefix(a, "--engagement") || strings.HasPrefix(a, "--prepared-by") || strings.HasPrefix(a, "--team") {
+			t.Errorf("empty identity emitted %q", a)
+		}
+	}
+}

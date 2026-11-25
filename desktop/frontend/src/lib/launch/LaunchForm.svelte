@@ -196,6 +196,18 @@
   </section>
 
   <section class="field">
+    <span class="label">Engagement</span>
+    <div class="control">
+      <label class="sub" for="launch-client">Client</label>
+      <input id="launch-client" class="input" type="text" autocomplete="off" bind:value={form.client} />
+      <label class="sub" for="launch-engagement">Engagement</label>
+      <input id="launch-engagement" class="input" type="text" autocomplete="off" bind:value={form.engagement} />
+      <label class="sub" for="launch-prepared-by">Prepared by</label>
+      <input id="launch-prepared-by" class="input" type="text" autocomplete="off" bind:value={form.preparedBy} />
+    </div>
+  </section>
+
+  <section class="field">
     <span class="label">Advanced</span>
     <div class="control">
       <button type="button" class="disclose" aria-expanded={form.advanced} onclick={() => (form.advanced = !form.advanced)}>

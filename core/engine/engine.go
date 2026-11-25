@@ -55,6 +55,9 @@ type Options struct {
 	RefreshIPIntel          bool
 	IPIntelOffline, NoTrack bool
 
+	// Engagement identity printed on the report cover. All optional.
+	Client, Engagement, PreparedBy, Team string
+
 	// Headers are "Name: value" strings. They may carry credentials, so they are
 	// never put in Argv: SpawnEnvFor passes them as BOUNTY_RUN_HEADERS (a JSON
 	// array). The engine reads that variable from a later release on.
@@ -146,6 +149,10 @@ func Argv(o Options, dir string) []string {
 	}
 	a = appendEq(a, "--scope-file", o.ScopeFile)
 	a = appendEq(a, "--user-agent", o.UserAgent)
+	a = appendEq(a, "--client", o.Client)
+	a = appendEq(a, "--engagement", o.Engagement)
+	a = appendEq(a, "--prepared-by", o.PreparedBy)
+	a = appendEq(a, "--team", o.Team)
 	if o.RateLimit > 0 {
 		a = append(a, "--rate-limit", strconv.FormatFloat(o.RateLimit, 'g', -1, 64))
 	}

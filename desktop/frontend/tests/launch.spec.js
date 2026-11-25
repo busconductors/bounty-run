@@ -233,4 +233,18 @@ describe('launch model', () => {
     expect(req.options.Headers).toEqual(['A: 1', 'B: 2']);
     expect(req.options.Intensity).toBe('intrusive');
   });
+
+  test('engagement identity flows form to request options', () => {
+    const form = createForm();
+    expect(form).toMatchObject({ client: '', engagement: '', preparedBy: '' });
+    form.target = 'a.com';
+    form.enabled = ['subs'];
+    form.client = ' Acme ';
+    form.engagement = 'External web';
+    form.preparedBy = 'Me';
+    const o = buildRequest(form).options;
+    expect(o.Client).toBe('Acme');
+    expect(o.Engagement).toBe('External web');
+    expect(o.PreparedBy).toBe('Me');
+  });
 });
