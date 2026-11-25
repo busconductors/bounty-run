@@ -12,11 +12,13 @@ temp file and generates into a throwaway outputs dir, so the real tracker DB and
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from runner import dashboard as dashboard_mod  # noqa: E402
+from runner import finding as finding_mod  # noqa: E402
 from runner import report, tracker  # noqa: E402
 from runner.dashboard import generate, write_run_summary  # noqa: E402
 
@@ -87,12 +89,12 @@ class TestWriteRunSummary(DashboardTestCase):
 
     def _summary(self, target="example.com", findings=None, content=None,
                  origins=None, run_time="2026-11-07 10:00:00", subdomains=3,
-                 live_hosts=2, cloudflare=False):
+                 live_hosts=2, cloudflare=False, **kw):
         out = Path(self._tmp.name) / "summary_out"
         return write_run_summary(
             out, target, findings or [], content or [], origins or [],
             run_time=run_time, subdomains=subdomains, live_hosts=live_hosts,
-            cloudflare=cloudflare,
+            cloudflare=cloudflare, **kw,
         )
 
     def test_writes_summary_with_seeded_finding(self):
@@ -108,126 +110,64 @@ class TestWriteRunSummary(DashboardTestCase):
         self.assertIn("SQLi in search", doc)
         self.assertIn("https://example.com/search?q=x", doc)
         self.assertIn("example.com", doc)
-        self.assertIn("payload", doc)
 
-    def test_script_alert_title_is_escaped(self):
-        payload = "<script>alert(1)</script>"
-        finding = {
-            "severity": "high", "template": payload, "name": payload,
-            "url": "", "host": "evil.com", "evidence": "",
-        }
-        path = self._summary(findings=[finding])
-        doc = path.read_text()
-        self.assertNotIn("<script>alert(1)", doc)
-        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", doc)
-
-    def test_no_src_or_href_attributes(self):
+    def test_no_external_resource_refs(self):
         finding = {
             "severity": "medium", "template": "xss", "name": "XSS",
             "url": "https://example.com/a", "host": "example.com", "evidence": "",
         }
-        path = self._summary(findings=[finding])
-        doc = path.read_text()
-        self.assertNotIn("src=", doc)
-        self.assertNotIn("href=", doc)
+        doc = self._summary(findings=[finding]).read_text()
         self.assertNotIn("<script", doc)
+        self.assertNotRegex(doc, r'(?:src|href)=["\']?https?://')
 
     def test_empty_findings_state(self):
-        path = self._summary(findings=[], subdomains=0, live_hosts=0,
-                             cloudflare=False)
-        doc = path.read_text()
-        self.assertIn('class="verdict"', doc)
-        self.assertIn("No candidates", doc)
-        self.assertNotIn('<article class="f">', doc)
+        doc = self._summary(findings=[], subdomains=0, live_hosts=0).read_text()
+        self.assertIn("<html", doc)
+        self.assertNotIn("card sev-", doc)
 
-    def test_verdict_line_rendered_for_candidate(self):
-        finding = {"severity": "high", "template": "sqli", "name": "SQLi",
-                   "url": "https://example.com/x", "host": "example.com",
-                   "evidence": ""}
-        doc = self._summary(findings=[finding]).read_text()
-        self.assertIn('class="verdict"', doc)
-        self.assertIn("1 candidate", doc)
+    def test_summary_has_engagement_sections(self):
+        f = {"severity": "high", "template": "sqli", "name": "SQLi",
+             "url": "https://example.com/x", "host": "example.com"}
+        doc = self._summary(findings=[f]).read_text()
+        self.assertIn("class=cover", doc)
+        self.assertIn("Executive summary", doc)
+        self.assertIn("Scope &amp; methodology", doc)
+        self.assertIn("Findings", doc)
+        self.assertIn("card sev-high", doc)
+        self.assertIn("Appendix", doc)
 
-    def test_two_tier_structure_present(self):
-        finding = {"severity": "high", "template": "sqli", "name": "SQLi",
-                   "url": "https://example.com/x", "host": "example.com",
-                   "evidence": ""}
-        doc = self._summary(findings=[finding]).read_text()
-        self.assertIn('<article class="f">', doc)
-        self.assertIn('class="panel"', doc)
-        self.assertIn('class="drops"', doc)
+    def test_summary_finding_carries_narrative(self):
+        f = {"severity": "high", "template": "sqli", "name": "SQLi",
+             "url": "https://example.com/x", "host": "example.com"}
+        fp = finding_mod.fingerprint_of("sqli", "example.com", "https://example.com/x")
+        nar = {fp: {"description": "DESC-TEXT", "impact": "IMPACT-TEXT",
+                    "remediation": "REMED-TEXT", "reference": [], "cvss": "", "cwe": []}}
+        ev = {"x": 1}
+        with mock.patch.object(dashboard_mod.evidence, "finding_evidence",
+                               return_value=[{"curl": "curl -i EVID-CURL",
+                                              "request": "", "response": ""}]):
+            doc = self._summary(findings=[f], narrative=nar,
+                                evidence_index=ev).read_text()
+        for needle in ("DESC-TEXT", "IMPACT-TEXT", "REMED-TEXT", "EVID-CURL"):
+            self.assertIn(needle, doc)
 
-    def test_candidate_rendered_noise_demoted(self):
-        candidate = {"severity": "high", "template": "sqli", "name": "RealVuln",
-                     "url": "https://example.com/x", "host": "example.com",
-                     "evidence": ""}
-        noise = {"severity": "low", "template": "tls:weak", "name": "WeakCipher",
-                 "url": "", "host": "example.com", "evidence": ""}
-        doc = self._summary(findings=[candidate, noise]).read_text()
-        self.assertIn('<article class="f">', doc)
-        self.assertIn("RealVuln", doc)
-        self.assertIn("WeakCipher", doc)
-        self.assertIn("Low &amp; recon", doc)
-        # Candidate is a visible top-finding card; noise is demoted to the
-        # collapsed "Low & recon" drop-down further down the page.
-        self.assertLess(doc.index("RealVuln"), doc.index("WeakCipher"))
+    def test_summary_zero_findings_renders(self):
+        doc = self._summary(findings=[]).read_text()
+        self.assertIn("Executive summary", doc)
+        self.assertIn("0 findings", doc)
 
-    def test_info_nuclei_in_collapsed_details(self):
-        info = {"severity": "info", "template": "some-cve", "name": "InfoOnly",
-                "url": "", "host": "example.com", "evidence": ""}
-        doc = self._summary(findings=[info]).read_text()
-        self.assertIn("Info findings", doc)
-        self.assertIn("InfoOnly", doc)
-        self.assertIn('<details class="drop">', doc)
+    def test_summary_absent_identity_degrades(self):
+        doc = self._summary(findings=[], client=None, engagement=None,
+                            prepared_by=None).read_text()
+        self.assertNotIn("None", doc)
 
-    def test_origins_and_content_sections(self):
-        origins = [{"ip": "1.2.3.4", "status": 200,
-                    "sources": ["www.example.com"]}]
-        content = ["/admin", "/login"]
-        path = self._summary(origins=origins, content=content)
-        doc = path.read_text()
-        self.assertIn("Origin IPs exposed behind Cloudflare", doc)
-        self.assertIn("1.2.3.4", doc)
-        self.assertIn("Discovered content", doc)
-        self.assertIn("/admin", doc)
-        self.assertIn("/login", doc)
-
-        # Sections omitted when empty.
-        path2 = self._summary(origins=[], content=[])
-        doc2 = path2.read_text()
-        self.assertNotIn("Origin IPs exposed", doc2)
-        self.assertNotIn("Discovered content", doc2)
-
-    def test_open_ports_shown_in_surface(self):
-        findings = [
-            {"severity": "info", "template": "nmap:80/tcp", "name": "Open port 80",
-             "url": "", "host": "1.2.3.4", "evidence": "http"},
-            {"severity": "info", "template": "nmap:443/tcp", "name": "Open port 443",
-             "url": "", "host": "1.2.3.4", "evidence": "https"},
-            {"severity": "high", "template": "sqli", "name": "SQLi",
-             "url": "https://example.com/x", "host": "example.com", "evidence": ""},
-        ]
-        doc = self._summary(findings=findings).read_text()
-        surface = doc.split('class="panel"')[1]
-        self.assertIn("open ports", surface.lower())
-        self.assertIn("2", surface)
-
-    def test_candidate_card_count_matches_candidates(self):
-        findings = [
-            {"severity": "high", "template": "sqli", "name": "A",
-             "url": "https://example.com/x", "host": "example.com",
-             "evidence": ""},
-            {"severity": "high", "template": "sqli", "name": "A dup",
-             "url": "https://example.com/x", "host": "example.com",
-             "evidence": ""},
-            {"severity": "low", "template": "xss", "name": "B",
-             "url": "https://example.com/y", "host": "example.com",
-             "evidence": ""},
-        ]
-        doc = self._summary(findings=findings).read_text()
-        unique = report.dedupe(findings)
-        want = sum(1 for f in unique if dashboard_mod._is_candidate(f))
-        self.assertEqual(doc.count('<article class="f">'), want)
+    def test_summary_escapes_hostile_finding(self):
+        payload = "<script>alert(1)</script>"
+        f = {"severity": "high", "template": "t", "name": payload,
+             "url": "", "host": "evil.com"}
+        doc = self._summary(findings=[f]).read_text()
+        self.assertNotIn("<script>alert(1)", doc)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", doc)
 
 
 class TestIsCandidate(unittest.TestCase):

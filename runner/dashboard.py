@@ -13,7 +13,7 @@ import html
 from collections import Counter
 from pathlib import Path
 
-from . import categories, finding, report, tracker
+from . import categories, evidence, finding, report, tracker
 
 # Canonical severity ordering for display / filter dropdowns. Derived from the
 # single source of truth in runner.finding (excludes the "unknown" sentinel).
@@ -891,62 +891,55 @@ _SUMMARY_TEMPLATE = """<!DOCTYPE html>
 def write_run_summary(outdir, target, findings, content, origins, *,
                       run_time, subdomains, live_hosts, cloudflare,
                       meta=None, stages=None, metrics=None, out_of_scope=None,
-                      provenance=None, evidence_index=None) -> Path:
-    """Write a self-contained per-run command-center summary to ``outdir/summary.html``.
+                      provenance=None, evidence_index=None, narrative=None,
+                      client=None, engagement=None, prepared_by=None,
+                      team=None) -> Path:
+    """Write the self-contained engagement report to ``outdir/summary.html``.
 
-    The ``meta``/``stages``/``metrics``/``out_of_scope``/``provenance``/
-    ``evidence_index`` keyword arguments carry extra run context for the richer
-    layout (wired in C21); they default to ``None`` so existing callers and
-    tests keep working unchanged.
+    Assembles cover, executive summary, scope and methodology, findings by
+    severity (with narrative and evidence when supplied), and an appendix.
+    ``narrative`` maps finding fingerprint -> narrative dict; ``evidence_index``
+    is the evidence store index used to read back reproduction material.
     """
+    # Deferred: engagement_report imports ``esc`` from this module.
+    from . import engagement_report
+
     unique = report.dedupe(findings)
     unique.sort(
         key=lambda f: report.SEVERITY_ORDER.get(
             (f.get("severity") or "unknown").lower(), 9)
     )
-    cat_counts = categories.count_by_category(unique)
-    tech = sorted({
-        (f.get("name") or "").replace("Technology: ", "", 1)
-        for f in unique
-        if categories.classify(f.get("template")).key == "tech"
-    })
-    api_count = cat_counts.get("api", 0)
-    nmap_count = cat_counts.get("nmap", 0)
-
-    waf_names = sorted({
-        _waf_name(f.get("name") or "")
-        for f in unique
-        if categories.classify(f.get("template")).key == "waf"
-    } - {""})
-
-    candidates = [f for f in unique if _is_candidate(f)]
-    rest = [f for f in unique if not _is_candidate(f)]
-    info = [f for f in rest if (f.get("severity") or "").lower() == "info"]
-    noise = [f for f in rest if (f.get("severity") or "").lower() != "info"]
-
-    sev_counts = Counter((f.get("severity") or "unknown").lower() for f in unique)
-    crit_high = sev_counts.get("critical", 0) + sev_counts.get("high", 0)
-
-    doc = _SUMMARY_TEMPLATE.format(
-        stylesheet=SUMMARY_STYLESHEET,
-        target=esc(target),
-        run_time=esc(run_time),
-        face=esc(_SUMMARY_FACE),
-        ring=esc(crit_high),
-        verdict=esc(_verdict_line(candidates, origins, cloudflare, subdomains)),
-        metrics=_metric_grid(subdomains, live_hosts, sev_counts,
-                             len(origins), cloudflare),
-        heat=_heat_bar(sev_counts),
-        candidates=_top_findings_html(candidates),
-        alert=_origins_alert_html(origins),
-        panels=_surface_panels_html(
-            cloudflare, waf_names, tech, api_count, nmap_count,
-            cat_counts.get("panel", 0), cat_counts.get("tls", 0),
-            cat_counts.get("nikto", 0), cat_counts.get("dork", 0)),
-        drops=_details_html(candidates, noise, info, content),
-    )
+    sev_counts = Counter((f.get("severity") or "info").strip().lower()
+                         for f in unique)
+    headline = [{"title": f.get("name") or ""} for f in unique
+                if (f.get("severity") or "").lower() != "info"][:3]
 
     outdir = Path(outdir)
+    cards = []
+    for f in unique:
+        fp = finding.fingerprint_of(
+            *(str(f.get(k) or "") for k in ("template", "host", "url")))
+        nar = (narrative or {}).get(fp) or {}
+        ev = (evidence.finding_evidence(outdir, evidence_index, fp)
+              if evidence_index else [])
+        cards.append(engagement_report.render_finding(f, nar, ev))
+
+    stage_names = [s if isinstance(s, str) else str(s.get("name") or s.get("id") or "")
+                   for s in (stages or [])]
+    body = (
+        engagement_report.render_cover(
+            target, client=client, engagement=engagement,
+            prepared_by=prepared_by, team=team, run_time=run_time)
+        + engagement_report.render_exec_summary(sev_counts, headline)
+        + engagement_report.render_scope_methodology(
+            target, stage_names, out_of_scope)
+        + engagement_report._section("03", "Findings")
+        + "".join(cards)
+        + engagement_report.render_appendix(provenance, "")
+    )
+    doc = engagement_report.render_document(
+        title=(engagement or "").strip() or "Engagement Report", body=body)
+
     outdir.mkdir(parents=True, exist_ok=True)
     out_path = outdir / "summary.html"
     out_path.write_text(doc)
