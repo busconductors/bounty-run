@@ -9,7 +9,7 @@ venv/
 bin/
 .pytest_cache/
 .ruff_cache/
-# Root-anchored: desktop/build/ holds Wails sources and must stay tracked
+# Root-anchored: only the repo-root build/ and dist/ (engine output) are ignored
 /build/
 /dist/
 
@@ -54,10 +54,3 @@ assets/STRASSER-logo-kit/
 .DS_Store
 *.swp
 research_notes/
-
-# Desktop frontend dependencies and build output
-desktop/frontend/node_modules/
-desktop/frontend/dist/
-desktop/.task/
-# AppImage packaging scratch (Wails AppDir, linuxdeploy cache)
-desktop/build/linux/appimage/work/
