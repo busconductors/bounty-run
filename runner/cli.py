@@ -23,7 +23,6 @@ from . import (
     httpclient,
     ipintel,
     metis_check,
-    narrative as narrative_mod,
     nikto_scan,
     nmap_scan,
     origin_deep,
@@ -41,6 +40,9 @@ from . import (
     tracker,
     utils,
     waf_scan,
+)
+from . import (
+    narrative as narrative_mod,
 )
 
 #: Checkout default only (kept for compatibility); runtime code uses paths.data_root().

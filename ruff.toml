@@ -6,3 +6,9 @@ extend-exclude = ["runner/vendor"]
 
 [lint]
 select = ["E", "F", "W", "I", "UP"]
+
+[lint.per-file-ignores]
+# These modules hold long human-readable finding/report narrative strings;
+# wrapping them to the column limit would hurt readability and grep-ability.
+"runner/narrative.py" = ["E501"]
+"runner/engagement_report.py" = ["E501"]

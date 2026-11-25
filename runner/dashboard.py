@@ -911,11 +911,10 @@ def _appendix_raw_panels(origins, content, cloudflare) -> str:
         entries = sorted(str(c) for c in content)
         shown = entries[:50]
         more = len(entries) - len(shown)
-        items = "".join("<li><code>{}</code></li>".format(esc(c)) for c in shown)
-        tail = "<p>\u2026 and {} more</p>".format(more) if more > 0 else ""
-        out.append("<div class=field><span class=k>Discovered content ({})"
-                   "</span><ul class=meth>{}</ul>{}</div>".format(
-                       len(entries), items, tail))
+        items = "".join(f"<li><code>{esc(c)}</code></li>" for c in shown)
+        tail = f"<p>\u2026 and {more} more</p>" if more > 0 else ""
+        out.append(f"<div class=field><span class=k>Discovered content ({len(entries)})"
+                   f"</span><ul class=meth>{items}</ul>{tail}</div>")
     return "".join(out)
 
 

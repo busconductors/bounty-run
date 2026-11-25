@@ -12,14 +12,14 @@ temp file and generates into a throwaway outputs dir, so the real tracker DB and
 import sys
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from runner import dashboard as dashboard_mod  # noqa: E402
 from runner import finding as finding_mod  # noqa: E402
-from runner import report, tracker  # noqa: E402
+from runner import tracker  # noqa: E402
 from runner.dashboard import generate, write_run_summary  # noqa: E402
 
 

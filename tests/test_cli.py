@@ -1,6 +1,5 @@
 """CLI parser: engagement identity flags for the report cover page."""
 import json
-from pathlib import Path
 
 from runner import cli
 
@@ -22,6 +21,7 @@ def test_parse_engagement_identity_args():
 def test_finish_threads_context_into_summary(tmp_path):
     import argparse
     from types import SimpleNamespace
+
     from runner import evidence, scope
 
     outdir = tmp_path
