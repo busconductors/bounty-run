@@ -583,6 +583,8 @@ func (c *Catalog) resolve(r Request) (selection, error) {
 	for name, v := range map[string]*string{
 		"scope file": &o.ScopeFile, "user agent": &o.UserAgent, "resolvers": &o.Resolvers,
 		"wordlist": &o.Wordlist, "nuclei severity": &o.NucleiSeverity,
+		"client": &o.Client, "engagement": &o.Engagement,
+		"prepared by": &o.PreparedBy, "team": &o.Team,
 	} {
 		*v = strings.TrimSpace(*v)
 		if hasControl(*v) {

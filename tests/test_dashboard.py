@@ -186,6 +186,30 @@ class TestWriteRunSummary(DashboardTestCase):
         self.assertNotIn("<script>alert(1)", doc)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", doc)
 
+    def test_summary_count_matches_cards_with_noncanonical_severity(self):
+        import re
+        fs = [
+            {"severity": sev, "template": f"t{i}", "name": f"F{i}",
+             "url": f"https://example.com/{i}", "host": "example.com"}
+            for i, sev in enumerate(["high", "info", "unknown", "note"])
+        ]
+        doc = self._summary(findings=fs).read_text()
+        cards = len(re.findall(r'<div class="card sev-', doc))
+        self.assertEqual(cards, 4)
+        self.assertIn("4 findings across", doc)
+        tiles = [int(n) for n in re.findall(r'<div class="tile sev-\w+"><b>(\d+)</b>', doc)]
+        self.assertEqual(sum(tiles), cards)
+        self.assertIn('<div class="tile sev-info"><b>3</b>', doc)
+        self.assertIn('<div class="card sev-info"', doc)
+        head = doc.split("Headline findings", 1)[1].split("</ul>", 1)[0]
+        self.assertIn("F0", head)
+        self.assertNotIn("F2", head)
+        self.assertNotIn("F3", head)
+
+    def test_scope_section_shows_recon_coverage(self):
+        doc = self._summary(findings=[], subdomains=42, live_hosts=7).read_text()
+        self.assertIn("Coverage: 42 subdomains, 7 live hosts", doc)
+
 
 class TestIsCandidate(unittest.TestCase):
     """The triage split rule: candidate = crit/high/medium OR panel: (any sev)."""

@@ -231,6 +231,10 @@ func TestPreviewRejectsBadInput(t *testing.T) {
 		"header CRLF":   func(r *Request) { r.Options.Headers = []string{"X-A: 1\r\nX-B: 2"} },
 		"header name":   func(r *Request) { r.Options.Headers = []string{"no colon"} },
 		"scope newline": func(r *Request) { r.Options.ScopeAllow = []string{"a.com\nb.com"} },
+		"client nl":     func(r *Request) { r.Options.Client = "Acme\nCorp" },
+		"engagement nl": func(r *Request) { r.Options.Engagement = "Q1\rtest" },
+		"prepared nl":   func(r *Request) { r.Options.PreparedBy = "a\x00b" },
+		"team nl":       func(r *Request) { r.Options.Team = "x\ny" },
 	}
 	for name, mutate := range bad {
 		r := req("example.com", "subs")

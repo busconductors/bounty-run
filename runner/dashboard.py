@@ -940,10 +940,11 @@ def write_run_summary(outdir, target, findings, content, origins, *,
         key=lambda f: report.SEVERITY_ORDER.get(
             (f.get("severity") or "unknown").lower(), 9)
     )
-    sev_counts = Counter((f.get("severity") or "info").strip().lower()
+    # Fold severities exactly as the finding cards do, so the totals reconcile.
+    sev_counts = Counter(engagement_report._sev(f.get("severity"))
                          for f in unique)
     headline = [{"title": f.get("name") or ""} for f in unique
-                if (f.get("severity") or "").lower() != "info"][:3]
+                if engagement_report._sev(f.get("severity")) != "info"][:3]
 
     outdir = Path(outdir)
     cards = []
@@ -963,7 +964,8 @@ def write_run_summary(outdir, target, findings, content, origins, *,
             prepared_by=prepared_by, team=team, run_time=run_time)
         + engagement_report.render_exec_summary(sev_counts, headline)
         + engagement_report.render_scope_methodology(
-            target, stage_names, out_of_scope)
+            target, stage_names, out_of_scope,
+            subdomains=subdomains, live_hosts=live_hosts)
         + engagement_report._section("03", "Findings")
         + "".join(cards)
         + engagement_report.render_appendix(

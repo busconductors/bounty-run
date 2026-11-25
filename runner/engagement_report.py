@@ -181,7 +181,7 @@ def render_exec_summary(sev_counts, headline):
     )
 
 
-def render_scope_methodology(scope, stages, out_of_scope):
+def render_scope_methodology(scope, stages, out_of_scope, subdomains=None, live_hosts=None):
     if isinstance(scope, (list, tuple)):
         scope = ", ".join(str(x) for x in scope)
     stage_li = "".join(f"<li>{esc(s)}</li>" for s in (stages or []))
@@ -190,9 +190,16 @@ def render_scope_methodology(scope, stages, out_of_scope):
         for o in (out_of_scope or [])
     )
     oos = f"<div><div class=k>Out of scope (dropped)</div><ul>{oos_li}</ul></div>" if oos_li else ""
+    coverage = ""
+    if subdomains is not None or live_hosts is not None:
+        coverage = (
+            f"<p class=lede>Coverage: {int(subdomains or 0)} subdomains, "
+            f"{int(live_hosts or 0)} live hosts</p>"
+        )
     return (
         _section("02", "Scope &amp; methodology")
         + f"<p class=lede>Scope: <code>{esc(scope)}</code></p>"
+        + coverage
         + f"<div class=meth><div><div class=k>Stages executed</div><ul>{stage_li}</ul></div>{oos}</div>"
     )
 
