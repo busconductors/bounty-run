@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from . import __version__, headi_scan, paths, stage_registry
 from .http_headers import SHCHECK
 
-SCHEMA = 1
+SCHEMA = 2
 EVENTS_SCHEMA = 1  # matches the "v" field of every events.jsonl record
 
 PROBE_TIMEOUT_S = 3.0
@@ -43,52 +43,77 @@ class ToolSpec:
     # Offline version command, or None when none can be shown to be offline.
     probe: tuple[str, ...] | None = None
     version_re: str = _GENERIC
+    # Structured install source of truth, in preference order: (method, package).
+    # method is one of go|apt|pipx|manual; package is the exact installer argument
+    # (manual: prose guidance). install_hint stays as the human-readable form.
+    install_methods: tuple[tuple[str, str], ...] = ()
 
 
 _GO = "go install github.com/{}@latest"
 _APT = "sudo apt install {}"
+_GO_PKG = "github.com/{}@latest"
 _PD_PROBE = ("-version", "-duc")  # -duc: disable the update check
 
 TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec("subfinder", ("subs",), _GO.format("projectdiscovery/subfinder/v2/cmd/subfinder"),
+             install_methods=(("go", _GO_PKG.format("projectdiscovery/subfinder/v2/cmd/subfinder")),),
              probe=_PD_PROBE, version_re=_LABELLED),
     ToolSpec("amass", ("subs",), "see https://github.com/owasp-amass/amass",
+             install_methods=(("manual", "see https://github.com/owasp-amass/amass"),),
              optional=True, probe=("-version",)),
     ToolSpec("findomain", ("subs",), "see https://github.com/Findomain/Findomain",
+             install_methods=(("manual", "see https://github.com/Findomain/Findomain"),),
              optional=True, probe=("--version",)),
     ToolSpec("dnsx", ("subs",), _GO.format("projectdiscovery/dnsx/cmd/dnsx"),
+             install_methods=(("go", _GO_PKG.format("projectdiscovery/dnsx/cmd/dnsx")),),
              optional=True, probe=_PD_PROBE, version_re=_LABELLED),
-    ToolSpec("dig", ("origin",), _APT.format("dnsutils"), probe=("-v",),
+    ToolSpec("dig", ("origin",), _APT.format("dnsutils"),
+             install_methods=(("apt", "dnsutils"),), probe=("-v",),
              version_re=r"DiG " + _GENERIC),
     ToolSpec("curl", ("origin", "origin_deep", "param"), _APT.format("curl"),
+             install_methods=(("apt", "curl"),),
              probe=("--version",), version_re=r"^curl " + _GENERIC),
-    ToolSpec("openssl", ("origin",), _APT.format("openssl"), optional=True,
+    ToolSpec("openssl", ("origin",), _APT.format("openssl"),
+             install_methods=(("apt", "openssl"),), optional=True,
              probe=("version",), version_re=r"OpenSSL " + _GENERIC),
-    ToolSpec("nmap", ("nmap",), _APT.format("nmap"), optional=True, probe=("--version",),
+    ToolSpec("nmap", ("nmap",), _APT.format("nmap"),
+             install_methods=(("apt", "nmap"),), optional=True, probe=("--version",),
              version_re=r"Nmap version " + _GENERIC),
     ToolSpec("wafw00f", ("waf",), _APT.format("wafw00f") + " (or: pipx install wafw00f)",
+             install_methods=(("pipx", "wafw00f"), ("apt", "wafw00f")),
              probe=("--version",), version_re=r"WAFW00F you have is \S*?v" + _GENERIC),
     # sslyze has no --version flag; --help is argparse-only and prints "SSLyze version X".
     ToolSpec("sslyze", ("tls",), _APT.format("sslyze") + " (or: pipx install sslyze)",
+             install_methods=(("pipx", "sslyze"), ("apt", "sslyze")),
              optional=True, probe=("--help",), version_re=r"SSLyze version " + _GENERIC),
-    ToolSpec("nikto", ("nikto",), _APT.format("nikto"), optional=True, probe=("-Version",),
+    ToolSpec("nikto", ("nikto",), _APT.format("nikto"),
+             install_methods=(("apt", "nikto"),), optional=True, probe=("-Version",),
              version_re=r"Nikto " + _GENERIC),
     ToolSpec("nuclei", ("vuln",), _GO.format("projectdiscovery/nuclei/v3/cmd/nuclei"),
+             install_methods=(("go", _GO_PKG.format("projectdiscovery/nuclei/v3/cmd/nuclei")),),
              probe=_PD_PROBE, version_re=_LABELLED),
-    ToolSpec("ffuf", ("content",), _GO.format("ffuf/ffuf/v2"), probe=("-V",)),
-    ToolSpec("sqlmap", ("param",), _APT.format("sqlmap"), probe=("--version",)),
+    ToolSpec("ffuf", ("content",), _GO.format("ffuf/ffuf/v2"),
+             install_methods=(("go", _GO_PKG.format("ffuf/ffuf/v2")),), probe=("-V",)),
+    ToolSpec("sqlmap", ("param",), _APT.format("sqlmap"),
+             install_methods=(("apt", "sqlmap"),), probe=("--version",)),
     ToolSpec("katana", ("api",), _GO.format("projectdiscovery/katana/cmd/katana"),
+             install_methods=(("go", _GO_PKG.format("projectdiscovery/katana/cmd/katana")),),
              probe=_PD_PROBE, version_re=_LABELLED),
-    ToolSpec("whatweb", ("tech",), _APT.format("whatweb"), probe=("--version",),
+    ToolSpec("whatweb", ("tech",), _APT.format("whatweb"),
+             install_methods=(("apt", "whatweb"),), probe=("--version",),
              version_re=r"WhatWeb version " + _GENERIC),
     # headi has no version flag, and an unknown flag on a Go CLI may do real work.
-    ToolSpec("headi", ("headi",), _GO.format("mlcsec/headi"), optional=True),
+    ToolSpec("headi", ("headi",), _GO.format("mlcsec/headi"),
+             install_methods=(("go", _GO_PKG.format("mlcsec/headi")),), optional=True),
     # Site-specific shim around a local Metis install; its CLI is not known to us.
     ToolSpec("metis-autocheck", ("metis",),
              "provide a metis-autocheck shim on PATH (runs inside a local Metis install)",
+             install_methods=(("manual", "provide a metis-autocheck shim on PATH "
+                                         "(runs inside a local Metis install)"),),
              optional=True),
     # Vendored script: resolved by path, carries no version string.
-    ToolSpec("shcheck", ("headers",), "vendored (runner/vendor/shcheck.py); nothing to install"),
+    ToolSpec("shcheck", ("headers",), "vendored (runner/vendor/shcheck.py); nothing to install",
+             install_methods=(("manual", "vendored (runner/vendor/shcheck.py); nothing to install"),)),
 )
 
 
@@ -174,6 +199,7 @@ def doctor_report() -> dict:
             "name": spec.name, "path": path, "version": version,
             "required_by": list(spec.required_by), "optional": spec.optional,
             "install_hint": spec.install_hint, "status": status,
+            "install_methods": [{"method": m, "package": p} for m, p in spec.install_methods],
         })
     return {"schema": SCHEMA, "tools": tools}
 

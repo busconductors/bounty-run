@@ -47,7 +47,7 @@ def doctor(path, cwd, **kw):
     r = run_cli("doctor", path=path, cwd=cwd, **kw)
     assert r.returncode == 0, r.stderr
     data = json.loads(r.stdout)
-    assert data["schema"] == 1
+    assert data["schema"] == 2
     return {t["name"]: t for t in data["tools"]}, r
 
 
@@ -55,7 +55,7 @@ def test_stages_match_registry(tmp_path):
     r = run_cli("stages", cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     data = json.loads(r.stdout)
-    assert data["schema"] == 1
+    assert data["schema"] == 2
     stages = data["stages"]
     assert len(stages) == 21 == len(stage_registry.STAGES)
     assert [s["id"] for s in stages] == [s.id for s in stage_registry.STAGES]
@@ -86,7 +86,7 @@ def test_doctor_missing_tool_reports_missing(tmp_path):
         assert t["status"] == "missing", name
         assert t["path"] is None and t["version"] is None
         assert set(t) == {"name", "path", "version", "required_by", "optional",
-                          "install_hint", "status"}
+                          "install_hint", "status", "install_methods"}
         assert t["install_hint"]
     # headi has no bundled binary: missing, not an exception
     assert tools["headi"]["status"] == "missing"
@@ -227,7 +227,7 @@ def test_doctor_lists_every_invoked_tool(tmp_path):
 def test_version_json(tmp_path):
     r = run_cli("version", cwd=tmp_path)
     assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout) == {"schema": 1, "engine_version": __version__,
+    assert json.loads(r.stdout) == {"schema": 2, "engine_version": __version__,
                                     "events_schema": 1}
 
 
@@ -280,3 +280,28 @@ def test_existing_dispatch_unchanged(tmp_path):
                        capture_output=True, text=True, cwd=tmp_path, env=env,
                        stdin=subprocess.DEVNULL, timeout=60)
     assert r.returncode == 2  # bare, non-interactive: usage error as before
+
+
+def test_doctor_adds_install_methods(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    tools, _ = doctor(empty, tmp_path)
+    for name, t in tools.items():
+        assert t["install_methods"], name
+        for m in t["install_methods"]:
+            assert m["method"] in {"go", "apt", "pipx", "manual"}, name
+            assert m["package"], name
+    for name in ("wafw00f", "sslyze"):
+        methods = [m["method"] for m in tools[name]["install_methods"]]
+        assert methods == ["pipx", "apt"], name
+    assert [m["method"] for m in tools["subfinder"]["install_methods"]] == ["go"]
+    assert [m["method"] for m in tools["amass"]["install_methods"]] == ["manual"]
+
+
+def test_doctor_keeps_legacy_fields(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    tools, r = doctor(empty, tmp_path)
+    assert json.loads(r.stdout)["schema"] == 2
+    for name, t in tools.items():
+        assert t["install_hint"] and t["status"], name
