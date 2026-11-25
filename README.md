@@ -87,47 +87,34 @@ dork results are incomplete.
 ```
 git clone https://github.com/busconductors/bounty-run.git bounty-run
 cd bounty-run
-make tui                      # builds bin/bounty-tui (optional but recommended)
+make install
+bounty-run
 ```
 
-Python dependency (`requests`). On Kali/Debian 12+ plain `pip install` is
-refused (externally-managed-environment), so pick one:
+`make install` builds the TUI (`bin/bounty-tui`), makes sure the Python
+`requests` dependency is importable, and writes a `~/.local/bin/bounty-run`
+wrapper that points at this clone. It never runs `sudo`, and it is safe to
+re-run. If system `python3` has no `requests` (Kali/Debian 12+ refuse plain
+`pip install`), it creates a repo-local `.venv` and the wrapper uses it;
+`sudo apt install python3-requests` is an alternative.
+
+Make sure BOTH bin directories are on your `PATH` (add to your shell rc):
 
 ```
-sudo apt install python3-requests
+export PATH="$PATH:$HOME/.local/bin:$(go env GOPATH)/bin"
 ```
 
-or a virtualenv:
+`~/.local/bin` holds the `bounty-run` wrapper; `$(go env GOPATH)/bin` holds the
+Go tools (subfinder, nuclei, katana, ffuf, headi), which are skipped silently
+if not on `PATH`.
 
-```
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-```
+### First run: install the tools
 
-If you use the venv, the wrapper below must call `.venv/bin/python` instead of
-`python3`, and the symlink option does not apply (the shebang uses the system
-`python3`).
-
-Put `bounty-run` on your `PATH`. Either create a small wrapper in
-`~/.local/bin` (run from the repo root; it records the clone's path):
-
-```
-mkdir -p ~/.local/bin
-cat > ~/.local/bin/bounty-run <<EOF
-#!/bin/bash
-exec python3 "$PWD/bounty_run.py" "\$@"
-EOF
-chmod +x ~/.local/bin/bounty-run
-```
-
-or symlink the entry point (it is committed executable and has a
-`#!/usr/bin/env python3` shebang):
-
-```
-mkdir -p ~/.local/bin
-ln -s "$PWD/bounty_run.py" ~/.local/bin/bounty-run
-```
-
-Make sure `~/.local/bin` is on your `PATH`.
+Launch `bounty-run`, press `s` for the Setup screen, and install the tools it
+flags. Setup shows each external tool's status and installs the missing ones
+(batching any `sudo` apt prompt). You can also run `bounty-run setup` from the
+shell. The full tool list with stages and manual install commands is in
+[Requirements](#requirements) and [PLAYBOOK.md](PLAYBOOK.md).
 
 The CLI writes to `<repo>/outputs`, but the TUI looks in
 `~/tools/bounty-run/outputs` by default. If you cloned elsewhere, add this to
