@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-26
+
+### Added
+
+- Easy install: `make install` plus an in-app Setup/Readiness screen (press `s`)
+  that shows each external tool's status and installs the missing ones; a
+  `bounty-run setup` engine command (hybrid go/pipx/apt); a soft warning before a
+  scan when core tools are missing.
+
 ## [1.3.0] - 2026-11-25
 
 ### Changed

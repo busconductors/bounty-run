@@ -11,7 +11,7 @@ import (
 	"bountyrun/tui/internal/ui"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 func main() {
 	outputs := flag.String("outputs", "", "outputs root (default $BOUNTY_OUTPUTS or ~/tools/bounty-run/outputs)")
