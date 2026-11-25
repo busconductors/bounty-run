@@ -74,11 +74,16 @@ def _recheck(name: str, method: str) -> dict:
 
 def _run(cmd: list[str]) -> tuple[bool, str]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S)
+        if cmd[0] == "sudo":
+            # Inherit stdio so the sudo password and apt's [Y/n] prompt reach the user.
+            proc = subprocess.run(cmd, timeout=INSTALL_TIMEOUT_S)
+        else:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:]
+        out = getattr(proc, "stderr", None) or getattr(proc, "stdout", None) or ""
+        tail = out.strip().splitlines()[-1:] if isinstance(out, str) else []
         return False, tail[0] if tail else f"exit {proc.returncode}"
     return True, ""
 
@@ -164,7 +169,5 @@ def main(argv: list[str]) -> int:
             else:
                 results.append(_result(name, "failed", methods[name], why))
         failed = failed or not ok
-    failed = failed or any(r["outcome"] == "failed" and r["detail"] != "unknown tool"
-                           for r in results if r["method"] and r["detail"] != "dry run")
     _emit(results, args.json)
     return 1 if failed else 0

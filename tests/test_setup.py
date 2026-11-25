@@ -54,6 +54,8 @@ def test_setup_all_core_batches_apt_once(capsys):
         assert pkg in apt[0]
     gos = [c for c in cmds if c[:2] == ["go", "install"]]
     assert len(gos) >= 2 and all(len(c) == 3 for c in gos)
+    apt_call = next(c for c in run.call_args_list if c.args[0][:3] == ["sudo", "apt", "install"])
+    assert not apt_call.kwargs.get("capture_output")  # inherits stdio so sudo/apt can prompt
 
 
 def test_setup_dual_method_prefers_pipx_when_present(capsys):
@@ -101,6 +103,7 @@ def test_setup_failed_install_exits_nonzero(capsys):
 
 def test_setup_manual_and_go_missing(capsys):
     rc, run = _run(["amass", "ffuf", "--json"], set())
+    assert rc == 0  # nothing was attempted, so nothing attempted failed
     res = _results(capsys)
     assert res["amass"]["outcome"] == "manual"
     assert res["ffuf"]["outcome"] == "failed" and "go not found" in res["ffuf"]["detail"]
