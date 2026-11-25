@@ -7,9 +7,6 @@ on:
 permissions:
   contents: read
 
-env:
-  WAILS_VERSION: v3.1.0
-
 jobs:
   verify:
     runs-on: ubuntu-22.04
@@ -81,32 +78,6 @@ jobs:
           tar -C dist -czf "release/bounty-run-engine-$TAG-linux-$ARCH.tar.gz" bounty-run
           tar -C bin -czf "release/bounty-tui-$TAG-linux-$ARCH.tar.gz" bounty-tui
 
-      # The desktop steps activate once desktop/ lands on the branch.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: hashFiles('desktop/go.mod') != ''
-        with:
-          node-version: "24"
-      - name: Install Wails and its Linux dependencies
-        if: hashFiles('desktop/go.mod') != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libfuse2
-          go install "github.com/wailsapp/wails/v3/cmd/wails3@$WAILS_VERSION"
-      - name: Package desktop app (unsigned)
-        if: hashFiles('desktop/go.mod') != ''
-        working-directory: desktop
-        env:
-          BOUNTY_ENGINE_DIR: ${{ github.workspace }}/dist/bounty-run
-        run: |
-          wails3 task package
-          shopt -s nullglob
-          appimages=(bin/*.AppImage)
-          debs=(bin/*.deb)
-          test "${#appimages[@]}" -eq 1
-          test "${#debs[@]}" -eq 1
-          cp "${appimages[0]}" "../release/bounty-run-desktop-$TAG-linux-$ARCH.AppImage"
-          cp "${debs[0]}" "../release/bounty-run-desktop-$TAG-linux-$ARCH.deb"
-
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.arch }}
@@ -139,11 +110,4 @@ jobs:
           printf '\n---\nBinaries are unsigned. Windows users run the Linux x86_64 build inside WSL2.\n' >> notes.md
           (cd release && sha256sum -- * > SHA256SUMS)
 
-          # Without all four desktop packages, stop at a draft for operator review.
-          draft=()
-          desktop_count="$(find release -name 'bounty-run-desktop-*' | wc -l)"
-          if [ "$desktop_count" -ne 4 ]; then
-            echo "::warning::Desktop packages missing ($desktop_count of 4), creating a draft release"
-            draft=(--draft)
-          fi
-          gh release create "$TAG" release/* --verify-tag --title "Bounty Runner $TAG" --notes-file notes.md "${draft[@]}"
+          gh release create "$TAG" release/* --verify-tag --title "Bounty Runner $TAG" --notes-file notes.md

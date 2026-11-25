@@ -5,6 +5,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-25
+
+### Changed
+
+- The desktop app now ships from its own repository; public releases contain the
+  engine and TUI only.
+
 ## [1.2.0] - 2026-11-23
 
 Interactive TUI and origin-IP classification.
