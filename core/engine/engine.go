@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"bountyrun/core/events"
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/events"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 // ErrNoStart means the engine never emitted run_start in time.

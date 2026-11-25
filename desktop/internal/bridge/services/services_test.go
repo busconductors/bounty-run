@@ -11,9 +11,9 @@ import (
 	"slices"
 	"testing"
 
-	"bountyrun/core/engine"
 	"bountyrun/desktop/internal/catalog"
 	"bountyrun/desktop/internal/runs"
+	"github.com/busconductors/bounty-run/core/engine"
 )
 
 // TestFrontendCallsExist checks that every bound method the frontend calls by

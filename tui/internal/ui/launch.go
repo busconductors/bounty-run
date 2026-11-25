@@ -13,8 +13,8 @@ import (
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 
-	"bountyrun/core/engine"
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/engine"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 const capError = "3 runs already active — wait or cancel one"

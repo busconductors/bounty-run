@@ -1,4 +1,4 @@
-module bountyrun/core
+module github.com/busconductors/bounty-run/core
 
 go 1.27.3
 

@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"bountyrun/core/engine"
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/engine"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 const runToEnd = `

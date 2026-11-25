@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"bountyrun/core/engine"
+	"github.com/busconductors/bounty-run/core/engine"
 )
 
 // TestPackagedEngineScan runs a real scan through Service with the frozen

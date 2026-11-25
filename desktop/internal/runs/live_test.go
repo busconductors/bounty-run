@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"bountyrun/core/engine"
+	"github.com/busconductors/bounty-run/core/engine"
 )
 
 // liveRun is a paced fake scan: stage a runs to completion with output, a

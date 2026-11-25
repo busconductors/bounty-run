@@ -3,7 +3,7 @@ module bountyrun/tui
 go 1.27.3
 
 require (
-	bountyrun/core v0.0.0
+	github.com/busconductors/bounty-run/core v0.0.0
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/huh/v2 v2.0.3
@@ -38,4 +38,4 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 )
 
-replace bountyrun/core => ../core
+replace github.com/busconductors/bounty-run/core => ../core

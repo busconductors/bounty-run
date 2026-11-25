@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 // ErrExited means the engine process ended before it emitted run_start.

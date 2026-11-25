@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 func writeRun(t *testing.T, root, target, ts string, pid int, pidStart, started int64, lines ...string) string {

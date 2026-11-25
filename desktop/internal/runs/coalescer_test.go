@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"bountyrun/core/events"
+	"github.com/busconductors/bounty-run/core/events"
 )
 
 // pumpHarness drives pump with a fake clock. in is unbuffered, so once a send

@@ -15,11 +15,11 @@ import (
 	"sync"
 	"time"
 
-	"bountyrun/core/engine"
-	"bountyrun/core/events"
-	"bountyrun/core/runstore"
-	"bountyrun/core/textsafe"
 	"bountyrun/desktop/internal/bridge"
+	"github.com/busconductors/bounty-run/core/engine"
+	"github.com/busconductors/bounty-run/core/events"
+	"github.com/busconductors/bounty-run/core/runstore"
+	"github.com/busconductors/bounty-run/core/textsafe"
 )
 
 // MaxActive is how many runs may be active at once (the TUI's cap).

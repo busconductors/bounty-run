@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"bountyrun/core/engine"
 	"bountyrun/desktop/internal/runs"
+	"github.com/busconductors/bounty-run/core/engine"
 )
 
 // stagesJSON mirrors the shape of `bounty-run introspect stages`.

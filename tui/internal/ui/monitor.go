@@ -15,9 +15,9 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
-	"bountyrun/core/engine"
-	"bountyrun/core/events"
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/engine"
+	"github.com/busconductors/bounty-run/core/events"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 // tailBatchMax caps how many queued tail messages one Update applies, so a

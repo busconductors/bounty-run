@@ -19,12 +19,12 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"bountyrun/core/runstore"
 	"bountyrun/desktop/internal/catalog"
 	"bountyrun/desktop/internal/doctor"
 	"bountyrun/desktop/internal/findings"
 	"bountyrun/desktop/internal/reports"
 	"bountyrun/desktop/internal/runs"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 // Launch serves the Launch screen.

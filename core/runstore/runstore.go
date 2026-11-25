@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"bountyrun/core/events"
+	"github.com/busconductors/bounty-run/core/events"
 )
 
 // RunInfo is the content of run.json plus its directory.

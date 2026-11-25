@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"bountyrun/core/textsafe"
+	"github.com/busconductors/bounty-run/core/textsafe"
 )
 
 const (

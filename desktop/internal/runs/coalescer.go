@@ -7,9 +7,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"bountyrun/core/events"
-	"bountyrun/core/logbuf"
-	"bountyrun/core/textsafe"
+	"github.com/busconductors/bounty-run/core/events"
+	"github.com/busconductors/bounty-run/core/logbuf"
+	"github.com/busconductors/bounty-run/core/textsafe"
 )
 
 // Coalescer limits. A batch is flushed every FlushInterval, or as soon as

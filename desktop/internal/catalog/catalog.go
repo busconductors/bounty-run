@@ -24,9 +24,9 @@ import (
 	"time"
 	"unicode"
 
-	"bountyrun/core/engine"
-	"bountyrun/core/textsafe"
 	"bountyrun/desktop/internal/runs"
+	"github.com/busconductors/bounty-run/core/engine"
+	"github.com/busconductors/bounty-run/core/textsafe"
 )
 
 // RunDirPlaceholder stands in for the run directory's timestamped leaf in a

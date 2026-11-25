@@ -1,6 +1,6 @@
 package ui
 
-import "bountyrun/core/textsafe"
+import "github.com/busconductors/bounty-run/core/textsafe"
 
 // sanitize makes engine-supplied text safe to print; see textsafe.Sanitize.
 func sanitize(s string) string { return textsafe.Sanitize(s) }

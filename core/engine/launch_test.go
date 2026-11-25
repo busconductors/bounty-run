@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 const runStartLine = `echo '{"v":1,"t":1,"type":"run_start","target":"a.com"}' >> "$ev"` + "\n"

@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
-	"bountyrun/core/events"
-	"bountyrun/core/runstore"
+	"github.com/busconductors/bounty-run/core/events"
+	"github.com/busconductors/bounty-run/core/runstore"
 )
 
 // monHarness runs a MonitorModel standalone under teatest and records detach.
