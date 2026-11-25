@@ -126,21 +126,33 @@ def _resolve(name: str) -> str | None:
     return shutil.which(name)
 
 
-def _known_install_dirs() -> list[str]:
-    """Where installers drop binaries that may not be on PATH. No network."""
-    gopath = os.environ.get("GOPATH", "").split(os.pathsep)[0]
-    if not gopath:
-        try:
-            gopath = subprocess.run(["go", "env", "GOPATH"], capture_output=True, text=True,
-                                    timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            gopath = ""
+def known_install_dirs() -> list[str]:
+    """Where installers drop binaries that may not be on PATH. No network.
+
+    ``$GOBIN`` wins over ``<GOPATH>/bin`` (as ``go install`` does), then ``~/.local/bin``.
+    """
     home = os.path.expanduser("~")
-    return [os.path.join(gopath or os.path.join(home, "go"), "bin"),
-            os.path.join(home, ".local", "bin")]
+    gobin = os.environ.get("GOBIN", "").strip()
+    if gobin:
+        go_bin = gobin
+    else:
+        gopath = os.environ.get("GOPATH", "").split(os.pathsep)[0]
+        if not gopath:
+            try:
+                gopath = subprocess.run(["go", "env", "GOPATH"], capture_output=True, text=True,
+                                        timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                gopath = ""
+        go_bin = os.path.join(gopath or os.path.join(home, "go"), "bin")
+    dirs: list[str] = []
+    for d in (go_bin, os.path.join(home, ".local", "bin")):
+        if d and d not in dirs:
+            dirs.append(d)
+    return dirs
 
 
-def _probe_known_dirs(name: str, dirs: list[str]) -> str | None:
+def probe_known_dirs(name: str, dirs: list[str]) -> str | None:
+    """First executable regular file ``name`` found in ``dirs``."""
     for d in dirs:
         cand = os.path.join(d, name)
         if os.path.isfile(cand) and os.access(cand, os.X_OK):
@@ -219,8 +231,8 @@ def doctor_report() -> dict:
         off_path = None
         if not path:
             if dirs is None:
-                dirs = _known_install_dirs()
-            off_path = _probe_known_dirs(spec.name, dirs)
+                dirs = known_install_dirs()
+            off_path = probe_known_dirs(spec.name, dirs)
         version = _version_of(spec, path) if path else None
         if off_path:
             path, status = off_path, "installed_needs_path"

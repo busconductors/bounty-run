@@ -49,26 +49,14 @@ def _pick_method(spec: introspect.ToolSpec) -> tuple[str, str] | None:
     return None
 
 
-def _known_dirs() -> list[str]:
-    home = os.path.expanduser("~")
-    gopath = ""
-    if _prereq("go"):
-        try:
-            proc = subprocess.run(["go", "env", "GOPATH"], capture_output=True, text=True, timeout=30)
-            gopath = (proc.stdout or "").strip() if proc.returncode == 0 else ""
-        except (OSError, subprocess.SubprocessError):
-            gopath = ""
-    return [os.path.join(gopath or os.path.join(home, "go"), "bin"),
-            os.path.join(home, ".local", "bin")]
-
-
 def _recheck(name: str, method: str) -> dict:
     if shutil.which(name):
         return _result(name, "installed", method)
-    for d in _known_dirs():
-        if os.path.isfile(os.path.join(d, name)):
-            return _result(name, "installed_needs_path", method,
-                           f"installed to {d}; add it to PATH (export PATH=\"$PATH:{d}\")")
+    found = introspect.probe_known_dirs(name, introspect.known_install_dirs())
+    if found:
+        d = os.path.dirname(found)
+        return _result(name, "installed_needs_path", method,
+                       f"installed to {d}; add it to PATH (export PATH=\"$PATH:{d}\")")
     return _result(name, "failed", method, "install finished but the tool is still not found")
 
 

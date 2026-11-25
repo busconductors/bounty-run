@@ -76,6 +76,7 @@ def test_setup_installed_not_on_path(capsys, tmp_path, monkeypatch):
     gobin = tmp_path / "gopath" / "bin"
     gobin.mkdir(parents=True)
     (gobin / "ffuf").write_text("x")
+    (gobin / "ffuf").chmod(0o755)
 
     def side(argv, *a, **k):
         if argv[:3] == ["go", "env", "GOPATH"]:
@@ -108,3 +109,16 @@ def test_setup_manual_and_go_missing(capsys):
     assert res["amass"]["outcome"] == "manual"
     assert res["ffuf"]["outcome"] == "failed" and "go not found" in res["ffuf"]["detail"]
     assert introspect.TOOLS  # sanity
+
+
+def test_setup_recheck_honors_gobin(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    gobin = tmp_path / "custom-gobin"
+    gobin.mkdir()
+    (gobin / "nuclei").write_text("x")
+    (gobin / "nuclei").chmod(0o755)
+    monkeypatch.setenv("GOBIN", str(gobin))
+    rc, _ = _run(["nuclei", "--json"], {"go"})
+    r = _results(capsys)["nuclei"]
+    assert r["outcome"] == "installed_needs_path"
+    assert str(gobin) in r["detail"]
