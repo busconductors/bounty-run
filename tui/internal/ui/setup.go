@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,9 +21,6 @@ type doctorLoadedMsg struct {
 	err   error
 }
 
-// setupResultsMsg carries per-tool install outcomes (from engine.Setup).
-type setupResultsMsg struct{ results []engine.SetupResult }
-
 // setupExecDoneMsg reports that a suspended `bounty-run setup` returned.
 type setupExecDoneMsg struct{ err error }
 
@@ -39,11 +37,12 @@ func loadDoctor(cfg Config) tea.Cmd {
 	}
 }
 
-// missingCore lists the required tools the doctor reports missing.
+// missingCore lists the required tools that scans cannot use: missing, or
+// installed off PATH.
 func missingCore(tools []engine.Tool) []string {
 	var out []string
 	for _, t := range tools {
-		if !t.Optional && t.Status == "missing" {
+		if !t.Optional && t.Status != "ok" && t.Status != "unknown_version" {
 			out = append(out, t.Name)
 		}
 	}
@@ -76,7 +75,6 @@ func statusGlyph(status string) string {
 type setupModel struct {
 	cfg           Config
 	tools         []engine.Tool
-	notes         map[string]engine.SetupResult
 	cursor        int
 	loading       bool
 	err           string
@@ -84,20 +82,7 @@ type setupModel struct {
 }
 
 func newSetup(cfg Config, tools []engine.Tool) *setupModel {
-	return &setupModel{cfg: cfg, tools: tools, notes: map[string]engine.SetupResult{}}
-}
-
-// effective applies install outcomes over the doctor report: a tool installed
-// outside PATH shows as installed_needs_path rather than missing.
-func (m *setupModel) effective() []engine.Tool {
-	out := make([]engine.Tool, len(m.tools))
-	copy(out, m.tools)
-	for i, t := range out {
-		if n, ok := m.notes[t.Name]; ok && n.Outcome == "installed_needs_path" && t.Status == "missing" {
-			out[i].Status = "installed_needs_path"
-		}
-	}
-	return out
+	return &setupModel{cfg: cfg, tools: tools}
 }
 
 func (m *setupModel) selectedName() string {
@@ -124,10 +109,6 @@ func (m *setupModel) Update(msg tea.Msg) tea.Cmd {
 		}
 		m.err, m.tools = "", msg.tools
 		m.cursor = min(m.cursor, max(len(m.tools)-1, 0))
-	case setupResultsMsg:
-		for _, r := range msg.results {
-			m.notes[r.Name] = r
-		}
 	case setupExecDoneMsg:
 		if msg.err != nil {
 			m.err = "setup: " + msg.err.Error()
@@ -159,7 +140,7 @@ func (m *setupModel) Update(msg tea.Msg) tea.Cmd {
 }
 
 func (m *setupModel) View() string {
-	tools := m.effective()
+	tools := m.tools
 	var b strings.Builder
 	if len(tools) == 0 {
 		if m.loading {
@@ -173,8 +154,8 @@ func (m *setupModel) View() string {
 		label := t.Status
 		if t.Status == "installed_needs_path" {
 			label = "installed, needs PATH"
-			if d := m.notes[t.Name].Detail; d != "" {
-				label += ": " + d
+			if t.Path != "" {
+				label += ": " + filepath.Dir(t.Path)
 			}
 		}
 		line := fmt.Sprintf("%s %-14s %s", st.Render(statusGlyph(t.Status)), t.Name, st.Render(label))

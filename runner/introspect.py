@@ -126,6 +126,28 @@ def _resolve(name: str) -> str | None:
     return shutil.which(name)
 
 
+def _known_install_dirs() -> list[str]:
+    """Where installers drop binaries that may not be on PATH. No network."""
+    gopath = os.environ.get("GOPATH", "").split(os.pathsep)[0]
+    if not gopath:
+        try:
+            gopath = subprocess.run(["go", "env", "GOPATH"], capture_output=True, text=True,
+                                    timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            gopath = ""
+    home = os.path.expanduser("~")
+    return [os.path.join(gopath or os.path.join(home, "go"), "bin"),
+            os.path.join(home, ".local", "bin")]
+
+
+def _probe_known_dirs(name: str, dirs: list[str]) -> str | None:
+    for d in dirs:
+        cand = os.path.join(d, name)
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
 def _kill_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
@@ -191,10 +213,19 @@ def _version_of(spec: ToolSpec, path: str) -> str | None:
 
 def doctor_report() -> dict:
     tools = []
+    dirs: list[str] | None = None
     for spec in TOOLS:
         path = _resolve(spec.name)
+        off_path = None
+        if not path:
+            if dirs is None:
+                dirs = _known_install_dirs()
+            off_path = _probe_known_dirs(spec.name, dirs)
         version = _version_of(spec, path) if path else None
-        status = "missing" if not path else ("ok" if version else "unknown_version")
+        if off_path:
+            path, status = off_path, "installed_needs_path"
+        else:
+            status = "missing" if not path else ("ok" if version else "unknown_version")
         tools.append({
             "name": spec.name, "path": path, "version": version,
             "required_by": list(spec.required_by), "optional": spec.optional,

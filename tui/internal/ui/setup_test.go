@@ -47,23 +47,33 @@ func TestSetupScreenRendersToolStatus(t *testing.T) {
 }
 
 func TestSetupInstalledNeedsPathShownAmber(t *testing.T) {
-	r := newSetupRoot(t, cannedTools())
-	r.Update(setupResultsMsg{results: []engine.SetupResult{
-		{Name: "nuclei", Outcome: "installed_needs_path", Detail: "/home/u/go/bin"},
-	}})
+	// Real path: Config.Doctor (the engine's doctor) reports the status.
+	cfg := Config{OutputsRoot: t.TempDir(), EngineBin: "x", Doctor: func(string) ([]engine.Tool, error) {
+		return []engine.Tool{
+			{Name: "nuclei", Status: "installed_needs_path", Path: "/home/u/go/bin/nuclei"},
+			{Name: "nmap", Status: "ok"},
+		}, nil
+	}}
+	r := NewRoot(cfg).(*Root)
+	r.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	_, cmd := r.Update(OpenSetupMsg{})
+	if cmd == nil {
+		t.Fatal("expected doctor load cmd")
+	}
+	r.Update(cmd())
 	v := r.View().Content
 	if !strings.Contains(v, "/home/u/go/bin") || !strings.Contains(v, "needs PATH") {
 		t.Errorf("needs-path dir not shown:\n%s", v)
 	}
 	if got := statusStyle("installed_needs_path").GetForeground(); got != colAmber {
-		t.Errorf("installed_needs_path colour = %v, want amber", got)
+		t.Errorf("colour = %v, want amber", got)
 	}
 	if statusStyle("ok").GetForeground() != colGreen || statusStyle("missing").GetForeground() != colRed {
 		t.Error("ok must be green and missing red")
 	}
-	// No longer counted as a missing core tool.
-	if strings.Contains(v, "1 core tool") {
-		t.Errorf("installed tool still counted missing:\n%s", v)
+	// An off-PATH core tool is unusable by scans, so it still counts.
+	if !strings.Contains(v, "1 core tool") {
+		t.Errorf("off-PATH core tool not flagged:\n%s", v)
 	}
 }
 
@@ -105,6 +115,17 @@ func TestLaunchGateOpensSetup(t *testing.T) {
 	r.Update(cmd())
 	if r.Screen() != "setup" {
 		t.Errorf("screen = %q, want setup", r.Screen())
+	}
+}
+
+func TestLaunchGateWarnsForNeedsPath(t *testing.T) {
+	r := NewRoot(Config{OutputsRoot: t.TempDir(), EngineBin: "/nonexistent"}).(*Root)
+	r.Update(doctorLoadedMsg{tools: []engine.Tool{{Name: "nuclei", Status: "installed_needs_path", Path: "/x/bin/nuclei"}}})
+	r.Update(NewRunMsg{})
+	r.launch.target = "example.com"
+	r.Update(launchSubmitMsg{})
+	if r.launch.state != launchGate {
+		t.Errorf("state = %v, want launchGate", r.launch.state)
 	}
 }
 

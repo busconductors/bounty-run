@@ -80,7 +80,9 @@ def test_stages_output_is_deterministic(tmp_path):
 def test_doctor_missing_tool_reports_missing(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
-    tools, _ = doctor(empty, tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    tools, _ = doctor(empty, tmp_path, extra_env={"HOME": str(home), "GOPATH": str(home / "go")})
     for name in BRIEF_TOOLS - {"shcheck"}:
         t = tools[name]
         assert t["status"] == "missing", name
@@ -92,6 +94,24 @@ def test_doctor_missing_tool_reports_missing(tmp_path):
     assert tools["headi"]["status"] == "missing"
     # vendored shcheck needs no PATH entry
     assert tools["shcheck"]["path"].endswith("runner/vendor/shcheck.py")
+
+
+def test_doctor_off_path_tool_reports_installed_needs_path(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    home = tmp_path / "home"
+    gobin = home / "go" / "bin"
+    gobin.mkdir(parents=True)
+    fake_tool(gobin, "nuclei", 'echo "[INF] Current Version: v1.2.3"')
+    local = home / ".local" / "bin"
+    local.mkdir(parents=True)
+    fake_tool(local, "sqlmap", "echo 1.8")
+    tools, _ = doctor(empty, tmp_path, extra_env={"HOME": str(home), "GOPATH": str(home / "go")})
+    assert tools["nuclei"]["status"] == "installed_needs_path"
+    assert tools["nuclei"]["path"] == str(gobin / "nuclei")
+    assert tools["sqlmap"]["status"] == "installed_needs_path"
+    assert tools["sqlmap"]["path"] == str(local / "sqlmap")
+    assert tools["ffuf"]["status"] == "missing"
 
 
 def test_doctor_reports_version_and_uses_offline_flags(tmp_path):

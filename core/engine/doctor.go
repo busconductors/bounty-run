@@ -13,13 +13,14 @@ type InstallMethod struct {
 	Package string `json:"package"`
 }
 
-// Tool is one entry of `introspect doctor`. Status is ok, missing or
-// unknown_version.
+// Tool is one entry of `introspect doctor`. Status is ok, missing,
+// unknown_version or installed_needs_path.
 type Tool struct {
 	Name           string          `json:"name"`
 	RequiredBy     []string        `json:"required_by"`
 	Optional       bool            `json:"optional"`
 	Status         string          `json:"status"`
+	Path           string          `json:"path"` // resolved binary; for installed_needs_path, the off-PATH location
 	InstallMethods []InstallMethod `json:"install_methods"`
 	InstallHint    string          `json:"install_hint"`
 }
