@@ -232,6 +232,15 @@ func TestExportPDFValidatesRunDirAndTarget(t *testing.T) {
 	if b, err := os.ReadFile(want); err != nil || string(b) != "%PDF-stub" {
 		t.Errorf("report.pdf = %q (%v), want stub output", b, err)
 	}
+
+	// (c) a renderer that reports success but writes a non-PDF is rejected, and
+	// the stale report.pdf from (b) is removed first so it cannot linger.
+	renderReportPDF = func(htmlPath, pdfPath, theme string) error {
+		return os.WriteFile(pdfPath, []byte("<html>error</html>"), 0o600)
+	}
+	if _, err := r.ExportPDF(run, "light"); err == nil {
+		t.Error("export accepted a non-PDF render result")
+	}
 }
 
 func TestOpenExternalAllowsPDFRejectsOther(t *testing.T) {

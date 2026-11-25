@@ -9,9 +9,13 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -133,6 +137,11 @@ func (r *Reports) OpenExternal(dir, name string) error {
 // real WebKit.
 var renderReportPDF = webkitRenderPDF
 
+// pdfExportMu serializes exports: each render drives a nested GTK main loop on
+// the main thread, so two concurrent ExportPDF calls would stack nested loops.
+// The lock makes the second wait for the first.
+var pdfExportMu sync.Mutex
+
 // ExportPDF renders the run's summary.html to report.pdf in the same run dir
 // and returns the saved path. theme is "dark" to keep the report's dark
 // treatment in print (the renderer sets html[data-pdf-theme="dark"] first);
@@ -150,10 +159,37 @@ func (r *Reports) ExportPDF(dir, theme string) (string, error) {
 		theme = "light"
 	}
 	pdf := filepath.Join(dir, reports.PDFReport)
+
+	pdfExportMu.Lock()
+	defer pdfExportMu.Unlock()
+
+	// Drop any stale output first so a failed render can never be mistaken for
+	// a fresh one, then confirm the renderer actually produced a PDF.
+	if err := os.Remove(pdf); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
 	if err := renderReportPDF(html, pdf, theme); err != nil {
 		return "", err
 	}
+	if err := verifyPDF(pdf); err != nil {
+		return "", err
+	}
 	return pdf, nil
+}
+
+// verifyPDF confirms path exists and begins with the %PDF magic, the safety net
+// against a renderer that reports success but writes a blank or error page.
+func verifyPDF(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("report PDF missing after render: %w", err)
+	}
+	defer f.Close()
+	var magic [4]byte
+	if n, _ := io.ReadFull(f, magic[:]); n < 4 || string(magic[:]) != "%PDF" {
+		return errors.New("render produced an invalid report PDF")
+	}
+	return nil
 }
 
 // openWithOS launches the OS default handler for path without a shell.
