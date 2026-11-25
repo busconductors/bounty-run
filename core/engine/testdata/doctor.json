@@ -1,0 +1,4 @@
+{"schema":2,"tools":[
+{"name":"nuclei","path":"/home/u/go/bin/nuclei","version":"3.2.0","required_by":["scan"],"optional":false,"install_hint":"go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest","status":"ok","install_methods":[{"method":"go","package":"github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"}]},
+{"name":"nikto","path":null,"version":null,"required_by":["nikto"],"optional":true,"install_hint":"see https://github.com/sullo/nikto","status":"missing","install_methods":[{"method":"manual","package":""}]}
+]}
