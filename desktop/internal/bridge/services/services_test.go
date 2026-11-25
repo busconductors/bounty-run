@@ -193,6 +193,47 @@ func TestAvailableReportsPDF(t *testing.T) {
 	}
 }
 
+func TestExportPDFValidatesRunDirAndTarget(t *testing.T) {
+	r, run, _ := pdfReports(t)
+	var calls []string
+	orig := renderReportPDF
+	t.Cleanup(func() { renderReportPDF = orig })
+	renderReportPDF = func(htmlPath, pdfPath, theme string) error {
+		calls = append(calls, pdfPath)
+		return os.WriteFile(pdfPath, []byte("%PDF-stub"), 0o600)
+	}
+
+	// (a) no summary.html: an error, the renderer is never called, no report.pdf.
+	if _, err := r.ExportPDF(run, "light"); err == nil {
+		t.Error("export without summary.html succeeded")
+	}
+	if len(calls) != 0 {
+		t.Errorf("renderer ran without summary.html: %v", calls)
+	}
+	if _, err := os.Stat(filepath.Join(run, "report.pdf")); err == nil {
+		t.Error("report.pdf written without summary.html")
+	}
+
+	// (b) with summary.html: returns <runDir>/report.pdf and the stub produced it.
+	if err := os.WriteFile(filepath.Join(run, "summary.html"), []byte("<html></html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.ExportPDF(run, "dark")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	want := filepath.Join(run, "report.pdf")
+	if got != want {
+		t.Errorf("path = %q, want %q", got, want)
+	}
+	if len(calls) != 1 || calls[0] != want {
+		t.Errorf("renderer calls = %v, want [%q]", calls, want)
+	}
+	if b, err := os.ReadFile(want); err != nil || string(b) != "%PDF-stub" {
+		t.Errorf("report.pdf = %q (%v), want stub output", b, err)
+	}
+}
+
 func TestOpenExternalAllowsPDFRejectsOther(t *testing.T) {
 	r, run, opened := pdfReports(t)
 	for _, n := range []string{"report.pdf", "findings.json"} {

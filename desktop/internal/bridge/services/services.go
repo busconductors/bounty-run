@@ -127,6 +127,35 @@ func (r *Reports) OpenExternal(dir, name string) error {
 	return r.open(path)
 }
 
+// renderReportPDF renders the HTML file at htmlPath to a PDF at pdfPath using
+// the platform's WebKit print path (webkitRenderPDF). theme is "light" or
+// "dark". It is a package variable so tests can swap in a stub and never drive
+// real WebKit.
+var renderReportPDF = webkitRenderPDF
+
+// ExportPDF renders the run's summary.html to report.pdf in the same run dir
+// and returns the saved path. theme is "dark" to keep the report's dark
+// treatment in print (the renderer sets html[data-pdf-theme="dark"] first);
+// "", "light" or any other value render the light print theme.
+func (r *Reports) ExportPDF(dir, theme string) (string, error) {
+	dir, err := r.runDir(dir)
+	if err != nil {
+		return "", err
+	}
+	html, err := reports.SafeFile(r.root, dir, reports.HTMLReport, []string{reports.HTMLReport})
+	if err != nil {
+		return "", err
+	}
+	if theme != "dark" {
+		theme = "light"
+	}
+	pdf := filepath.Join(dir, reports.PDFReport)
+	if err := renderReportPDF(html, pdf, theme); err != nil {
+		return "", err
+	}
+	return pdf, nil
+}
+
 // openWithOS launches the OS default handler for path without a shell.
 func openWithOS(path string) error {
 	var cmd *exec.Cmd
