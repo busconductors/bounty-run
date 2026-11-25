@@ -44,7 +44,7 @@ install: tui
 	fi; \
 	mkdir -p "$$HOME/.local/bin"; \
 	tmp="$$HOME/.local/bin/.bounty-run.tmp"; \
-	printf '#!/bin/bash\nexec %s "%s/bounty_run.py" "$$@"\n' "$$py" "$$repo" > "$$tmp"; \
+	printf '#!/bin/bash\nexec "%s" "%s/bounty_run.py" "$$@"\n' "$$py" "$$repo" > "$$tmp"; \
 	chmod +x "$$tmp"; \
 	mv -f "$$tmp" "$$HOME/.local/bin/bounty-run"; \
 	echo ""; \
