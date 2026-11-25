@@ -34,7 +34,7 @@ func main() {
 	if engine == "" {
 		engine = "bounty-run"
 	}
-	cfg := ui.Config{OutputsRoot: root, EngineBin: engine, Splash: !*noSplash}
+	cfg := ui.Config{OutputsRoot: root, EngineBin: engine, Splash: !*noSplash, PreloadDoctor: true}
 	if _, err := tea.NewProgram(ui.NewRoot(cfg)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "bounty-tui:", err)
 		os.Exit(1)

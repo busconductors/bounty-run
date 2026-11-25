@@ -119,6 +119,7 @@ const (
 	launchEditing launchState = iota
 	launchStarting
 	launchFailed
+	launchGate // soft gate: core tools missing; warns, never blocks
 )
 
 // launchSubmitMsg is sent by the form when the last field is confirmed.
@@ -139,8 +140,10 @@ type launchModel struct {
 	target, proxy, preset, timeout, maxParam string
 	custom                                   []string // enabled toggles when preset is Custom
 
+	tools         []engine.Tool // cached doctor report for the soft gate
 	state         launchState
 	inlineErr     string
+	gateMissing   []string // core tools the soft gate warned about
 	failure       []string // sanitized error lines for the failure view
 	width, height int
 }
@@ -330,7 +333,12 @@ func (l *launchModel) Update(msg tea.Msg) tea.Cmd {
 			l.inlineErr = err.Error()
 			return l.rebuild()
 		}
-		l.state, l.inlineErr = launchStarting, ""
+		l.inlineErr = ""
+		if miss := missingCore(l.tools); len(miss) > 0 {
+			l.state, l.gateMissing = launchGate, miss
+			return nil
+		}
+		l.state = launchStarting
 		return startRun(l.cfg, o)
 	case launchResultMsg:
 		if msg.capped {
@@ -351,7 +359,14 @@ func (l *launchModel) Update(msg tea.Msg) tea.Cmd {
 			if l.state == launchStarting {
 				return nil // the spawn is in flight; its result decides the screen
 			}
+			if l.state == launchGate {
+				l.state = launchEditing // back to the form
+				return nil
+			}
 			return func() tea.Msg { return ShowRunsMsg{} }
+		}
+		if l.state == launchGate {
+			return l.gateKey(msg.String())
 		}
 		if l.state != launchEditing {
 			return nil
@@ -362,6 +377,24 @@ func (l *launchModel) Update(msg tea.Msg) tea.Cmd {
 	}
 	_, cmd := l.form.Update(msg)
 	return cmd
+}
+
+// gateKey handles the soft gate: it only warns, so proceeding is always one
+// key away.
+func (l *launchModel) gateKey(k string) tea.Cmd {
+	switch k {
+	case "p", "enter":
+		o, err := l.options()
+		if err != nil {
+			l.state, l.inlineErr = launchEditing, err.Error()
+			return l.rebuild()
+		}
+		l.state = launchStarting
+		return startRun(l.cfg, o)
+	case "s":
+		return func() tea.Msg { return OpenSetupMsg{} }
+	}
+	return nil
 }
 
 // Launch layout: the form pane, with the banner beside it when it fits.
@@ -400,6 +433,12 @@ func (l *launchModel) View() string {
 	case launchStarting:
 		b.WriteString(runStyle.Render("●") + " " + dimStyle.Render("starting engine…"))
 		help = dimStyle.Render("waiting for run_start")
+	case launchGate:
+		b.WriteString(warnStyle.Bold(true).Render("! core tools missing") + "\n\n")
+		b.WriteString(strings.Join(l.gateMissing, ", ") + "\n\n")
+		b.WriteString(dimStyle.Render("Some stages will fail or be skipped without them.") + "\n\n")
+		b.WriteString(keyStyle.Render("p") + " Proceed anyway   " + keyStyle.Render("s") + " Open Setup")
+		help = helpBar("p proceed anyway", "s open setup", "esc back to form")
 	case launchFailed:
 		b.WriteString(badStyle.Bold(true).Render("✗ launch failed") + "\n\n")
 		b.WriteString(strings.Join(l.failure, "\n"))

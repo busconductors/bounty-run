@@ -89,6 +89,8 @@ func (m *runsModel) Update(msg tea.Msg) tea.Cmd {
 			}
 		case "n":
 			return func() tea.Msg { return NewRunMsg{} }
+		case "s":
+			return func() tea.Msg { return OpenSetupMsg{} }
 		case "q", "ctrl+c":
 			return tea.Quit
 		}
@@ -209,5 +211,5 @@ func (m *runsModel) View() string {
 	}
 	return headerBar("Runs", "") + "  " + ctx + "\n" +
 		box.Render(strings.TrimSuffix(b.String(), "\n")) + "\n" +
-		helpBar("↑/↓ select", "enter attach", "n new", "q quit")
+		helpBar("↑/↓ select", "enter attach", "n new", "s setup", "q quit")
 }
