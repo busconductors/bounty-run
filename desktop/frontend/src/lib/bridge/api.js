@@ -46,4 +46,5 @@ export const findingsApi = Object.freeze({
 export const reportsApi = Object.freeze({
   available: (dir) => call('Reports.Available', dir),
   openExternal: (dir, name) => call('Reports.OpenExternal', dir, name),
+  exportPDF: (dir, theme) => call('Reports.ExportPDF', dir, theme),
 });
