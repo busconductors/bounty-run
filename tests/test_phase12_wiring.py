@@ -103,42 +103,12 @@ class TestRunSummary(unittest.TestCase):
         )
         return path.read_text()
 
-    def test_waf_listed_in_edge_row(self):
-        doc = self._doc(_phase12_findings())
-        self.assertIn("WAF: Cloudflare", doc)
-
-    def test_waf_none_in_edge_row(self):
-        doc = self._doc([_f("panel:cpanel", "low")])
-        self.assertIn("Cloudflare no", doc)
-        self.assertNotIn("WAF:", doc)
-
-    def test_waf_dedupes_and_sorts(self):
-        findings = [
-            _f("waf:cloudflare", name="WAF detected: Cloudflare (Cloudflare Inc.)",
-               host="a.example.com"),
-            _f("waf:cloudflare", name="WAF detected: Cloudflare (Cloudflare Inc.)",
-               host="b.example.com"),
-            _f("waf:aws-elastic-load-balancer",
-               name="WAF detected: AWS Elastic Load Balancer (Amazon)"),
-        ]
-        doc = self._doc(findings)
-        self.assertIn("WAF: AWS Elastic Load Balancer, Cloudflare", doc)
-
-    def test_scanner_counts_in_surface(self):
-        findings = _phase12_findings() + [
-            _f("nikto:missing-header:999", "info", url="https://example.com/x"),
-        ]
-        doc = self._doc(findings)
-        self.assertIn("<span>tls</span><b>1</b>", doc)
-        self.assertIn("<span>nikto</span><b>2</b>", doc)
-        self.assertIn("<span>dork hits</span><b>1</b>", doc)
-        self.assertIn("<span>panels</span><b>1</b>", doc)
-
-    def test_surface_groups_in_order(self):
-        doc = self._doc(_phase12_findings())
-        order = ["Edge &amp; stack", "Scanner coverage"]
-        idx = [doc.index(lbl) for lbl in order]
-        self.assertEqual(idx, sorted(idx))
+    # The per-run summary.html is now the engagement report (cover → exec →
+    # scope/methodology → findings → appendix). The old "Attack surface" edge
+    # row and scanner-coverage panels were removed; WAF/tech/scanner data now
+    # appears as findings. Tests that asserted those panels were dropped. The
+    # positional-caller contract of _summary_surface_rows (still used elsewhere)
+    # is kept below.
 
     def test_surface_rows_positional_callers_still_valid(self):
         html = dashboard._summary_surface_rows(1, 1, False, [], 0, 0)
