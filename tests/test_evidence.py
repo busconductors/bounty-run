@@ -164,3 +164,41 @@ class TestAttach:
         evidence.response_hook(_Resp(request=_Req(url="https://example.com/x")), {})
         eid = evidence.attach(FINDING, "https://example.com/x")
         assert eid is not None
+
+
+class TestFindingEvidence:
+    def _store(self, tmp_path):
+        store = EvidenceStore(tmp_path)
+        store.record_raw(FINDING, "GET /x HTTP/1.1\r\nHost: example.com",
+                         "HTTP/1.1 200 OK\r\n\r\nhello",
+                         curl="curl -sS 'https://example.com/x'")
+        store.flush()
+        return store
+
+    def test_finding_evidence_reads_recorded_exchange(self, tmp_path):
+        store = self._store(tmp_path)
+        fp = evidence.finding_fp(FINDING)
+        out = evidence.finding_evidence(tmp_path, store.index(), fp)
+        assert len(out) == 1
+        assert out[0]["curl"] == "curl -sS 'https://example.com/x'"
+        assert "GET /x" in out[0]["request"]
+        assert "hello" in out[0]["response"]
+
+    def test_finding_evidence_truncates(self, tmp_path):
+        store = self._store(tmp_path)
+        fp = evidence.finding_fp(FINDING)
+        out = evidence.finding_evidence(tmp_path, store.index(), fp, max_chars=5)
+        assert len(out[0]["request"]) == 5 and len(out[0]["response"]) == 5
+
+    def test_finding_evidence_tolerates_missing_files(self, tmp_path):
+        store = self._store(tmp_path)
+        fp = evidence.finding_fp(FINDING)
+        d = tmp_path / "evidence" / fp / "1"
+        (d / "response.http").unlink()
+        (d / "repro.sh").unlink()
+        out = evidence.finding_evidence(tmp_path, store.index(), fp)
+        assert out == [{"curl": None, "request": out[0]["request"], "response": ""}]
+        assert out[0]["request"]
+        assert evidence.finding_evidence(tmp_path, store.index(), "nope") == []
+        assert evidence.finding_evidence(tmp_path, {"zz": ["zz-9"]}, "zz") == [
+            {"curl": None, "request": "", "response": ""}]

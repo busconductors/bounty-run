@@ -298,6 +298,48 @@ def finding_fp(f: Mapping) -> str:
     return finding.fingerprint_of(f.get("template"), f.get("host"), f.get("url"))
 
 
+def _read_text(path: Path, limit: int | None = None) -> str:
+    """Best-effort text read; empty string if missing or unreadable."""
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return ""
+    return text if limit is None else text[:limit]
+
+
+def _repro_curl(path: Path) -> str | None:
+    """The command from a ``repro.sh`` (shebang and ``set -eu`` stripped).
+
+    None when the script is absent, empty, or the withheld-secret placeholder.
+    """
+    text = _read_text(path)
+    lines = [ln for ln in text.splitlines()
+             if ln.strip() and not ln.startswith("#!") and ln.strip() != "set -eu"]
+    command = "\n".join(lines).strip()
+    if not command or command == WITHHELD_REPRO:
+        return None
+    return command
+
+
+def finding_evidence(run_dir: Path, index: dict[str, list[str]], fp: str, *,
+                     max_chars: int = 4000) -> list[dict]:
+    """Read back stored evidence for a fingerprint: curl, request, response.
+
+    Evidence ``<fp>-<n>`` lives in ``<run_dir>/evidence/<fp>/<n>/``. Missing or
+    half-written files give empty strings (``curl`` None); never raises.
+    """
+    out = []
+    for evidence_id in index.get(fp, []):
+        n = str(evidence_id).rsplit("-", 1)[-1]
+        d = Path(run_dir) / "evidence" / fp / n
+        out.append({
+            "curl": _repro_curl(d / "repro.sh"),
+            "request": _read_text(d / "request.http", max_chars),
+            "response": _read_text(d / "response.http", max_chars),
+        })
+    return out
+
+
 def _read_body(response) -> bytes:
     """Best-effort body read; empty for streamed/unconsumed responses."""
     try:
