@@ -888,6 +888,37 @@ _SUMMARY_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+def _appendix_raw_panels(origins, content, cloudflare) -> str:
+    """Escaped origin-exposure and discovered-content blocks for the appendix."""
+    out = []
+    if origins:
+        items = []
+        for o in origins:
+            status = str(o.get("status") or "")
+            if o.get("tier"):
+                status = "{} {}".format(o["tier"], status).strip()
+            sources = ", ".join(str(x) for x in (o.get("sources") or []))
+            bits = " \u00b7 ".join(esc(x) for x in (status, sources) if x)
+            items.append("<li><code>{}</code>{}</li>".format(
+                esc(o.get("ip") or "?"), (" \u2014 " + bits) if bits else ""))
+        note = ("Origin IP(s) reachable despite Cloudflare fronting the target "
+                "\u2014 exposure." if cloudflare else
+                "Origin candidates discovered.")
+        out.append("<div class=field><span class=k>Origin exposure</span>"
+                   "<p>{}</p><ul class=meth>{}</ul></div>".format(
+                       esc(note), "".join(items)))
+    if content:
+        entries = sorted(str(c) for c in content)
+        shown = entries[:50]
+        more = len(entries) - len(shown)
+        items = "".join("<li><code>{}</code></li>".format(esc(c)) for c in shown)
+        tail = "<p>\u2026 and {} more</p>".format(more) if more > 0 else ""
+        out.append("<div class=field><span class=k>Discovered content ({})"
+                   "</span><ul class=meth>{}</ul>{}</div>".format(
+                       len(entries), items, tail))
+    return "".join(out)
+
+
 def write_run_summary(outdir, target, findings, content, origins, *,
                       run_time, subdomains, live_hosts, cloudflare,
                       meta=None, stages=None, metrics=None, out_of_scope=None,
@@ -935,7 +966,8 @@ def write_run_summary(outdir, target, findings, content, origins, *,
             target, stage_names, out_of_scope)
         + engagement_report._section("03", "Findings")
         + "".join(cards)
-        + engagement_report.render_appendix(provenance, "")
+        + engagement_report.render_appendix(
+            provenance, _appendix_raw_panels(origins, content, cloudflare))
     )
     doc = engagement_report.render_document(
         title=(engagement or "").strip() or "Engagement Report", body=body)

@@ -161,6 +161,23 @@ class TestWriteRunSummary(DashboardTestCase):
                             prepared_by=None).read_text()
         self.assertNotIn("None", doc)
 
+    def test_summary_origins_and_content_in_appendix(self):
+        origins = [{"ip": "1.2.3.4", "status": 200,
+                    "sources": ["<b>evil</b>.example.com"]}]
+        content = ["/admin", "/<script>x</script>"]
+        doc = self._summary(origins=origins, content=content,
+                            cloudflare=True).read_text()
+        tail = doc[doc.index("Appendix"):]
+        self.assertIn("Origin exposure", tail)
+        self.assertIn("1.2.3.4", tail)
+        self.assertIn("/admin", tail)
+        self.assertNotIn("<script>x", doc)
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", tail)
+        self.assertNotIn("<b>evil", doc)
+        empty = self._summary().read_text()
+        self.assertNotIn("Origin exposure", empty)
+        self.assertNotIn("Discovered content", empty)
+
     def test_summary_escapes_hostile_finding(self):
         payload = "<script>alert(1)</script>"
         f = {"severity": "high", "template": "t", "name": payload,
