@@ -60,7 +60,7 @@ describe('ReportFrame', () => {
   test('Dark exports the dark theme then opens report.pdf', async () => {
     const a = api({ html: true, markdown: [] });
     render(ReportFrame, { dir: DIR, api: a });
-    await fireEvent.click(await screen.findByRole('button', { name: /^dark$/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /export pdf \(dark\)/i }));
     await waitFor(() => expect(a.openExternal).toHaveBeenCalledWith(DIR, 'report.pdf'));
     expect(a.exportPDF).toHaveBeenCalledWith(DIR, 'dark');
   });
@@ -88,7 +88,48 @@ describe('ReportFrame', () => {
 
   test('no Open report.pdf button when none exists', async () => {
     render(ReportFrame, { dir: DIR, api: api({ html: true, markdown: [] }) });
-    await screen.findByRole('button', { name: /export pdf/i });
+    await screen.findByRole('button', { name: /export pdf \(light\)/i });
     expect(screen.queryByRole('button', { name: /open report\.pdf/i })).toBeNull();
+  });
+
+  test('pdf button appears even if opening the exported PDF fails', async () => {
+    const a = api({ html: true, markdown: [] });
+    a.openExternal = vi.fn(async () => {
+      throw new Error('no handler');
+    });
+    render(ReportFrame, { dir: DIR, api: a });
+    await fireEvent.click(await screen.findByRole('button', { name: /export pdf \(light\)/i }));
+    expect(await screen.findByRole('button', { name: /open report\.pdf/i })).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toMatch(/no handler/);
+  });
+
+  test('double-click while exporting exports once', async () => {
+    let release;
+    const a = api({ html: true, markdown: [] });
+    a.exportPDF = vi.fn(() => new Promise((r) => (release = r)));
+    render(ReportFrame, { dir: DIR, api: a });
+    const btn = await screen.findByRole('button', { name: /export pdf \(light\)/i });
+    await fireEvent.click(btn);
+    await fireEvent.click(btn);
+    expect(a.exportPDF).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: /export pdf \(dark\)/i }).disabled).toBe(true);
+    release('/p');
+    await waitFor(() => expect(a.openExternal).toHaveBeenCalledTimes(1));
+  });
+
+  test('dir change mid-export does not stamp or open for the new run', async () => {
+    const DIR2 = '/out/ex.com/20250202-000000';
+    let release;
+    const a = api({ html: true, markdown: [] });
+    a.exportPDF = vi.fn(() => new Promise((r) => (release = r)));
+    const { rerender } = render(ReportFrame, { dir: DIR, api: a });
+    await fireEvent.click(await screen.findByRole('button', { name: /export pdf \(light\)/i }));
+    await rerender({ dir: DIR2, api: a });
+    await screen.findByRole('button', { name: /export pdf \(light\)/i });
+    release('/p');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: /open report\.pdf/i })).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: /export pdf \(light\)/i }).disabled).toBe(false);
   });
 });

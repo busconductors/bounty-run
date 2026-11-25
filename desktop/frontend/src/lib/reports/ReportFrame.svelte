@@ -13,12 +13,13 @@
 
   let info = $state.raw(null);
   let error = $state('');
-  let exporting = $state(false);
+  let exporting = $state(''); // theme being exported, or ''
 
   $effect(() => {
     const target = dir;
     info = null;
     error = '';
+    exporting = '';
     if (!target) return;
     let live = true;
     api
@@ -44,18 +45,22 @@
     }
   }
 
+  // An export outlives a dir switch, so every write is guarded by `dir === target`:
+  // a stale export must never touch the current run's state.
   async function exportPDF(theme) {
     if (exporting) return;
-    exporting = true;
+    const target = dir;
+    exporting = theme;
     error = '';
     try {
-      await api.exportPDF(dir, theme);
-      await api.openExternal(dir, 'report.pdf');
-      info = { ...info, pdf: true };
+      await api.exportPDF(target, theme);
+      // Record the file before opening it: if opening fails the button stays for a retry.
+      if (dir === target && info) info = { ...info, pdf: true };
+      await api.openExternal(target, 'report.pdf');
     } catch (e) {
-      error = sanitizeText(e?.cause?.message ?? e?.message ?? e);
+      if (dir === target) error = sanitizeText(e?.cause?.message ?? e?.message ?? e);
     } finally {
-      exporting = false;
+      if (dir === target) exporting = '';
     }
   }
 </script>
@@ -70,9 +75,11 @@
         {/each}
         {#if info.html}
           <Button variant="primary" disabled={exporting} onclick={() => exportPDF('light')} title="Export the report to a Light PDF and open it">
-            {exporting ? 'Exporting PDF…' : 'Export PDF (Light)'}
+            {exporting === 'light' ? 'Exporting PDF…' : 'Export PDF (Light)'}
           </Button>
-          <Button disabled={exporting} onclick={() => exportPDF('dark')} title="Export the report to a Dark PDF and open it">Dark</Button>
+          <Button disabled={exporting} onclick={() => exportPDF('dark')} title="Export the report to a Dark PDF and open it">
+            {exporting === 'dark' ? 'Exporting PDF…' : 'Export PDF (Dark)'}
+          </Button>
         {/if}
         {#if info.pdf}
           <Button disabled={exporting} onclick={() => openExternal('report.pdf')} title="Open in the default app">Open report.pdf</Button>
