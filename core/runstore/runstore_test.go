@@ -234,3 +234,17 @@ func TestStoreLiveRunIncremental(t *testing.T) {
 		t.Fatalf("run_end not applied: %+v", r)
 	}
 }
+
+func TestParseLstart(t *testing.T) {
+	got, err := parseLstart("Thu Nov 27 09:15:03 2026")
+	if err != nil || got != 1795770903 {
+		t.Fatalf("got %d, %v", got, err)
+	}
+	got, err = parseLstart("Sat Nov  7 09:15:03 2026") // space-padded single-digit day
+	if err != nil || got != 1794042903 {
+		t.Fatalf("got %d, %v", got, err)
+	}
+	if _, err := parseLstart("not a date"); err == nil {
+		t.Error("malformed lstart accepted")
+	}
+}
