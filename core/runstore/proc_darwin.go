@@ -3,11 +3,13 @@
 package runstore
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -66,22 +68,47 @@ func psSnapshotFresh() []byte {
 	return out
 }
 
-// pidStartFresh reads pid's start time with a point-in-time `ps -p`, bypassing
-// the snapshot cache. Whole-second resolution (there is no /proc). Used wherever
-// a just-forked pid must be seen immediately: PIDStart (launch, Step-D cross-
-// check) and Alive's cache-miss fallback. A missing pid yields os.ErrProcessDone.
-func pidStartFresh(pid int) (int64, error) {
+// freshProbeCount counts probeFresh invocations; test observability only, used
+// to assert that confirmed-dead pids are not re-probed (the Alive memo).
+var freshProbeCount atomic.Int64
+
+// probeFresh reads pid's start time with a point-in-time `ps -p`, bypassing the
+// snapshot cache. Whole-second resolution (there is no /proc). It is tri-state:
+//   - (st, found=true,  ok=true):  pid exists, st is its start time
+//   - (0,  found=false, ok=true):  ps ran and the pid is absent — authoritative
+//   - (0,  found=false, ok=false): ps itself could not run (transient) — the
+//     caller must NOT treat this as a confirmed death (never memoise it)
+func probeFresh(pid int) (st int64, found, ok bool) {
+	freshProbeCount.Add(1)
 	cmd := exec.Command("/bin/ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
 	cmd.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {
-		return 0, os.ErrProcessDone // no such process
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return 0, false, true // ps ran, exited non-zero: pid absent
+		}
+		return 0, false, false // ps could not be run: transient, not authoritative
 	}
 	s := strings.TrimSpace(string(out))
 	if s == "" {
-		return 0, os.ErrProcessDone
+		return 0, false, true // ran, empty: absent
 	}
-	return ParseLstart(s)
+	st, perr := ParseLstart(s)
+	if perr != nil {
+		return 0, false, false // unparsable: not authoritative
+	}
+	return st, true, true
+}
+
+// pidStartFresh reads pid's start time via a point-in-time ps. Used where a
+// just-forked pid must be seen immediately: PIDStart (launch, Step-D cross-
+// check). A missing pid (or a transient ps failure) yields os.ErrProcessDone.
+func pidStartFresh(pid int) (int64, error) {
+	if st, found, ok := probeFresh(pid); ok && found {
+		return st, nil
+	}
+	return 0, os.ErrProcessDone
 }
 
 // pidStartCached returns pid's start time from the cached ps snapshot and
@@ -115,11 +142,29 @@ func PIDStart(pid int) (int64, error) {
 	return pidStartFresh(pid)
 }
 
+// deadMemo records (pid, start) pairs a fresh probe has authoritatively found
+// gone. Liveness is monotonic — that exact process never resurrects, and a
+// reused pid carries a different start time — so once dead, always dead. The
+// per-second run-list refresh calls Alive for every non-ended run, including
+// crashed ones whose pid is permanently absent from the snapshot; without this
+// memo each such run would fork a fresh ps every tick. Only authoritative deaths
+// are recorded (never a transient ps failure), so a live run is never poisoned.
+var (
+	deadMu   sync.Mutex
+	deadMemo = map[deadKey]struct{}{}
+)
+
+type deadKey struct {
+	pid   int
+	start int64
+}
+
 // Alive reports whether pid exists with start time == pidStart (guards against
 // PID reuse). Fast path: the cached `ps -ax` snapshot shared by the per-second
 // refresh of N runs. On a cache miss — a just-started or just-exited pid — it
-// falls back to one fresh ps, so a live just-launched run is never reported dead
-// (F2) and a real exit is still confirmed.
+// falls back to one fresh ps (so a live just-launched run is never reported dead,
+// F2), memoising an authoritative death so a permanently-gone pid is not
+// re-forked every tick.
 func Alive(pid int, pidStart int64) bool {
 	if pid <= 0 {
 		return false
@@ -127,8 +172,24 @@ func Alive(pid int, pidStart int64) bool {
 	if st, ok := pidStartCached(pid); ok {
 		return st == pidStart
 	}
-	st, err := pidStartFresh(pid)
-	return err == nil && st == pidStart
+	key := deadKey{pid, pidStart}
+	deadMu.Lock()
+	_, dead := deadMemo[key]
+	deadMu.Unlock()
+	if dead {
+		return false
+	}
+	st, found, ok := probeFresh(pid)
+	if !ok {
+		return false // transient ps failure: not alive this tick, but don't memoise
+	}
+	if found && st == pidStart {
+		return true
+	}
+	deadMu.Lock()
+	deadMemo[key] = struct{}{}
+	deadMu.Unlock()
+	return false
 }
 
 // groupHasMemberSinceIn scans one ps listing for a live (non-zombie) process
