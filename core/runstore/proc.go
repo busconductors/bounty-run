@@ -15,12 +15,13 @@ func Alive(pid int, pidStart int64) bool {
 	return err == nil && got == pidStart
 }
 
-// parseLstart parses a `ps -o lstart=` value ("Day Mon DD HH:MM:SS YYYY" in the
+// ParseLstart parses a `ps -o lstart=` value ("Day Mon DD HH:MM:SS YYYY" in the
 // C locale) to epoch seconds, read as UTC. Whitespace is normalised first
 // because ps space-pads a single-digit day of month ("Nov  7"). The engine
 // (runner/events.py:_parse_lstart) parses the same value the same way, so the
-// two sides agree on macOS.
-func parseLstart(s string) (int64, error) {
+// two sides agree on macOS. Exported so core/engine's darwin launch check
+// reuses the one shared parser rather than reimplementing it.
+func ParseLstart(s string) (int64, error) {
 	norm := strings.Join(strings.Fields(s), " ")
 	t, err := time.ParseInLocation("Mon Jan 2 15:04:05 2006", norm, time.UTC)
 	if err != nil {
