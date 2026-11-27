@@ -160,9 +160,14 @@ class TestEvents(unittest.TestCase):
         self.assertEqual(set(d), {"pid", "pgid", "pid_start", "target",
                                   "flags", "started", "engine_version"})
         self.assertEqual(d["pid"], os.getpid())
-        stat = Path("/proc/self/stat").read_text()
-        self.assertEqual(d["pid_start"], int(stat.rsplit(")", 1)[1].split()[19]))
+        self.assertEqual(d["pid_start"], events._pid_start())  # stable within this process
+        self.assertGreater(d["pid_start"], 0)
         self.assertEqual(d["flags"], {"tls": True})
+
+    def test_parse_lstart(self):
+        self.assertEqual(events._parse_lstart("Thu Nov 27 09:15:03 2026"), 1795770903)
+        # ps space-pads a single-digit day (double space before the day)
+        self.assertEqual(events._parse_lstart("Sat Nov  7 09:15:03 2026"), 1794042903)
 
 
 class TestControl(unittest.TestCase):

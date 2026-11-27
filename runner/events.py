@@ -16,8 +16,11 @@ reached 1.46 GB, which made the TUI's from-offset-0 replay lag badly):
 * Structural events (run/stage lifecycle, progress, findings, logs) are never
   dropped, so the TUI's stage state stays exact.
 """
+import calendar
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -203,9 +206,26 @@ def run_end(status: str, totals: dict, report: str, summary: str,
          summary=summary, **extra)
 
 
+def _parse_lstart(s: str) -> int:
+    """Parse a `ps -o lstart=` value ("Day Mon DD HH:MM:SS YYYY", C locale) to
+    epoch seconds, read as UTC. Whitespace is normalised first because ps
+    space-pads a single-digit day of month ("Nov  7")."""
+    norm = " ".join(s.split())
+    return calendar.timegm(time.strptime(norm, "%a %b %d %H:%M:%S %Y"))
+
+
 def _pid_start() -> int:
-    stat = Path("/proc/self/stat").read_text()
-    return int(stat.rsplit(")", 1)[1].split()[19])
+    if sys.platform == "linux":
+        stat = Path("/proc/self/stat").read_text()
+        return int(stat.rsplit(")", 1)[1].split()[19])
+    # No /proc (macOS): read this process's start-time via ps, forced to UTC/C
+    # so the value matches what the Go side reads the same way.
+    out = subprocess.run(
+        ["ps", "-o", "lstart=", "-p", str(os.getpid())],
+        env={**os.environ, "TZ": "UTC", "LC_ALL": "C"},
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return _parse_lstart(out.strip())
 
 
 def write_run_json(target: str, flags: dict, version: str) -> None:
