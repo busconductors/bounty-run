@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,6 +124,20 @@ done
 
 func sessionID(t *testing.T, pid int) int {
 	t.Helper()
+	if runtime.GOOS == "darwin" {
+		// macOS has no /proc and ps exposes no session-id column. A setsid leader
+		// (what Spawn makes the engine) has pgid == pid, so pgid is a faithful
+		// proxy for the detachment this test checks.
+		out, err := exec.Command("/bin/ps", "-o", "pgid=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
 	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +290,14 @@ func TestTolerableKillErr(t *testing.T) {
 func TestHardKillSkipsGroupsOlderThanEngine(t *testing.T) {
 	dir := t.TempDir()
 	old := startGroup(t)
-	time.Sleep(30 * time.Millisecond)
+	// old and fresh must land in different start-time ticks. Linux stat is
+	// 10ms-granular, but macOS lstart is whole-second — so on darwin sleep past
+	// a second boundary (cancel discrimination is second-granular there).
+	gap := 30 * time.Millisecond
+	if runtime.GOOS == "darwin" {
+		gap = 1100 * time.Millisecond
+	}
+	time.Sleep(gap)
 	fresh := startGroup(t)
 	if err := os.WriteFile(filepath.Join(dir, "pids"), []byte(strconv.Itoa(old)+"\n"+strconv.Itoa(fresh)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
