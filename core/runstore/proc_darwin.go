@@ -35,7 +35,7 @@ func psSnapshot() []byte {
 	if psOut != nil && time.Since(psAt) < psSnapshotTTL {
 		return psOut
 	}
-	cmd := exec.Command("ps", "-ax", "-o", "pid=,pgid=,stat=,lstart=")
+	cmd := exec.Command("/bin/ps", "-ax", "-o", "pid=,pgid=,stat=,lstart=")
 	cmd.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {

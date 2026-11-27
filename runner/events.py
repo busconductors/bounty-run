@@ -221,7 +221,7 @@ def _pid_start() -> int:
     # No /proc (macOS): read this process's start-time via ps, forced to UTC/C
     # so the value matches what the Go side reads the same way.
     out = subprocess.run(
-        ["ps", "-o", "lstart=", "-p", str(os.getpid())],
+        ["/bin/ps", "-o", "lstart=", "-p", str(os.getpid())],
         env={**os.environ, "TZ": "UTC", "LC_ALL": "C"},
         capture_output=True, text=True, check=True,
     ).stdout

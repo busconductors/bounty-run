@@ -20,7 +20,7 @@ func procGone(pid int, pidStart int64) bool {
 	if pid <= 0 {
 		return true
 	}
-	cmd := exec.Command("ps", "-o", "stat=,lstart=", "-p", strconv.Itoa(pid))
+	cmd := exec.Command("/bin/ps", "-o", "stat=,lstart=", "-p", strconv.Itoa(pid))
 	cmd.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {
