@@ -5,6 +5,28 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-27
+
+### Fixed
+
+- **macOS run supervision.** Scans now start, stream, show alive, and cancel
+  cleanly on macOS (Apple Silicon), where the run-supervision code previously
+  assumed Linux `/proc`:
+  - The frozen engine read process start-time via a bare `ps`, which is not
+    resolvable under the hardened PATH of the packaged app; it now calls
+    `/bin/ps` by absolute path.
+  - Launch liveness recorded a just-forked pid's start-time from a cached
+    `ps` snapshot that could not yet see it, so a scan launched while another
+    run was active was reported "engine exited before starting". `PIDStart`
+    now reads fresh; per-OS `Alive` uses the snapshot with a fresh fallback on
+    a cache miss, and memoises a confirmed death so a crashed run is not
+    re-probed every refresh.
+  - Cancel treated the macOS `EPERM` returned for an already-dead process
+    group as a failure (Linux returns `ESRCH`); `HardKill` now tolerates it
+    after a fresh liveness re-check, and the group-liveness check reads fresh
+    so a just-spawned child group is never missed.
+  - Linux behaviour is unchanged (its `/proc` path is build-tagged).
+
 ## [1.4.0] - 2026-11-26
 
 ### Added
