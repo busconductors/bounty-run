@@ -28,6 +28,16 @@ func PIDStart(pid int) (int64, error) {
 	return strconv.ParseInt(f[19], 10, 64)
 }
 
+// Alive reports whether pid exists and its start time equals pidStart (guards
+// against PID reuse). On Linux /proc is cheap, so this reads it directly.
+func Alive(pid int, pidStart int64) bool {
+	if pid <= 0 {
+		return false
+	}
+	got, err := PIDStart(pid)
+	return err == nil && got == pidStart
+}
+
 // statFields returns the /proc/<pid>/stat fields after the comm field, so
 // f[0] is field 3 (state), f[2] field 5 (pgrp) and f[19] field 22 (start).
 func statFields(b []byte) []string {

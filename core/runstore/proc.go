@@ -5,15 +5,10 @@ import (
 	"time"
 )
 
-// Alive reports whether pid exists and its start time equals pidStart
-// (guards against PID reuse). PIDStart is the per-OS source (see proc_*.go).
-func Alive(pid int, pidStart int64) bool {
-	if pid <= 0 {
-		return false
-	}
-	got, err := PIDStart(pid)
-	return err == nil && got == pidStart
-}
+// Alive (whether pid exists with start time == pidStart, guarding PID reuse) is
+// per-OS: see proc_linux.go (/proc), proc_darwin.go (ps snapshot + fresh
+// fallback), proc_other.go (stub). It lived here until the darwin liveness path
+// needed a snapshot the linux path doesn't use.
 
 // ParseLstart parses a `ps -o lstart=` value ("Day Mon DD HH:MM:SS YYYY" in the
 // C locale) to epoch seconds, read as UTC. Whitespace is normalised first

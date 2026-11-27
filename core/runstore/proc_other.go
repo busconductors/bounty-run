@@ -13,3 +13,8 @@ func PIDStart(pid int) (int64, error) {
 func GroupHasMemberSince(pgid int, since int64) bool {
 	return false
 }
+
+// Alive has no start-time source here, so every pid reads as not-alive.
+func Alive(pid int, pidStart int64) bool {
+	return false
+}
