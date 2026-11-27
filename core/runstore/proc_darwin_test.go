@@ -15,7 +15,7 @@ import (
 func TestAliveFreshFallbackForJustSpawned(t *testing.T) {
 	_ = psSnapshot()          // warm the cache so it predates the new pid
 	pid := startSleepGroup(t) // spawned after the snapshot: absent from it
-	st, err := PIDStart(pid)   // must be a fresh read -> correct start time
+	st, err := PIDStart(pid)  // must be a fresh read -> correct start time
 	if err != nil {
 		t.Fatalf("PIDStart must read a just-spawned pid fresh: %v", err)
 	}
