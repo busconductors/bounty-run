@@ -346,14 +346,16 @@ func writeControl(dir, line string) error {
 //     is killed, and only while it is still the recorded process;
 //   - a group is signalled only if it has a live member that started no
 //     earlier than the engine (info.PIDStart);
-//   - pgid <= 1 and the TUI's own group are never signalled. ESRCH is ignored.
+//   - pgid <= 1 and the TUI's own group are never signalled. A kill error is
+//     ignored when the target is already gone (see tolerableKillErr).
 func HardKill(info runstore.RunInfo, dir string) error {
 	var groups []int
 	var errs []error
 	if info.PGID == info.PID {
 		groups = append(groups, info.PGID)
 	} else if info.PID > 1 && info.PID != os.Getpid() && runstore.Alive(info.PID, info.PIDStart) {
-		if err := syscall.Kill(info.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := syscall.Kill(info.PID, syscall.SIGKILL); err != nil &&
+			!tolerableKillErr(err, func() bool { return !runstore.Alive(info.PID, info.PIDStart) }) {
 			errs = append(errs, fmt.Errorf("kill pid %d: %w", info.PID, err))
 		}
 	}
@@ -369,9 +371,23 @@ func HardKill(info runstore.RunInfo, dir string) error {
 		if g <= 1 || g == self || !runstore.GroupHasMemberSince(g, info.PIDStart) {
 			continue
 		}
-		if err := syscall.Kill(-g, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := syscall.Kill(-g, syscall.SIGKILL); err != nil &&
+			!tolerableKillErr(err, func() bool { return !runstore.GroupHasMemberSince(g, info.PIDStart) }) {
 			errs = append(errs, fmt.Errorf("kill pgid %d: %w", g, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// tolerableKillErr reports whether a failed kill is benign because the target
+// was already gone. ESRCH (no such process/group) always is. On darwin,
+// signalling a group whose members have just exited returns EPERM instead of
+// ESRCH, so EPERM is benign too — but only when gone() (a fresh liveness check)
+// confirms the target is gone, so a genuine permission error on a live target
+// still surfaces. gone is evaluated lazily, only for EPERM.
+func tolerableKillErr(err error, gone func() bool) bool {
+	if errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+	return errors.Is(err, syscall.EPERM) && gone()
 }

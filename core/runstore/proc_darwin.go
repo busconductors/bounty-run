@@ -152,16 +152,14 @@ func groupHasMemberSinceIn(out []byte, pgid int, since int64) bool {
 
 // GroupHasMemberSince reports whether some live process has process group pgid
 // and a start time >= since. Zombies (stat starting "Z") are skipped, matching
-// the Linux impl. Reads the cached snapshot; on a miss (no qualifying member —
-// which includes a group younger than the snapshot's TTL) it re-checks with one
-// fresh ps, so a just-spawned child group is not missed on a fast cancel. Its
-// only caller, HardKill, is one-shot, so the extra fork is not a per-second cost.
+// the Linux impl. It reads a FRESH ps, never the cached snapshot: its only
+// caller, HardKill, is one-shot (cancel), and a stale snapshot is wrong in both
+// directions here — it would miss a just-spawned child group (orphan on a fast
+// cancel) and, worse, report a just-killed group as still alive (signal a dead
+// group → EPERM). Freshness is the F3a root-cause fix.
 func GroupHasMemberSince(pgid int, since int64) bool {
 	if pgid <= 0 {
 		return false
-	}
-	if groupHasMemberSinceIn(psSnapshot(), pgid, since) {
-		return true
 	}
 	return groupHasMemberSinceIn(psSnapshotFresh(), pgid, since)
 }

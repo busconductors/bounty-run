@@ -249,6 +249,27 @@ func TestHardKillKillsRecordedPgids(t *testing.T) {
 	}
 }
 
+// tolerableKillErr classifies a failed kill: ESRCH is always benign (already
+// gone); EPERM is benign only when a fresh check confirms the target is gone
+// (macOS returns EPERM, not ESRCH, for a group that exited under us), so a real
+// permission error on a live target still surfaces.
+func TestTolerableKillErr(t *testing.T) {
+	gone := func() bool { return true }
+	live := func() bool { return false }
+	if !tolerableKillErr(syscall.ESRCH, live) {
+		t.Error("ESRCH is always tolerable (already gone)")
+	}
+	if !tolerableKillErr(syscall.EPERM, gone) {
+		t.Error("EPERM on a confirmed-gone target must be tolerated")
+	}
+	if tolerableKillErr(syscall.EPERM, live) {
+		t.Error("EPERM on a live target must surface, not be swallowed")
+	}
+	if tolerableKillErr(syscall.EINVAL, gone) {
+		t.Error("errors other than ESRCH/EPERM must surface")
+	}
+}
+
 // A recorded pgid whose only member started before the engine is a reused
 // number belonging to some unrelated job: it must not be signalled.
 func TestHardKillSkipsGroupsOlderThanEngine(t *testing.T) {
