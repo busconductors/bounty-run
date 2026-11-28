@@ -38,3 +38,28 @@ def test_sensitive_json_and_stacktrace():
 
 def test_classify_tech_grafana():
     assert "Grafana" in noauth_scan._classify_tech("Grafana", "", "/", "", 200)
+
+
+def _resp(**kw):
+    base = {"title": "", "body": "", "url": "", "sensitive": {}}
+    base.update(kw)
+    return base
+
+
+def test_score_private_root_is_low():
+    s, sev, _ = noauth_scan._score("10.0.0.5", 80, _resp(), [], ["/"])
+    assert s == 0 and sev == "low"
+
+
+def test_score_public_actuator_secret_json_critical():
+    resp = _resp(sensitive={"secret_pattern_hits": 1, "looks_json": True, "stacktrace": False})
+    s, sev, reasons = noauth_scan._score("93.184.216.34", 443, resp, [], ["/actuator/env"])
+    assert s == 78 and sev == "critical"
+    assert "secret_like_content" in reasons
+
+
+def test_score_band_boundaries():
+    assert noauth_scan._severity_for(20) == "medium"
+    assert noauth_scan._severity_for(40) == "high"
+    assert noauth_scan._severity_for(60) == "critical"
+    assert noauth_scan._severity_for(19) == "low"

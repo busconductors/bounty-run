@@ -3,6 +3,7 @@
 Adapted from noauth_finder (MIT License, (c) 2026 ek0mssavi0r). The corpus
 constants and the auth-wall heuristic below are ported verbatim from that tool.
 """
+import ipaddress
 import json
 import re
 
@@ -212,3 +213,70 @@ def _classify_tech(title, body, path, server, status, headers=None):
         if any(k.lower() in text for k in keywords):
             findings.append(name)
     return sorted(set(findings))
+
+
+def is_private_ip(ip):
+    try:
+        obj = ipaddress.ip_address(ip)
+        return obj.is_private or obj.is_loopback or obj.is_link_local
+    except Exception:
+        return False
+
+
+def _severity_for(score):
+    if score >= 60:
+        return "critical"
+    if score >= 40:
+        return "high"
+    if score >= 20:
+        return "medium"
+    return "low"
+
+
+def _score(host, port, response, tech, paths):
+    score = 0
+    reasons = []
+
+    path_text = " ".join(paths).lower()
+    title = (response.get("title") or "").lower()
+    body = (response.get("body") or "").lower()
+    url = response.get("url", "")
+    sens = response.get("sensitive", {})
+
+    if not is_private_ip(host):
+        score += 15
+        reasons.append("public_ip")
+
+    if port not in (80, 443):
+        score += 10
+        reasons.append("nonstandard_web_port")
+
+    if any(x in path_text for x in SENSITIVE_PATH_HINTS):
+        score += 25
+        reasons.append("sensitive_path_accessible")
+
+    if sens.get("secret_pattern_hits", 0) > 0:
+        score += 30
+        reasons.append("secret_like_content")
+
+    if sens.get("stacktrace"):
+        score += 15
+        reasons.append("stacktrace_detected")
+
+    if sens.get("looks_json"):
+        score += 8
+        reasons.append("json_endpoint")
+
+    if any(t in HIGH_VALUE_TECH for t in tech):
+        score += 20
+        reasons.append("high_value_admin_tech")
+
+    if any(word in title + " " + body for word in ["dashboard", "admin", "console", "management"]):
+        score += 10
+        reasons.append("admin_or_dashboard_language")
+
+    if url.endswith("/metrics") or "/metrics" in url:
+        score += 10
+        reasons.append("metrics_exposed")
+
+    return score, _severity_for(score), reasons
