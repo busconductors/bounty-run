@@ -3,6 +3,7 @@
 Adapted from noauth_finder (MIT License, (c) 2026 ek0mssavi0r). The corpus
 constants and the auth-wall heuristic below are ported verbatim from that tool.
 """
+import json
 import re
 
 COMMON_WEB_PORTS = [
@@ -187,3 +188,27 @@ def _check_auth(status, body_lower, headers, final_url=""):
         return True
 
     return False
+
+
+def _sensitive(body, headers=None):
+    headers = headers or {}
+    joined = (body or "")[:20000]
+    hits = [p for p in SECRET_PATTERNS if re.search(p, joined)]
+    content_type = headers.get("Content-Type") or headers.get("content-type") or ""
+    looks_json = "json" in content_type.lower() or joined.strip().startswith(("{", "["))
+    stacktrace = bool(re.search(
+        r"(?i)(traceback|exception|stack trace|java\.lang\.|at\s+[a-z0-9_.]+\()", joined))
+    return {
+        "secret_pattern_hits": len(hits),
+        "looks_json": looks_json,
+        "stacktrace": stacktrace,
+    }
+
+
+def _classify_tech(title, body, path, server, status, headers=None):
+    text = f"{title} {body} {path} {server} {json.dumps(headers or {})}".lower()
+    findings = []
+    for name, keywords in TECH_SIGNATURES:
+        if any(k.lower() in text for k in keywords):
+            findings.append(name)
+    return sorted(set(findings))
