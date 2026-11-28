@@ -5,6 +5,14 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-28
+
+### Added
+
+- **`noauth` unauthenticated-interface stage** (`--noauth`; included in the
+  Deep preset). Probes discovered web hosts for admin, API, and debug
+  interfaces reachable without authentication and risk-scores each exposure.
+
 ## [1.4.1] - 2026-11-27
 
 ### Fixed
