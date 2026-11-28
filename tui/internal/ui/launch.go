@@ -21,7 +21,7 @@ const capError = "3 runs already active — wait or cancel one"
 
 // stageIDs mirrors runner/cli.py STAGE_IDS (pipeline order, same names as --skip).
 var stageIDs = []string{"subs", "panel", "live", "cf", "origin", "nmap", "waf", "dork", "tls", "nikto",
-	"vuln", "content", "api", "param", "secret", "metis", "headers", "cors", "tech", "headi"}
+	"vuln", "content", "api", "param", "secret", "metis", "headers", "cors", "tech", "headi", "noauth"}
 
 // stageToggle is one row of the Custom list: an engine stage, a sub-step
 // (origin_deep, a --skip token) or a modifier flag (amass, nmap-full).
@@ -53,12 +53,13 @@ var toggles = []stageToggle{
 	{"cors", "CORS misconfig"},
 	{"tech", "tech fingerprint"},
 	{"headi", "169 req/URL · intrusive"},
+	{"noauth", "unauth interface exposure · intrusive"},
 }
 
 // optInFlags are toggles that turn on an engine flag instead of being skipped
 // when off; the engine leaves them off by default.
 var optInFlags = map[string]bool{"amass": true, "nmap-full": true, "nmap": true, "tls": true,
-	"nikto": true, "metis": true, "headi": true}
+	"nikto": true, "metis": true, "headi": true, "noauth": true}
 
 type preset struct {
 	id, label, desc string
@@ -105,6 +106,7 @@ func applyToggles(o *engine.Options, on []string) {
 	enabled := func(id string) bool { return slices.Contains(on, id) }
 	o.Amass, o.Nmap, o.NmapFull = enabled("amass"), enabled("nmap"), enabled("nmap-full")
 	o.TLS, o.Nikto, o.Metis, o.Headi = enabled("tls"), enabled("nikto"), enabled("metis"), enabled("headi")
+	o.Noauth = enabled("noauth")
 	o.Skip = nil
 	for _, t := range toggles {
 		if !optInFlags[t.id] && !enabled(t.id) {

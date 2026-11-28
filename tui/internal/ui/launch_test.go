@@ -254,7 +254,7 @@ func TestLaunchPresetOptions(t *testing.T) {
 	}{
 		{"quick", nil, []string{"vuln", "content", "api", "param"}, engine.Options{}},
 		{"standard", nil, []string{"param"}, engine.Options{Nmap: true}},
-		{"deep", nil, nil, engine.Options{Amass: true, Nmap: true, NmapFull: true, TLS: true, Nikto: true, Metis: true, Headi: true}},
+		{"deep", nil, nil, engine.Options{Amass: true, Nmap: true, NmapFull: true, TLS: true, Nikto: true, Metis: true, Headi: true, Noauth: true}},
 		{"custom", []string{"subs", "live", "nikto", "headi"}, []string{"panel", "cf", "origin", "origin_deep", "waf", "dork",
 			"vuln", "content", "api", "param", "secret", "headers", "cors", "tech"}, engine.Options{Nikto: true, Headi: true}},
 	}
@@ -271,7 +271,7 @@ func TestLaunchPresetOptions(t *testing.T) {
 		if !slices.Equal(o.Skip, c.skip) {
 			t.Errorf("%s: skip = %v, want %v", c.preset, o.Skip, c.skip)
 		}
-		got := engine.Options{Amass: o.Amass, Nmap: o.Nmap, NmapFull: o.NmapFull, TLS: o.TLS, Nikto: o.Nikto, Metis: o.Metis, Headi: o.Headi}
+		got := engine.Options{Amass: o.Amass, Nmap: o.Nmap, NmapFull: o.NmapFull, TLS: o.TLS, Nikto: o.Nikto, Metis: o.Metis, Headi: o.Headi, Noauth: o.Noauth}
 		if !reflect.DeepEqual(got, c.flags) {
 			t.Errorf("%s: flags = %+v, want %+v", c.preset, got, c.flags)
 		}
