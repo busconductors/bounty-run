@@ -86,8 +86,8 @@ func TestArgv(t *testing.T) {
 			t.Errorf("unexpected %s in %v", f, a)
 		}
 	}
-	b := Argv(Options{Target: "a.com", Timeout: 30, MaxParamURLs: 5, Amass: true, Nikto: true, Nmap: true, Metis: true, Headi: true, NmapFull: true}, "/d")
-	for _, f := range []string{"--timeout", "--max-param-urls", "--amass", "--nikto", "--nmap", "--metis", "--headi", "--nmap-full"} {
+	b := Argv(Options{Target: "a.com", Timeout: 30, MaxParamURLs: 5, Amass: true, Nikto: true, Nmap: true, Metis: true, Headi: true, Noauth: true, NmapFull: true}, "/d")
+	for _, f := range []string{"--timeout", "--max-param-urls", "--amass", "--nikto", "--nmap", "--metis", "--headi", "--noauth", "--nmap-full"} {
 		if !slices.Contains(b, f) {
 			t.Errorf("missing %s in %v", f, b)
 		}

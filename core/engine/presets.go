@@ -15,7 +15,7 @@ type Preset struct {
 func Presets() []Preset {
 	quick := []string{"subs", "panel", "live", "cf", "origin", "origin_deep", "waf", "dork", "secret", "headers", "cors", "tech"}
 	standard := append(slices.Clone(quick), "nmap", "vuln", "content", "api")
-	deep := append(slices.Clone(standard), "param", "tls", "nikto", "metis", "headi")
+	deep := append(slices.Clone(standard), "param", "tls", "nikto", "metis", "headi", "noauth")
 	return []Preset{
 		{ID: "quick", Stages: quick},
 		{ID: "standard", Stages: standard},

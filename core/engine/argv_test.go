@@ -22,9 +22,9 @@ func TestArgvLegacyOptionsUnchanged(t *testing.T) {
 	}{
 		{"bare", Options{Target: "a.com"}, base},
 		{"skip", Options{Target: "a.com", TLS: true, Skip: []string{"dork", "param"}}, with("--tls", "--skip", "dork,param")},
-		{"all", Options{Target: "a.com", Amass: true, TLS: true, Nikto: true, Nmap: true, Metis: true, Headi: true, NmapFull: true,
+		{"all", Options{Target: "a.com", Amass: true, TLS: true, Nikto: true, Nmap: true, Metis: true, Headi: true, Noauth: true, NmapFull: true,
 			Skip: []string{"cf"}, Timeout: 30, MaxParamURLs: 5, Proxy: "http://u:p@h:1"},
-			with("--amass", "--tls", "--nikto", "--nmap", "--metis", "--headi", "--nmap-full", "--skip", "cf", "--timeout", "30", "--max-param-urls", "5")},
+			with("--amass", "--tls", "--nikto", "--nmap", "--metis", "--headi", "--noauth", "--nmap-full", "--skip", "cf", "--timeout", "30", "--max-param-urls", "5")},
 		{"nmap-full without nmap", Options{Target: "a.com", NmapFull: true}, base},
 	}
 	for _, c := range cases {
@@ -163,7 +163,7 @@ sleep 5
 func TestPresetsMatchExistingTUI(t *testing.T) {
 	quick := []string{"subs", "panel", "live", "cf", "origin", "origin_deep", "waf", "dork", "secret", "headers", "cors", "tech"}
 	standard := append(slices.Clone(quick), "nmap", "vuln", "content", "api")
-	deep := append(slices.Clone(standard), "param", "tls", "nikto", "metis", "headi", "amass", "nmap-full")
+	deep := append(slices.Clone(standard), "param", "tls", "nikto", "metis", "headi", "noauth", "amass", "nmap-full")
 	want := map[string][]string{"quick": quick, "standard": standard, "deep": deep}
 	ps := Presets()
 	if len(ps) != 3 {
@@ -185,7 +185,7 @@ func TestPresetsMatchExistingTUI(t *testing.T) {
 // maxOptions sets every field Argv can emit.
 func maxOptions() Options {
 	two := 2
-	return Options{Target: "a.com", Amass: true, TLS: true, Nikto: true, Nmap: true, Metis: true, Headi: true, NmapFull: true,
+	return Options{Target: "a.com", Amass: true, TLS: true, Nikto: true, Nmap: true, Metis: true, Headi: true, Noauth: true, NmapFull: true,
 		Skip: []string{"cf"}, Timeout: 5, MaxParamURLs: 7,
 		Intensity: "active", Findomain: true, Resolvers: "/r", DNSRate: 300, NoSubsCache: true, Threads: 9, NoOAST: true,
 		ScopeAllow: []string{"a.com"}, ScopeDeny: []string{"-b.a.com"}, ScopeFile: "/s", UserAgent: "-ua",

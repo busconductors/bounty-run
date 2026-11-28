@@ -25,11 +25,11 @@ var ErrNoStart = errors.New("engine did not start")
 
 // Options are the user-selectable engine flags. Zero ints mean "engine default".
 type Options struct {
-	Target                                string
-	Amass, TLS, Nikto, Nmap, Metis, Headi bool
-	NmapFull                              bool // --nmap-full: all ports; only with Nmap
-	Skip                                  []string
-	Timeout, MaxParamURLs                 int
+	Target                                        string
+	Amass, TLS, Nikto, Nmap, Metis, Headi, Noauth bool
+	NmapFull                                      bool // --nmap-full: all ports; only with Nmap
+	Skip                                          []string
+	Timeout, MaxParamURLs                         int
 	// Proxy is a validated proxy URL ("" = none). It is deliberately NOT put
 	// in Argv: SpawnEnv passes it as BOUNTY_RUN_PROXY (see ProxyEnvVar).
 	Proxy string
@@ -112,7 +112,7 @@ func Argv(o Options, dir string) []string {
 	for _, f := range []struct {
 		on   bool
 		flag string
-	}{{o.Amass, "--amass"}, {o.TLS, "--tls"}, {o.Nikto, "--nikto"}, {o.Nmap, "--nmap"}, {o.Metis, "--metis"}, {o.Headi, "--headi"}, {o.Nmap && o.NmapFull, "--nmap-full"}} {
+	}{{o.Amass, "--amass"}, {o.TLS, "--tls"}, {o.Nikto, "--nikto"}, {o.Nmap, "--nmap"}, {o.Metis, "--metis"}, {o.Headi, "--headi"}, {o.Noauth, "--noauth"}, {o.Nmap && o.NmapFull, "--nmap-full"}} {
 		if f.on {
 			a = append(a, f.flag)
 		}
