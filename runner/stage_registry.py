@@ -60,6 +60,7 @@ STAGES: tuple[StageSpec, ...] = (
     StageSpec("cors", 18, "CORS MISCONFIGURATION", Tier.ACTIVE),
     StageSpec("tech", 19, "TECH DETECTION", Tier.ACTIVE),
     StageSpec("headi", 20, "HEADER INJECTION (HEADI)", Tier.INTRUSIVE, opt_in_flag="headi"),
+    StageSpec("noauth", 21, "UNAUTH INTERFACE EXPOSURE", Tier.INTRUSIVE, opt_in_flag="noauth"),
 )
 
 SPEC: dict[str, StageSpec] = {s.id: s for s in STAGES}

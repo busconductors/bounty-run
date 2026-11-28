@@ -57,7 +57,7 @@ def test_stages_match_registry(tmp_path):
     data = json.loads(r.stdout)
     assert data["schema"] == 2
     stages = data["stages"]
-    assert len(stages) == 21 == len(stage_registry.STAGES)
+    assert len(stages) == 22 == len(stage_registry.STAGES)
     assert [s["id"] for s in stages] == [s.id for s in stage_registry.STAGES]
     by_id = {s["id"]: s for s in stages}
     assert by_id["origin_deep"]["parent"] == "origin"

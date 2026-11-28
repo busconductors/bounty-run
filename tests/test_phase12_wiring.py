@@ -145,7 +145,7 @@ class TestCliFlags(unittest.TestCase):
             self.assertIn(tok, help_text)
 
     def test_total_stages(self):
-        self.assertEqual(cli.TOTAL_STAGES, 20)
+        self.assertEqual(cli.TOTAL_STAGES, 21)
 
 
 class TestCliMain(unittest.TestCase):

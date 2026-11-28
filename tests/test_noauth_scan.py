@@ -172,3 +172,17 @@ def test_cancellation_propagates(monkeypatch, tmp_path):
     _stub_get_raises(monkeypatch, events.RunCancelled)
     with pytest.raises(events.RunCancelled):
         noauth_scan.noauth_scan("h", tmp_path, ["h", "h2"], ports=[443])
+
+
+def test_noauth_registered_optin_last():
+    from runner.stage_registry import STAGE_IDS, OPT_IN_STAGES
+    assert "noauth" in STAGE_IDS and STAGE_IDS[-1] == "noauth"
+    assert "noauth" in OPT_IN_STAGES
+
+
+def test_noauth_planned_only_when_opted_in():
+    from runner.cli import build_parser, PLANNED_STAGES
+    args = build_parser().parse_args(["x.com", "--noauth"])
+    assert "noauth" in PLANNED_STAGES(args, skip=set())
+    args2 = build_parser().parse_args(["x.com"])
+    assert "noauth" not in PLANNED_STAGES(args2, skip=set())

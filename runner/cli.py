@@ -24,6 +24,7 @@ from . import (
     ipintel,
     metis_check,
     nikto_scan,
+    noauth_scan,
     nmap_scan,
     origin_deep,
     panel_detect,
@@ -117,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ffuf content-discovery wordlist (default: dirb/common.txt)")
     p.add_argument("--skip",
                    help="comma-separated stages to skip: subs,live,cf,origin,origin_deep,vuln,content,"
-                        "param,secret,headers,cors,tech,api,metis,headi,nmap,panel,waf,dork,tls,nikto")
+                        "param,secret,headers,cors,tech,api,metis,headi,nmap,panel,waf,dork,tls,nikto,noauth")
     p.add_argument("--metis", action="store_true", help="also run the Metis autocheck CVE sweep (off by default)")
     p.add_argument("--headi", action="store_true",
                    help="also run the headi header-injection scan (off by default; intrusive)")
@@ -126,6 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also run the sslyze TLS/SSL deep scan (off by default; slow)")
     p.add_argument("--nikto", action="store_true",
                    help="also run the nikto web-server scan (off by default; intrusive, slow)")
+    p.add_argument("--noauth", action="store_true",
+                   help="probe discovered hosts for unauthenticated admin/API/debug interfaces")
     p.add_argument("--nmap-full", action="store_true",
                    help="with --nmap, scan all 65535 ports (-p-) instead of top-1000")
     p.add_argument("--max-param-urls", type=_positive_int, default=50,
@@ -599,6 +602,8 @@ def _pipeline(args, target: str, outdir: Path, skip: set[str], st: RunState) -> 
     if ok("headi"):
         scan("headi", headi_scan.headi_scan,
              target, outdir, st.rows, **pkw)
+    if ok("noauth"):
+        scan("noauth", noauth_scan.noauth_scan, target, outdir, live, **pkw)
 
 
 def _wafw00f_has_socks() -> bool:
