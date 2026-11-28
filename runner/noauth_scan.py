@@ -6,6 +6,11 @@ constants and the auth-wall heuristic below are ported verbatim from that tool.
 import ipaddress
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+from runner import events, httpclient, utils
+from runner.stages import _is_global, _resolve
 
 COMMON_WEB_PORTS = [
     80, 443, 8080, 8443, 8888, 9090, 3000, 5000,
@@ -280,3 +285,164 @@ def _score(host, port, response, tech, paths):
         reasons.append("metrics_exposed")
 
     return score, _severity_for(score), reasons
+
+
+# ---------------------------------------------------------------------------
+# Stage orchestrator
+# ---------------------------------------------------------------------------
+
+_PROBE_TIMEOUT = 5
+_MIN_SCORE = 20
+
+
+def _port_paths() -> list[str]:
+    """ADMIN_PATHS + CRITICAL_PATHS, deduped, order preserved."""
+    return list(dict.fromkeys(ADMIN_PATHS + CRITICAL_PATHS))
+
+
+def _extract_title(html):
+    if not html:
+        return ""
+    m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+    return re.sub(r"\s+", " ", m.group(1).strip()) if m else ""
+
+
+def _probe(host, port, path, ssl_enabled=None, timeout=_PROBE_TIMEOUT):
+    """GET one path; a dict on any HTTP answer, else None. Never raises
+    except for run cancellation."""
+    if ssl_enabled is None:
+        ssl_enabled = port in SSL_FIRST_PORTS
+    url = f"{'https' if ssl_enabled else 'http'}://{host}:{port}{path}"
+    try:
+        r = httpclient.get(url, timeout=timeout, allow_redirects=True)
+        text = r.text or ""
+        headers = dict(r.headers)
+        return {
+            "status": r.status_code,
+            "title": _extract_title(text),
+            "server": headers.get("Server", ""),
+            "body": text.lower()[:1000],
+            "body_lower": text.lower()[:5000],
+            "headers": headers,
+            "url": url,
+            "final_url": r.url or url,
+            "ssl": ssl_enabled,
+            "sensitive": _sensitive(text, headers),
+        }
+    except events.RunCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001 — OutOfScope/timeouts/conn errors: unreachable
+        # Upstream falls back https -> http on a TLS handshake failure only.
+        if ssl_enabled and type(e).__name__ == "SSLError":
+            return _probe(host, port, path, False, timeout)
+        return None
+
+
+def _category_of(path):
+    p = path.lower()
+    if "actuator" in p:
+        return "actuator"
+    if "metrics" in p:
+        return "metrics"
+    if any(k in p for k in ("config", ".env", "secret")):
+        return "config"
+    if "debug" in p:
+        return "debug"
+    if p.startswith("/api") or any(k in p for k in ("swagger", "graphql", "api-docs")):
+        return "api"
+    return "admin"
+
+
+def _rep_key(item):
+    path, resp = item
+    sens = resp["sensitive"]
+    return (sens["secret_pattern_hits"], sens["stacktrace"],
+            any(h in path.lower() for h in SENSITIVE_PATH_HINTS))
+
+
+def _scan_interface(host, port):
+    """Probe every path on host:port; return a finding dict or None."""
+    open_paths = []
+    for path in _port_paths():
+        resp = _probe(host, port, path)
+        if resp is None or not 200 <= resp["status"] < 300:
+            continue
+        if _check_auth(resp["status"], resp["body_lower"], resp["headers"],
+                       resp["final_url"]) is False:
+            open_paths.append((path, resp))
+    if not open_paths:
+        return None
+    rep_path, rep = max(open_paths, key=_rep_key)
+    tech = sorted({t for path, r in open_paths for t in _classify_tech(
+        r["title"], r["body"], path, r["server"], r["status"], r["headers"])})
+    score, severity, reasons = _score(host, port, rep, tech, [p for p, _ in open_paths])
+    if score < _MIN_SCORE:
+        return None
+    category = _category_of(rep_path)
+    return {
+        "severity": severity,
+        "template": f"noauth:{category}",
+        "name": f"Unauthenticated {category} interface on {host}:{port}",
+        "url": rep["final_url"],
+        "host": host,
+        "evidence": (f"score={score} {','.join(reasons)}; tech={tech}; "
+                     f"open={[p for p, _ in open_paths]}"),
+    }
+
+
+def _norm_host(h):
+    h = (h or "").strip().lower()
+    if "://" in h:
+        h = h.split("://", 1)[1]
+    return h.split("/", 1)[0].rstrip(".")
+
+
+def _candidate_hosts(target, hosts, max_hosts):
+    """Target + hosts, normalised, deduped, publicly routable, capped."""
+    out, seen = [], set()
+    for raw in [target, *(hosts or [])]:
+        h = _norm_host(raw)
+        if not h or h in seen:
+            continue
+        seen.add(h)
+        if not _is_global(_resolve(h)):
+            continue
+        out.append(h)
+        if len(out) >= max_hosts:
+            break
+    return out
+
+
+def noauth_scan(target, outdir, hosts, max_hosts=20, ports=None, workers=4,
+                proxy=None):
+    """Find unauthenticated web interfaces; one finding per exposed host:port."""
+    utils.log("noauth unauthenticated-interface scan")
+    try:
+        targets = _candidate_hosts(target, hosts, max_hosts)
+    except Exception as e:  # noqa: BLE001
+        utils.warn(f"noauth host collection failed: {e} — skipping")
+        return []
+    if not targets:
+        utils.warn("no routable hosts — skipping noauth scan")
+        return []
+
+    ports = list(ports) if ports else list(TOP10_PORTS)
+    units = [(h, p) for h in targets for p in ports]
+    stage = events.current_stage() or "noauth"
+    total = len(units)
+    results = {}
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(_scan_interface, h, p): (h, p) for h, p in units}
+        done = 0
+        try:
+            for fut in as_completed(futures):
+                results[futures[fut]] = fut.result()
+                done += 1
+                events.progress(stage, done, total)
+        except (events.RunCancelled, events.StageSkipped):
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+
+    findings = [results[u] for u in units if results.get(u)]
+    utils.log(f"noauth: {len(findings)} exposed interface(s) across {len(targets)} host(s)")
+    return findings

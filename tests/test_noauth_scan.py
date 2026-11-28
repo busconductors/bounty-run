@@ -1,4 +1,8 @@
-from runner import noauth_scan
+from types import SimpleNamespace
+
+import pytest
+
+from runner import events, httpclient, noauth_scan
 
 
 def test_check_auth_401_403_walled():
@@ -63,3 +67,71 @@ def test_score_band_boundaries():
     assert noauth_scan._severity_for(40) == "high"
     assert noauth_scan._severity_for(60) == "critical"
     assert noauth_scan._severity_for(19) == "low"
+
+
+# ---- stage orchestrator ----
+
+def _r(status, body="", final=None, headers=None):
+    return SimpleNamespace(status_code=status, text=body, content=body.encode(),
+                           headers=headers or {}, url=final, history=[])
+
+
+def _patch_scope(monkeypatch):
+    monkeypatch.setattr(noauth_scan, "_is_global", lambda ip: True)
+    monkeypatch.setattr(noauth_scan, "_resolve", lambda h: "8.8.8.8")
+
+
+def _stub_get(monkeypatch, host, port, responses):
+    """responses: {path: resp}; unknown paths answer 404."""
+    def fake(url, **kw):
+        rest = url.split("//", 1)[1]
+        path = "/" + rest.split("/", 1)[1] if "/" in rest else "/"
+        r = responses.get(path, _r(404))
+        if r.url is None:
+            r.url = url
+        return r
+    monkeypatch.setattr(httpclient, "get", fake)
+    _patch_scope(monkeypatch)
+
+
+def _stub_get_raises(monkeypatch, exc):
+    def fake(url, **kw):
+        raise exc()
+    monkeypatch.setattr(httpclient, "get", fake)
+    _patch_scope(monkeypatch)
+
+
+def _port_paths():
+    return noauth_scan._port_paths()
+
+
+def test_root_walled_subpath_open_is_found(monkeypatch, tmp_path):
+    responses = {"/": _r(302, final="https://h/login"),
+                 "/actuator/env": _r(200, body='{"password":"x"}')}
+    _stub_get(monkeypatch, "h", 443, responses)
+    out = noauth_scan.noauth_scan("h", tmp_path, ["h"], ports=[443])
+    assert len(out) == 1
+    f = out[0]
+    assert f["template"].startswith("noauth:actuator") and f["host"] == "h"
+    assert f["severity"] in ("high", "critical")
+
+
+def test_fully_walled_host_emits_nothing(monkeypatch, tmp_path):
+    _stub_get(monkeypatch, "h", 443, {p: _r(401) for p in _port_paths()})
+    assert noauth_scan.noauth_scan("h", tmp_path, ["h"], ports=[443]) == []
+
+
+def test_out_of_scope_redirect_is_not_fatal(monkeypatch, tmp_path):
+    _stub_get_raises(monkeypatch, httpclient.OutOfScope)
+    assert noauth_scan.noauth_scan("h", tmp_path, ["h"], ports=[443]) == []
+
+
+def test_connection_error_skips_host(monkeypatch, tmp_path):
+    _stub_get_raises(monkeypatch, ConnectionError)
+    assert noauth_scan.noauth_scan("h", tmp_path, ["h"], ports=[443]) == []
+
+
+def test_cancellation_propagates(monkeypatch, tmp_path):
+    _stub_get_raises(monkeypatch, events.RunCancelled)
+    with pytest.raises(events.RunCancelled):
+        noauth_scan.noauth_scan("h", tmp_path, ["h", "h2"], ports=[443])
