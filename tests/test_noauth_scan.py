@@ -131,6 +131,43 @@ def test_connection_error_skips_host(monkeypatch, tmp_path):
     assert noauth_scan.noauth_scan("h", tmp_path, ["h"], ports=[443]) == []
 
 
+def test_dead_port_probes_root_only(monkeypatch, tmp_path):
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        raise ConnectionError()
+    monkeypatch.setattr(httpclient, "get", fake)
+    _patch_scope(monkeypatch)
+    assert noauth_scan.noauth_scan("h", tmp_path, ["h"], ports=[8080]) == []
+    assert len(calls) == 1
+
+
+def test_cancel_via_check_control_propagates(monkeypatch, tmp_path):
+    _stub_get(monkeypatch, "h", 443, {"/": _r(200, body="hello")})
+
+    def boom():
+        raise events.RunCancelled()
+    monkeypatch.setattr(events, "check_control", boom)
+    monkeypatch.setattr(events, "progress", lambda *a, **k: None)
+    with pytest.raises(events.RunCancelled):
+        noauth_scan.noauth_scan("h", tmp_path, ["h"], ports=[443])
+
+
+def test_interface_error_does_not_sink_stage(monkeypatch, tmp_path):
+    responses = {"/actuator/env": _r(200, body='{"password":"x"}')}
+    _stub_get(monkeypatch, "h", 443, responses)
+    real = noauth_scan._score
+
+    def flaky(host, *a, **kw):
+        if host == "bad":
+            raise ValueError("boom")
+        return real(host, *a, **kw)
+    monkeypatch.setattr(noauth_scan, "_score", flaky)
+    out = noauth_scan.noauth_scan("good", tmp_path, ["bad"], ports=[443])
+    assert [f["host"] for f in out] == ["good"]
+
+
 def test_cancellation_propagates(monkeypatch, tmp_path):
     _stub_get_raises(monkeypatch, events.RunCancelled)
     with pytest.raises(events.RunCancelled):

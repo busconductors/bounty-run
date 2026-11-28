@@ -362,10 +362,28 @@ def _rep_key(item):
 
 def _scan_interface(host, port):
     """Probe every path on host:port; return a finding dict or None."""
+    try:
+        return _scan_interface_inner(host, port)
+    except (events.RunCancelled, events.StageSkipped):
+        raise
+    except Exception as e:  # noqa: BLE001 — one bad interface must not sink the stage
+        utils.warn(f"noauth failed for {host}:{port}: {e}")
+        return None
+
+
+def _scan_interface_inner(host, port):
     open_paths = []
-    for path in _port_paths():
+    # Liveness gate only (not an auth gate): an unreachable "/" means a dead
+    # port, so skip the other paths; a walled-but-reachable "/" still probes all.
+    paths = _port_paths()
+    for i, path in enumerate(paths):
+        events.check_control()
         resp = _probe(host, port, path)
-        if resp is None or not 200 <= resp["status"] < 300:
+        if resp is None:
+            if i == 0 and path == "/":
+                return None
+            continue
+        if not 200 <= resp["status"] < 300:
             continue
         if _check_auth(resp["status"], resp["body_lower"], resp["headers"],
                        resp["final_url"]) is False:
