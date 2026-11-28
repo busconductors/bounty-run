@@ -2,12 +2,29 @@
 
 Adapted from noauth_finder (MIT License, (c) 2026 ek0mssavi0r). The corpus
 constants and the auth-wall heuristic below are ported verbatim from that tool.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 """
 import ipaddress
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 from runner import events, httpclient, utils
 from runner.stages import _is_global, _resolve
@@ -383,6 +400,10 @@ def _scan_interface_inner(host, port):
             if i == 0 and path == "/":
                 return None
             continue
+        # Precision guard: only 2xx responses are scored as exposed interfaces, so
+        # terminal 401/403/404 and non-2xx error bodies (e.g. a 500 leaking a
+        # stacktrace) are intentionally not emitted, to avoid flooding findings
+        # on every live host.
         if not 200 <= resp["status"] < 300:
             continue
         if _check_auth(resp["status"], resp["body_lower"], resp["headers"],
